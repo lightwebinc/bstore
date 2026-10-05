@@ -304,6 +304,10 @@ func TestFailedPutReleasesItsHold(t *testing.T) {
 			t.Fatalf("hold %s.%d stranded", h.Txid[:8], h.Vout)
 		}
 	}
+	// The fill a take started has finished: no hold output appears behind
+	// the reclaim.
+	r.p.holdMu.Lock()
+	r.p.holdMu.Unlock()
 	// One taken by a run that stopped before its entry.
 	hs := r.p.Holds()
 	_ = r.p.updateHold(hs[0], func(x *HoldRecord) { x.Used = true })
@@ -311,9 +315,15 @@ func TestFailedPutReleasesItsHold(t *testing.T) {
 	if err != nil || len(done) < 1 {
 		t.Fatalf("reclaim: %v %v", err, done)
 	}
+	before := map[string]bool{}
+	for _, h := range hs {
+		if h.BumpHex != "" {
+			before[h.Txid+string(rune(h.Vout))] = true
+		}
+	}
 	for _, h := range r.p.Holds() {
-		if h.BumpHex == "" {
-			continue
+		if !before[h.Txid+string(rune(h.Vout))] {
+			continue // minted by a fill after the snapshot
 		}
 		if h.Reclaim == nil || h.Reclaim.Raw == "" || h.Reclaim.Height == 0 {
 			t.Fatalf("hold %s.%d: %+v", h.Txid[:8], h.Vout, h.Reclaim)
