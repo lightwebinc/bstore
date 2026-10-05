@@ -215,10 +215,16 @@ func (o *Object) fetch(ctx context.Context, h [32]byte, max uint64) ([]byte, err
 	}
 	var tried int
 	for _, s := range o.r.bad.order(o.sources, o.r.now()) {
+		if tried == maxTries {
+			break
+		}
 		tried++
 		b, err := o.r.get(ctx, s.objectURL(h), max)
 		if err != nil {
+			// Any failure sends the advertiser to the back for a while, so
+			// one that hangs costs a reader once, not on every blob.
 			o.r.logf("advertiser %s at %s did not serve object %x: %v", short(s.Advertiser), s.URL, h[:6], err)
+			o.r.bad.mark(s.Advertiser, o.r.now())
 			continue
 		}
 		if sha256.Sum256(b) != h {
@@ -231,9 +237,16 @@ func (o *Object) fetch(ctx context.Context, h [32]byte, max uint64) ([]byte, err
 	return nil, fmt.Errorf("%w: object %x (%d advertiser(s) asked)", ErrNoSource, h[:6], tried)
 }
 
+// maxTries bounds the advertisers asked for one object, and fetchTimeout
+// one ask: a 4 MiB blob that takes longer is not worth waiting for.
+const (
+	maxTries     = 8
+	fetchTimeout = time.Minute
+)
+
 // get fetches a URL's body, at most max bytes.
 func (r *Reader) get(ctx context.Context, url string, max uint64) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

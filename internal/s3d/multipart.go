@@ -46,7 +46,18 @@ type upload struct {
 
 	mu         sync.Mutex
 	completing bool
+	gone       bool
+	parts      map[int]partRecord // read from disk once
+	done       *completedRec      // the result, once its entry was made
 	dir        string
+}
+
+// completedRec is a completion whose entry was made, kept so that the
+// same completion sent again is answered the same and publishes nothing.
+type completedRec struct {
+	Location string `json:"location"`
+	ETag     string `json:"etag"`
+	SHA256   string `json:"sha256"`
 }
 
 type partRecord struct {
@@ -75,6 +86,12 @@ func openUploads(dir string, now func() time.Time) (*uploads, error) {
 			continue
 		}
 		up.dir = filepath.Join(dir, up.ID)
+		if raw, err := os.ReadFile(filepath.Join(up.dir, "completed.json")); err == nil {
+			var c completedRec
+			if json.Unmarshal(raw, &c) == nil {
+				up.done = &c
+			}
+		}
 		u.m[up.ID] = &up
 	}
 	return u, nil
@@ -117,6 +134,9 @@ func (u *uploads) expire(ttl time.Duration) {
 	for _, up := range old {
 		up.mu.Lock()
 		busy := up.completing
+		if !busy {
+			up.gone = true
+		}
 		up.mu.Unlock()
 		if !busy {
 			u.remove(up)
@@ -138,20 +158,34 @@ func (up *upload) part(n int) (*partRecord, error) {
 	return &p, nil
 }
 
-// size is the bytes of every part held but skip.
-func (up *upload) size(skip int) int64 {
+// loadParts reads the part records once; the caller holds up.mu.
+func (up *upload) loadParts() {
+	if up.parts != nil {
+		return
+	}
+	up.parts = map[int]partRecord{}
 	ents, _ := os.ReadDir(up.dir)
-	var n int64
 	for _, e := range ents {
 		name, ok := strings.CutSuffix(e.Name(), ".json")
 		if !ok || !strings.HasPrefix(name, "part-") {
 			continue
 		}
-		k, _ := strconv.Atoi(strings.TrimPrefix(name, "part-"))
-		if k == skip {
+		k, err := strconv.Atoi(strings.TrimPrefix(name, "part-"))
+		if err != nil {
 			continue
 		}
 		if p, err := up.part(k); err == nil {
+			up.parts[k] = *p
+		}
+	}
+}
+
+// size is the bytes of every part held but skip; the caller holds up.mu.
+func (up *upload) size(skip int) int64 {
+	up.loadParts()
+	var n int64
+	for k, p := range up.parts {
+		if k != skip {
 			n += p.Size
 		}
 	}
@@ -222,7 +256,8 @@ func (s *Server) uploadPart(ctx context.Context, w http.ResponseWriter, r *http.
 		return e
 	}
 	up.mu.Lock()
-	closing := up.completing
+	closing := up.completing || up.gone || up.done != nil
+	held := up.size(n)
 	up.mu.Unlock()
 	if closing {
 		return errNoSuchUpload
@@ -232,7 +267,7 @@ func (s *Server) uploadPart(ctx context.Context, w http.ResponseWriter, r *http.
 		return e
 	}
 	defer release()
-	limit := min(s.cfg.Limits.MaxPart, s.cfg.Limits.MaxUpload-up.size(n))
+	limit := min(s.cfg.Limits.MaxPart, s.cfg.Limits.MaxUpload-held)
 	if limit < 0 {
 		limit = 0
 	}
@@ -263,8 +298,13 @@ func (s *Server) uploadPart(ctx context.Context, w http.ResponseWriter, r *http.
 	rec, _ := json.Marshal(partRecord{Size: bd.hashes.n, MD5: md5h})
 	up.mu.Lock()
 	defer up.mu.Unlock()
-	if up.completing || s.uploads.get(up.ID) == nil {
+	if up.completing || up.gone || up.done != nil {
 		return errNoSuchUpload
+	}
+	// Checked again under the lock: parts sent at once cannot together
+	// pass the upload's bound.
+	if up.size(n)+bd.hashes.n > s.cfg.Limits.MaxUpload {
+		return errTooLarge
 	}
 	if err := os.Rename(tmp, up.partPath(n)); err != nil {
 		return errInternal
@@ -272,6 +312,7 @@ func (s *Server) uploadPart(ctx context.Context, w http.ResponseWriter, r *http.
 	if err := writeSynced(up.partPath(n)+".json", rec); err != nil {
 		return errInternal
 	}
+	up.parts[n] = partRecord{Size: bd.hashes.n, MD5: md5h}
 	s.metrics.add("bstore_s3d_part_bytes_total", bd.hashes.n)
 	bd.hashes.responseHeaders(w.Header())
 	w.Header().Set("ETag", `"`+md5h+`"`)
@@ -285,11 +326,12 @@ func (s *Server) abortUpload(w http.ResponseWriter, r *http.Request, a *Auth, b 
 		return e
 	}
 	up.mu.Lock()
-	busy := up.completing
-	up.mu.Unlock()
-	if busy {
-		return &s3Error{"OperationAborted", "The upload is being completed.", http.StatusConflict}
+	if up.completing || up.done != nil {
+		up.mu.Unlock()
+		return &s3Error{"OperationAborted", "The upload is being completed, or was.", http.StatusConflict}
 	}
+	up.gone = true
+	up.mu.Unlock()
 	s.uploads.remove(up)
 	w.WriteHeader(http.StatusNoContent)
 	return nil
@@ -307,13 +349,43 @@ func (s *Server) completeUpload(ctx context.Context, w http.ResponseWriter, r *h
 	if e != nil {
 		return e
 	}
-	bd, e := s.openBody(r, a, 4<<20)
+	up.mu.Lock()
+	prior := up.done
+	up.mu.Unlock()
+	if prior != nil {
+		// Its entry was made: the same answer, nothing published again.
+		writeXML(w, http.StatusOK, completeResult{NS: s3NS, Location: prior.Location, Bucket: b.name, Key: key,
+			ETag: `"` + prior.ETag + `"`, ChecksumSHA256: prior.SHA256, ChecksumType: "FULL_OBJECT"})
+		return nil
+	}
+	// A completion's x-amz-checksum-* headers are the whole object's
+	// (FULL_OBJECT), checked against the assembled object below, never
+	// against the request's XML. A composite value (one with a part count)
+	// is not checked.
+	whole := http.Header{}
+	body := r.Header.Clone()
+	for name := range checksumAlgos {
+		hn := "X-Amz-Checksum-" + name
+		if v := r.Header.Get(hn); v != "" {
+			body.Del(hn)
+			if !strings.Contains(v, "-") {
+				whole.Set(hn, v)
+			}
+		}
+	}
+	body.Del("X-Amz-Sdk-Checksum-Algorithm")
+	rb := *r
+	rb.Header = body
+	bd, e := s.openBody(&rb, a, 4<<20)
 	if e != nil {
 		return e
 	}
-	raw, err := io.ReadAll(bd.r)
+	raw, err := io.ReadAll(io.LimitReader(bd.r, 4<<20+1))
 	if err != nil {
 		return bodyError(err)
+	}
+	if len(raw) > 4<<20 {
+		return errMalformedXML
 	}
 	if e := bd.check(); e != nil {
 		return e
@@ -326,7 +398,7 @@ func (s *Server) completeUpload(ctx context.Context, w http.ResponseWriter, r *h
 		return errMalformedXML
 	}
 	up.mu.Lock()
-	if up.completing {
+	if up.completing || up.gone || up.done != nil {
 		up.mu.Unlock()
 		return &s3Error{"OperationAborted", "The upload is being completed.", http.StatusConflict}
 	}
@@ -408,7 +480,8 @@ func (s *Server) completeUpload(ctx context.Context, w http.ResponseWriter, r *h
 		finish(xmlError{Code: e.Code, Message: e.Message, Resource: r.URL.Path, RequestID: reqID})
 		return nil
 	}
-	staged, err := s.store.Stage(context.WithoutCancel(ctx), &partsReader{files: files}, uint64(total))
+	sums := newBodyHashes(whole, "")
+	staged, err := s.store.Stage(context.WithoutCancel(ctx), sums.reader(&partsReader{files: files}), uint64(total))
 	if err != nil {
 		s.opts.Logf("s3d: completing upload %s: %v", up.ID, err)
 		return fail(errInternal)
@@ -417,20 +490,37 @@ func (s *Server) completeUpload(ctx context.Context, w http.ResponseWriter, r *h
 	if staged.Size != uint64(total) {
 		return fail(&s3Error{"InvalidPart", "A part changed on disk.", http.StatusBadRequest})
 	}
+	if e := sums.check(whole, nil); e != nil {
+		return fail(e)
+	}
 	etag := partETag(md5s)
 	rec, e := s.publishPut(ctx, a, b, key, up.ContentType, up.Meta, &etag, publish.Object{Root: staged.Root, Size: staged.Size,
 		ContentHash: staged.ContentHash, ProofRoot: staged.ProofRoot, Closure: publish.StoreClosure{Store: s.store, Manifest: staged.Manifest}})
-	if e != nil {
-		return fail(e)
-	}
-	done = true
-	s.uploads.remove(up)
-	s.metrics.add("bstore_s3d_bytes_in_total", int64(staged.Size))
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
 	}
-	finish(completeResult{NS: s3NS, Location: scheme + "://" + r.Host + "/" + b.name + "/" + urlEncodeKey(key), Bucket: b.name, Key: key,
+	location := scheme + "://" + r.Host + "/" + b.name + "/" + urlEncodeKey(key)
+	if rec != nil {
+		// The entry is made (sent, or in the outbox): a completion sent
+		// again answers this, and publishes nothing.
+		c := &completedRec{Location: location, ETag: etag, SHA256: base64Std(rec.Entry.ContentHash[:])}
+		raw, _ := json.Marshal(c)
+		_ = writeSynced(filepath.Join(up.dir, "completed.json"), raw)
+		_ = os.RemoveAll(filepath.Join(up.dir, "parts"))
+		for _, f := range files {
+			_ = os.Remove(f)
+		}
+		up.mu.Lock()
+		up.done, up.completing = c, false
+		up.mu.Unlock()
+		done = true
+	}
+	if e != nil {
+		return fail(e)
+	}
+	s.metrics.add("bstore_s3d_bytes_in_total", int64(staged.Size))
+	finish(completeResult{NS: s3NS, Location: location, Bucket: b.name, Key: key,
 		ETag: `"` + etag + `"`, ChecksumSHA256: base64Std(rec.Entry.ContentHash[:]), ChecksumType: "FULL_OBJECT"})
 	return nil
 }

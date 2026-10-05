@@ -93,8 +93,12 @@ type Reader struct {
 	// token's output is checked unspent with it (spec section 15.1); an
 	// answer it cannot give is no evidence either way.
 	Spender func(ctx context.Context, txid string, vout uint32) (string, error)
+	// OnToken, when set, is handed every token a walk verifies past the one
+	// held, oldest first: what it names is the map's from then on.
+	OnToken func(b *storerec.Bucket)
 
 	walkMu  sync.Map // chain key -> *sync.Mutex
+	walks   sync.Map // chain key and target txid -> *walkJob
 	tokens  tokenCache
 	unspent sync.Map // txid -> time checked unspent
 	ads     adCache
@@ -266,9 +270,6 @@ func (r *Reader) chainLock(c Chain) *sync.Mutex {
 // walked back by prev, through bucket-seq at the same host, to the token
 // held or to seq 0 (spec section 15.1), and becomes the token held.
 func (r *Reader) latest(ctx context.Context, host string, c Chain, t *Token) error {
-	mu := r.chainLock(c)
-	mu.Lock()
-	defer mu.Unlock()
 	var held *storerec.Held
 	if r.Held != nil {
 		held = r.Held.Held(c.key())
@@ -280,12 +281,57 @@ func (r *Reader) latest(ctx context.Context, host string, c Chain, t *Token) err
 		// An older token: this host is behind, or answers a rollback.
 		return fmt.Errorf("%w: token at seq %d, the reader holds seq %d", storerec.ErrRollback, t.Bucket.Seq, held.Seq)
 	}
+	// The walk runs on its own, under its own deadline, so a long chain is
+	// walked to the end however many requests give up waiting for it; each
+	// request waits for it as long as its own context lasts.
+	key := c.key() + ":" + hex.EncodeToString(t.Txid[:])
+	jv, started := r.walks.LoadOrStore(key, &walkJob{done: make(chan struct{})})
+	job := jv.(*walkJob)
+	if !started {
+		go func() {
+			wctx, cancel := context.WithTimeout(context.Background(), walkTimeout)
+			defer cancel()
+			job.err = r.walk(wctx, host, c, t)
+			close(job.done)
+			time.AfterFunc(time.Minute, func() { r.walks.Delete(key) })
+		}()
+	}
+	select {
+	case <-job.done:
+		return job.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// walkTimeout bounds one walk; walkJob is one in progress.
+const walkTimeout = 30 * time.Minute
+
+type walkJob struct {
+	done chan struct{}
+	err  error
+}
+
+// walk walks t back by prev to the token held or to seq 0, under the
+// chain's lock, and holds t when the walk checks out (spec section 15.1).
+// Every token walked past the one held is handed to OnToken, oldest first.
+func (r *Reader) walk(ctx context.Context, host string, c Chain, t *Token) error {
+	mu := r.chainLock(c)
+	mu.Lock()
+	defer mu.Unlock()
+	var held *storerec.Held
+	if r.Held != nil {
+		held = r.Held.Held(c.key())
+	}
+	if held != nil && t.Bucket.Seq == held.Seq && t.Txid == held.Txid {
+		return r.checkUnspent(ctx, t)
+	}
+	if held != nil && t.Bucket.Seq < held.Seq {
+		return fmt.Errorf("%w: token at seq %d, the reader holds seq %d", storerec.ErrRollback, t.Bucket.Seq, held.Seq)
+	}
 	walk := []storerec.Link{{Txid: t.Txid, Bucket: t.Bucket}}
 	cur := t
 	for cur.Bucket.Seq > 0 && (held == nil || cur.Bucket.Seq > held.Seq) {
-		if len(walk) > 1_000_000 {
-			return errors.New("walk too long")
-		}
 		prev, err := r.tokenAt(ctx, host, c, cur.Bucket.Seq-1, cur.Bucket.Prev)
 		if err != nil {
 			return err
@@ -301,6 +347,14 @@ func (r *Reader) latest(ctx context.Context, host string, c Chain, t *Token) err
 	}
 	if err := r.checkUnspent(ctx, t); err != nil {
 		return err
+	}
+	if r.OnToken != nil {
+		for i := len(walk) - 1; i >= 0; i-- {
+			if held != nil && walk[i].Bucket.Seq <= held.Seq {
+				continue
+			}
+			r.OnToken(walk[i].Bucket)
+		}
 	}
 	if r.Held != nil {
 		return r.Held.SetHeld(c.key(), storerec.Held{Seq: t.Bucket.Seq, Txid: t.Txid})
@@ -676,8 +730,18 @@ func (c *tokenCache) get(txid [32]byte) *Token {
 func (c *tokenCache) put(t *Token) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.m == nil || len(c.m) >= 4096 {
+	if c.m == nil {
 		c.m = map[[32]byte]*Token{}
+	}
+	if len(c.m) >= 4096 {
+		// Drop a quarter, arbitrarily: a cache, never what a walk needs.
+		n := 0
+		for k := range c.m {
+			delete(c.m, k)
+			if n++; n >= 1024 {
+				break
+			}
+		}
 	}
 	c.m[t.Txid] = t
 }

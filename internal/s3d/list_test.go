@@ -128,8 +128,8 @@ func TestListPaginatesAndFoldsPrefixes(t *testing.T) {
 
 func TestReplayedWriteAnsweredOnce(t *testing.T) {
 	now := time.Now()
-	s := &Server{replay: newReplayCache(func() time.Time { return now })}
-	a := &Auth{Seed: "sig", Time: now}
+	s := &Server{replay: newReplayCache(func() time.Time { return now }, 10)}
+	a := &Auth{Seed: "sig", Time: now, Key: &Key{ID: "k"}}
 	calls := 0
 	do := func() *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
@@ -156,7 +156,7 @@ func TestReplayedWriteAnsweredOnce(t *testing.T) {
 		t.Fatal("the cache outlived its window")
 	}
 	// A failed write is not remembered: the client's retry runs.
-	s.replay = newReplayCache(func() time.Time { return now })
+	s.replay = newReplayCache(func() time.Time { return now }, 10)
 	for i := 0; i < 2; i++ {
 		w := httptest.NewRecorder()
 		_ = s.replayed(w, httptest.NewRequest("PUT", "/b/k", nil), a, func(http.ResponseWriter) *s3Error { calls++; return errSlowDown })

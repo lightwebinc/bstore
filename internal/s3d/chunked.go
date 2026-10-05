@@ -45,7 +45,7 @@ type chunkReader struct {
 	h       hash.Hash
 	sig     string
 	total   int64
-	max     int64 // the decoded length declared; 0 is no bound
+	max     int64 // the decoded length declared; below 0 is no bound
 	done    bool
 	err     error
 	// Trailers are the trailing headers, lowercase names, once the body is
@@ -55,7 +55,7 @@ type chunkReader struct {
 
 func newChunkReader(r io.Reader, a *Auth, signed, trailer bool) *chunkReader {
 	return &chunkReader{br: bufio.NewReaderSize(r, 64<<10), auth: a, signed: signed, trailer: trailer, prev: a.Seed,
-		h: sha256.New(), Trailers: map[string]string{}}
+		h: sha256.New(), Trailers: map[string]string{}, max: -1}
 }
 
 func (c *chunkReader) line() (string, error) {
@@ -105,7 +105,7 @@ func (c *chunkReader) header() error {
 		}
 		c.sig = v
 	}
-	if c.max > 0 && c.total+n > c.max {
+	if c.max >= 0 && c.total+n > c.max {
 		return errChunk
 	}
 	c.left = n

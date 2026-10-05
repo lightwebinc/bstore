@@ -1,6 +1,7 @@
 package s3d
 
 import (
+	"bufio"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -14,11 +15,15 @@ import (
 	"github.com/lightwebinc/bstore/internal/storerec"
 )
 
-// The gateway's own pending entries: what it wrote that no token anchors
-// yet, served at once (read your writes, spec sections 4.4 and 16.3). They
-// are kept in state.json with the tokens the reader holds, so a restart
-// keeps both. An entry leaves when an anchored entry for its key is the
-// same or newer (by created, then commitment), or after pendingKeep.
+// The gateway's own pending entries: what it wrote that no token names
+// yet, served at once (read your writes, spec sections 4.4 and 16.3). An
+// entry leaves when a token the reader walks names its commitment (as a
+// put, a removal or in consumed), when an anchored entry for its key is
+// the same or newer (by created, then commitment), or after pendingKeep.
+//
+// They are kept in pending.log, one line appended (and synced) per change,
+// and rewritten whole only when it holds four times the live entries; the
+// tokens the reader holds are in state.json, rewritten when one moves.
 
 const (
 	pendingKeep = 7 * 24 * time.Hour
@@ -51,86 +56,155 @@ func newer(created uint64, c string, oc uint64, occ string) bool {
 	return created > oc || created == oc && c > occ
 }
 
-type gwState struct {
-	Held    map[string]storerec.Held `json:"held"`
-	Pending []*pendingEntry          `json:"pending"`
+type logLine struct {
+	Add  *pendingEntry `json:"add,omitempty"`
+	Drop string        `json:"drop,omitempty"`
 }
 
-// state is the gateway's state file and the pending index.
+// state is the gateway's state: the tokens held and the pending index.
 type state struct {
-	path string
+	dir  string
 	now  func() time.Time
 	mu   sync.Mutex
-	st   gwState
-	// byKey indexes pending entries: bucket -> key -> entries.
+	held map[string]storerec.Held
+	// byKey indexes pending entries: bucket -> key -> entries; byC by
+	// commitment.
 	byKey map[string]map[string][]*pendingEntry
+	byC   map[string]*pendingEntry
+	log   *os.File
+	lines int
 }
 
 func openState(dir string, now func() time.Time) (*state, error) {
-	s := &state{path: filepath.Join(dir, "state.json"), now: now, byKey: map[string]map[string][]*pendingEntry{}}
-	raw, err := os.ReadFile(s.path)
+	s := &state{dir: dir, now: now, held: map[string]storerec.Held{}, byKey: map[string]map[string][]*pendingEntry{},
+		byC: map[string]*pendingEntry{}}
+	raw, err := os.ReadFile(filepath.Join(dir, "state.json"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
 	if err == nil {
-		if err := json.Unmarshal(raw, &s.st); err != nil {
+		var st struct {
+			Held map[string]storerec.Held `json:"held"`
+		}
+		if err := json.Unmarshal(raw, &st); err != nil {
 			return nil, err
 		}
+		if st.Held != nil {
+			s.held = st.Held
+		}
 	}
-	if s.st.Held == nil {
-		s.st.Held = map[string]storerec.Held{}
+	if f, err := os.Open(filepath.Join(dir, "pending.log")); err == nil {
+		sc := bufio.NewScanner(f)
+		sc.Buffer(make([]byte, 64<<10), 1<<20)
+		for sc.Scan() {
+			var l logLine
+			if json.Unmarshal(sc.Bytes(), &l) != nil {
+				continue // a last line cut short by a crash
+			}
+			if l.Add != nil {
+				s.index(l.Add)
+			} else if l.Drop != "" {
+				s.unindex(l.Drop)
+			}
+		}
+		f.Close()
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
 	}
-	for _, p := range s.st.Pending {
-		s.index(p)
-	}
-	return s, nil
+	s.mu.Lock()
+	s.expireLocked(false)
+	err = s.compactLocked()
+	s.mu.Unlock()
+	return s, err
 }
 
 func (s *state) index(p *pendingEntry) {
+	if _, ok := s.byC[p.C]; ok {
+		return
+	}
 	m := s.byKey[p.Bucket]
 	if m == nil {
 		m = map[string][]*pendingEntry{}
 		s.byKey[p.Bucket] = m
 	}
 	m[p.Key] = append(m[p.Key], p)
+	s.byC[p.C] = p
 }
 
-func (s *state) saveLocked() error {
-	s.st.Pending = s.st.Pending[:0]
-	for _, m := range s.byKey {
-		for _, list := range m {
-			s.st.Pending = append(s.st.Pending, list...)
+func (s *state) unindex(c string) bool {
+	p, ok := s.byC[c]
+	if !ok {
+		return false
+	}
+	delete(s.byC, c)
+	list := s.byKey[p.Bucket][p.Key]
+	keep := list[:0]
+	for _, x := range list {
+		if x.C != c {
+			keep = append(keep, x)
 		}
 	}
-	sort.Slice(s.st.Pending, func(i, j int) bool { return s.st.Pending[i].C < s.st.Pending[j].C })
-	raw, err := json.Marshal(&s.st)
+	if len(keep) == 0 {
+		delete(s.byKey[p.Bucket], p.Key)
+		if len(s.byKey[p.Bucket]) == 0 {
+			delete(s.byKey, p.Bucket)
+		}
+	} else {
+		s.byKey[p.Bucket][p.Key] = keep
+	}
+	return true
+}
+
+// appendLocked writes one line to the log and syncs it.
+func (s *state) appendLocked(l logLine) error {
+	if s.log == nil {
+		f, err := os.OpenFile(filepath.Join(s.dir, "pending.log"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+		if err != nil {
+			return err
+		}
+		s.log = f
+	}
+	raw, err := json.Marshal(l)
 	if err != nil {
 		return err
 	}
-	tmp := s.path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
+	if _, err := s.log.Write(append(raw, '\n')); err != nil {
 		return err
 	}
-	if _, err := f.Write(raw); err != nil {
-		f.Close()
+	s.lines++
+	if s.lines > 4*len(s.byC)+1024 {
+		return s.compactLocked()
+	}
+	return s.log.Sync()
+}
+
+// compactLocked rewrites the log as the live entries.
+func (s *state) compactLocked() error {
+	if s.log != nil {
+		s.log.Close()
+		s.log = nil
+	}
+	var b strings.Builder
+	for _, p := range s.byC {
+		raw, err := json.Marshal(logLine{Add: p})
+		if err != nil {
+			return err
+		}
+		b.Write(raw)
+		b.WriteByte('\n')
+	}
+	if err := writeSynced(filepath.Join(s.dir, "pending.log"), []byte(b.String())); err != nil {
 		return err
 	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, s.path)
+	s.lines = len(s.byC)
+	return nil
 }
 
 // Held and SetHeld are the reader's HeldStore.
 func (s *state) Held(chain string) *storerec.Held {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	h, ok := s.st.Held[chain]
+	h, ok := s.held[chain]
 	if !ok {
 		return nil
 	}
@@ -140,29 +214,50 @@ func (s *state) Held(chain string) *storerec.Held {
 func (s *state) SetHeld(chain string, h storerec.Held) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if cur, ok := s.st.Held[chain]; ok && cur.Seq > h.Seq {
+	if cur, ok := s.held[chain]; ok && cur.Seq > h.Seq {
 		return nil
 	}
-	s.st.Held[chain] = h
-	return s.saveLocked()
+	s.held[chain] = h
+	raw, err := json.Marshal(map[string]any{"held": s.held})
+	if err != nil {
+		return err
+	}
+	return writeSynced(filepath.Join(s.dir, "state.json"), raw)
 }
 
 // add records an entry the gateway wrote.
 func (s *state) add(e *storerec.Entry, rec []byte, c [32]byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	n := 0
-	for _, m := range s.byKey {
-		for _, l := range m {
-			n += len(l)
+	if len(s.byC) >= maxPending {
+		s.expireLocked(true)
+		if err := s.compactLocked(); err != nil {
+			return err
 		}
 	}
-	if n >= maxPending {
-		s.expireLocked(true)
+	p := &pendingEntry{Bucket: e.Bucket, Key: e.Key, C: hex.EncodeToString(c[:]), Created: e.Created, Kind: e.Kind,
+		Record: rec, Seen: s.now().Unix(), entry: e}
+	s.index(p)
+	return s.appendLocked(logLine{Add: p})
+}
+
+// named drops the pending entries a token names (its changes' commitments
+// and its consumed): the map decides those keys from now on.
+func (s *state) named(t *storerec.Bucket) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	drop := func(c [32]byte) {
+		x := hex.EncodeToString(c[:])
+		if s.unindex(x) {
+			_ = s.appendLocked(logLine{Drop: x})
+		}
 	}
-	s.index(&pendingEntry{Bucket: e.Bucket, Key: e.Key, C: hex.EncodeToString(c[:]), Created: e.Created, Kind: e.Kind,
-		Record: rec, Seen: s.now().Unix(), entry: e})
-	return s.saveLocked()
+	for _, ch := range t.Changes {
+		drop(ch.C)
+	}
+	for _, c := range t.Consumed {
+		drop(c)
+	}
 }
 
 // newest is the newest pending entry for key, or nil.
@@ -183,23 +278,17 @@ func (s *state) newest(bucket, key string) *pendingEntry {
 func (s *state) settle(bucket, key string, created uint64, c string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	list := s.byKey[bucket][key]
-	keep := list[:0]
-	for _, p := range list {
+	var drop []string
+	for _, p := range s.byKey[bucket][key] {
 		if p.C == c || !newer(p.Created, p.C, created, c) {
-			continue
+			drop = append(drop, p.C)
 		}
-		keep = append(keep, p)
 	}
-	if len(keep) == len(list) {
-		return
+	for _, x := range drop {
+		if s.unindex(x) {
+			_ = s.appendLocked(logLine{Drop: x})
+		}
 	}
-	if len(keep) == 0 {
-		delete(s.byKey[bucket], key)
-	} else {
-		s.byKey[bucket][key] = keep
-	}
-	_ = s.saveLocked()
 }
 
 // inRange is the newest pending entry of every key of bucket that starts
@@ -224,47 +313,37 @@ func (s *state) inRange(bucket, prefix, after string) []*pendingEntry {
 	return out
 }
 
-// expire drops entries older than pendingKeep (and, when over the bound,
-// the oldest half).
+// expire drops entries older than pendingKeep.
 func (s *state) expire() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.expireLocked(false)
-	_ = s.saveLocked()
+	if s.expireLocked(false) > 0 {
+		_ = s.compactLocked()
+	}
 }
 
-func (s *state) expireLocked(halve bool) {
+// expireLocked drops entries older than pendingKeep (and, with halve, the
+// older half), returning how many.
+func (s *state) expireLocked(halve bool) int {
 	cut := s.now().Add(-pendingKeep).Unix()
 	if halve {
 		var seen []int64
-		for _, m := range s.byKey {
-			for _, l := range m {
-				for _, p := range l {
-					seen = append(seen, p.Seen)
-				}
-			}
+		for _, p := range s.byC {
+			seen = append(seen, p.Seen)
 		}
 		sort.Slice(seen, func(i, j int) bool { return seen[i] < seen[j] })
 		if len(seen) > 0 {
 			cut = max(cut, seen[len(seen)/2])
 		}
 	}
-	for b, m := range s.byKey {
-		for k, l := range m {
-			keep := l[:0]
-			for _, p := range l {
-				if p.Seen > cut {
-					keep = append(keep, p)
-				}
-			}
-			if len(keep) == 0 {
-				delete(m, k)
-			} else {
-				m[k] = keep
-			}
-		}
-		if len(m) == 0 {
-			delete(s.byKey, b)
+	var drop []string
+	for c, p := range s.byC {
+		if p.Seen <= cut {
+			drop = append(drop, c)
 		}
 	}
+	for _, c := range drop {
+		s.unindex(c)
+	}
+	return len(drop)
 }

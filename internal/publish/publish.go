@@ -91,6 +91,11 @@ type Config struct {
 	// funding tree (spec section 19.2: small trees cost less per piece).
 	PieceTree int
 	EntryTree int
+	// HoldAhead is how many mined hold outputs of each bounty value are kept
+	// ready, so a put never waits for a block; HoldWait is how long a put
+	// waits for one when none is ready.
+	HoldAhead int
+	HoldWait  time.Duration
 	// Store is the local closure store, shared by every identity.
 	Store *Store
 	// Delivery reaches the plane, the hosts and the providers.
@@ -109,6 +114,7 @@ type Publisher struct {
 	st *state
 
 	mintMu sync.Mutex // one put mints at a time: the trees are not shared
+	holdMu sync.Mutex // one hold transaction minted at a time
 	kept   *producer.Kept
 	payer  *producer.Payer
 	pieces *producer.Trees
@@ -146,9 +152,14 @@ type HoldRecord struct {
 	RawHex  string `json:"rawHex"`
 	BumpHex string `json:"bumpHex,omitempty"`
 	Height  uint32 `json:"height,omitempty"`
+	// Used marks a hold output a put has taken, saved before its entry is
+	// signed, so no two entries name one hold output.
+	Used bool `json:"used,omitempty"`
 	// Entry is the commitment of the entry that names it (display order),
 	// once that entry is minted.
 	Entry string `json:"entry,omitempty"`
+	// Sent is when it was handed to the settlement leg (Unix seconds).
+	Sent int64 `json:"sent,omitempty"`
 }
 
 const (
@@ -170,6 +181,12 @@ func Open(ctx context.Context, cfg Config) (*Publisher, error) {
 	}
 	if cfg.EntryTree <= 0 {
 		cfg.EntryTree = 16
+	}
+	if cfg.HoldAhead <= 0 {
+		cfg.HoldAhead = 8
+	}
+	if cfg.HoldWait <= 0 {
+		cfg.HoldWait = 30 * time.Second
 	}
 	if cfg.Fees == (mint.Fees{}) {
 		cfg.Fees = mint.DefaultFees

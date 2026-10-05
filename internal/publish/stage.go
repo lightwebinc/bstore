@@ -44,11 +44,23 @@ func (st *Store) Stage(ctx context.Context, r io.Reader, max uint64) (*Staged, e
 		max = storerec.MaxSize
 	}
 	var blobs []string
+	var pinned [][32]byte
+	ok := false
+	defer func() {
+		if !ok {
+			st.unpin(pinned)
+		}
+	}()
+	put := func(b []byte) ([32]byte, error) {
+		h, err := st.put(b, true)
+		pinned = append(pinned, h)
+		return h, err
+	}
 	b := storerec.NewStreaming(func(blob []byte) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		h, err := st.Put(blob)
+		h, err := put(blob)
 		if err != nil {
 			return err
 		}
@@ -79,21 +91,26 @@ func (st *Store) Stage(ctx context.Context, r io.Reader, max uint64) (*Staged, e
 	if err != nil {
 		return nil, err
 	}
-	if _, err := st.Put(built.Root); err != nil {
+	if _, err := put(built.Root); err != nil {
 		return nil, err
 	}
 	m := &Manifest{Root: hex.EncodeToString(built.RootHash[:]), Size: built.Size, Blobs: blobs}
 	for _, br := range built.Branches {
-		h, err := st.Put(br)
+		h, err := put(br)
 		if err != nil {
 			return nil, err
 		}
 		m.Branches = append(m.Branches, hex.EncodeToString(h[:]))
 	}
-	release := st.Hold(built.RootHash)
+	hold := st.Hold(built.RootHash)
 	if err := st.SaveManifest(m); err != nil {
-		release()
+		hold()
 		return nil, err
+	}
+	ok = true
+	release := func() {
+		hold()
+		st.unpin(pinned)
 	}
 	return &Staged{Root: built.RootHash, ContentHash: built.ContentHash, ProofRoot: built.ProofRoot, Size: built.Size,
 		Manifest: m, release: release}, nil

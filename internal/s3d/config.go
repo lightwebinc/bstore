@@ -62,9 +62,11 @@ type Config struct {
 	Identities []string       `json:"identities"`
 	AccessKeys []AccessKey    `json:"access_keys"`
 	Buckets    []BucketConfig `json:"buckets"`
-	// Bounty, when set, is the hold bounty every put asks for.
-	Bounty *BountyConfig `json:"bounty,omitempty"`
-	Limits Limits        `json:"limits"`
+	// Bounty, when set, is the hold bounty every put asks for; HoldAhead is
+	// how many mined hold outputs of it each identity keeps ready.
+	Bounty    *BountyConfig `json:"bounty,omitempty"`
+	HoldAhead int           `json:"hold_ahead,omitempty"`
+	Limits    Limits        `json:"limits"`
 	// PieceTree and EntryTree size funding trees; FeeRate and FeeFloor are
 	// the fee policy.
 	PieceTree int    `json:"piece_tree"`
@@ -125,6 +127,16 @@ type Limits struct {
 	Writes     int `json:"writes"`
 	PartWrites int `json:"part_writes"`
 	Reads      int `json:"reads"`
+	// Stages are put and copy bodies streaming in at once; Lookups the
+	// heads, gets and listings asking hosts at once.
+	Stages  int `json:"stages"`
+	Lookups int `json:"lookups"`
+	// MinRate is the slowest a request body may arrive, bytes a second
+	// averaged after its first IdleSeconds; slower is cut off.
+	MinRate int64 `json:"min_rate"`
+	// ReplayPerKey bounds the signatures one access key has remembered
+	// against replay; past it that key's writes wait.
+	ReplayPerKey int `json:"replay_per_key"`
 	// RequestsPerSec and Burst bound the requests of one access key.
 	RequestsPerSec float64 `json:"requests_per_sec"`
 	Burst          float64 `json:"burst"`
@@ -155,6 +167,10 @@ func (l *Limits) defaults() {
 	seti(&l.Writes, 8)
 	seti(&l.PartWrites, 32)
 	seti(&l.Reads, 32)
+	seti(&l.Stages, 32)
+	seti(&l.Lookups, 64)
+	set(&l.MinRate, 16<<10)
+	seti(&l.ReplayPerKey, 20000)
 	if l.RequestsPerSec <= 0 {
 		l.RequestsPerSec = 200
 	}
@@ -299,6 +315,9 @@ func (c *Config) Check() error {
 			b.DeadlineBlocks < 1 || b.CheckC < 1 || b.CheckC > 1024 {
 			return errors.New("bounty: satoshis at least 1, 1 <= t <= k <= 16, retention_seconds and deadline_blocks at least 1, check_c 1 to 1024")
 		}
+	}
+	if c.HoldAhead <= 0 {
+		c.HoldAhead = 8
 	}
 	if c.PieceTree <= 0 {
 		c.PieceTree = 64

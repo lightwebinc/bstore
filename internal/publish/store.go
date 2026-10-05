@@ -26,9 +26,15 @@ type Store struct {
 	dir string
 	mu  sync.Mutex
 	// busy counts the readers and writers of each root; Trim never removes
-	// a busy root.
+	// a busy root. pins counts the stages using each object, so an object
+	// a stage wrote, or found already held, is never removed under it.
 	busy map[[32]byte]int
+	pins map[[32]byte]int
 }
+
+// orphanAge is how long an object no closure names is kept: what a put cut
+// short left behind.
+const orphanAge = time.Hour
 
 // Manifest is a stored closure: the root and branch nodes and every blob,
 // by hash, in closure order (repeats included for blobs).
@@ -52,7 +58,7 @@ func OpenStore(dir string) (*Store, error) {
 			_ = os.Remove(filepath.Join(dir, "tmp", e.Name()))
 		}
 	}
-	return &Store{dir: dir, busy: map[[32]byte]int{}}, nil
+	return &Store{dir: dir, busy: map[[32]byte]int{}, pins: map[[32]byte]int{}}, nil
 }
 
 func (s *Store) objectPath(h [32]byte) string {
@@ -66,10 +72,20 @@ func (s *Store) manifestPath(root [32]byte) string {
 
 // Put stores an object under its hash, durably; an object already held is
 // left alone.
-func (s *Store) Put(b []byte) ([32]byte, error) {
+func (s *Store) Put(b []byte) ([32]byte, error) { return s.put(b, false) }
+
+// put stores an object and, with pin, pins it in the same step, so Trim
+// cannot remove an object a stage found already held.
+func (s *Store) put(b []byte, pin bool) ([32]byte, error) {
 	h := sha256.Sum256(b)
 	p := s.objectPath(h)
-	if _, err := os.Stat(p); err == nil {
+	s.mu.Lock()
+	if pin {
+		s.pins[h]++
+	}
+	_, err := os.Stat(p)
+	s.mu.Unlock()
+	if err == nil {
 		now := time.Now()
 		_ = os.Chtimes(p, now, now)
 		return h, nil
@@ -78,6 +94,32 @@ func (s *Store) Put(b []byte) ([32]byte, error) {
 		return h, err
 	}
 	return h, writeFileSync(filepath.Join(s.dir, "tmp"), p, b)
+}
+
+// unpin releases a stage's pins.
+func (s *Store) unpin(hs [][32]byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, h := range hs {
+		if s.pins[h]--; s.pins[h] <= 0 {
+			delete(s.pins, h)
+		}
+	}
+}
+
+// remove deletes an object unless a stage pins it; it returns the bytes
+// freed.
+func (s *Store) remove(h [32]byte) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pins[h] > 0 {
+		return 0
+	}
+	info, err := os.Stat(s.objectPath(h))
+	if err != nil || os.Remove(s.objectPath(h)) != nil {
+		return 0
+	}
+	return info.Size()
 }
 
 // Get reads an object and holds it to its hash: bytes that went bad on disk
@@ -146,9 +188,11 @@ func (s *Store) Hold(root [32]byte) func() {
 	}
 }
 
-// Trim removes the least recently used closures until the objects held
-// take at most max bytes, never a busy one, and never an object another
-// remaining closure names. It returns the bytes held after.
+// Trim removes objects no closure names that are older than orphanAge
+// (what a put cut short left), then the least recently used closures
+// until the objects held take at most max bytes; never a busy closure, a
+// pinned object, or an object another remaining closure names. It returns
+// the bytes held after.
 func (s *Store) Trim(max int64) (int64, error) {
 	ents, err := os.ReadDir(filepath.Join(s.dir, "roots"))
 	if err != nil {
@@ -183,6 +227,21 @@ func (s *Store) Trim(max int64) (int64, error) {
 			names[o]++
 		}
 	}
+	// Orphans.
+	cut := time.Now().Add(-orphanAge)
+	_ = filepath.WalkDir(filepath.Join(s.dir, "objects"), func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		h, perr := parseHash(d.Name())
+		if perr != nil || names[h] > 0 {
+			return nil
+		}
+		if info, err := d.Info(); err == nil && info.ModTime().Before(cut) {
+			s.remove(h)
+		}
+		return nil
+	})
 	total := s.bytes()
 	if total <= max {
 		return total, nil
@@ -203,11 +262,7 @@ func (s *Store) Trim(max int64) (int64, error) {
 			if names[o]--; names[o] > 0 {
 				continue
 			}
-			if info, err := os.Stat(s.objectPath(o)); err == nil {
-				if os.Remove(s.objectPath(o)) == nil {
-					total -= info.Size()
-				}
-			}
+			total -= s.remove(o)
 		}
 	}
 	return total, nil

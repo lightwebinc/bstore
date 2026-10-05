@@ -209,8 +209,15 @@ func (o *Outbox) remove(id string) {
 }
 
 // send offers an item to every target it is still owed, at once, and
-// returns those that took it. An item every target took leaves the outbox.
+// returns those that took it. A target that refused it is neither counted
+// nor asked again. An item no target is still owed leaves the outbox.
 func (o *Outbox) send(ctx context.Context, it *outItem, beef []byte) []Target {
+	ok, _ := o.sendAll(ctx, it, beef)
+	return ok
+}
+
+// sendAll is send, and also returns the targets that refused the item.
+func (o *Outbox) sendAll(ctx context.Context, it *outItem, beef []byte) (ok, refused []Target) {
 	o.mu.Lock()
 	o.sending[it.ID] = true
 	o.mu.Unlock()
@@ -227,15 +234,17 @@ func (o *Outbox) send(ctx context.Context, it *outItem, beef []byte) []Target {
 	for _, t := range it.Targets {
 		go func(t Target) { ch <- res{t, o.d.submit(ctx, t, beef)} }(t)
 	}
-	var ok, left []Target
+	var left []Target
 	for range it.Targets {
 		r := <-ch
 		switch {
 		case r.err == nil:
 			ok = append(ok, r.t)
 		case errors.Is(r.err, errRefused):
+			// Taken nothing, for a reason the same bytes will not change:
+			// neither delivered nor sent again.
 			o.logf("%s %s: %v", it.What, short(it.ID), r.err)
-			ok = append(ok, r.t)
+			refused = append(refused, r.t)
 		default:
 			o.logf("%s %s: not delivered to %s (%v); it is sent again later", it.What, short(it.ID), r.t.Base, r.err)
 			left = append(left, r.t)
@@ -245,14 +254,14 @@ func (o *Outbox) send(ctx context.Context, it *outItem, beef []byte) []Target {
 	it.Targets = left
 	if len(left) == 0 {
 		o.remove(it.ID)
-		return ok
+		return ok, refused
 	}
 	back := time.Duration(1<<min(it.Tries, 10)) * 5 * time.Second
 	it.Next = o.now().Add(min(back, time.Hour))
 	if err := o.write(it); err != nil {
 		o.logf("outbox %s: %v", short(it.ID), err)
 	}
-	return ok
+	return ok, refused
 }
 
 // Pending is the number of objects not yet delivered everywhere.

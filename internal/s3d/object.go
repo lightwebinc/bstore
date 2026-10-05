@@ -35,7 +35,12 @@ type resolved struct {
 // pending put or delete newer than the anchored entry decides; one the
 // anchored entry equals or follows is dropped.
 func (s *Server) resolve(ctx context.Context, b *bucket, key string) (*resolved, *s3Error) {
+	done, e := acquire(s.lookups)
+	if e != nil {
+		return nil, e
+	}
 	f, err := s.reader.Object(ctx, b.chain, key)
+	done()
 	p := s.st.newest(b.chain.Bucket, key)
 	if err != nil {
 		// No host proves anything. The gateway's own pending put is still
@@ -423,9 +428,24 @@ func (s *Server) openBody(r *http.Request, a *Auth, max int64) (*body, *s3Error)
 		md5want = b
 	}
 	idle := time.Duration(s.cfg.Limits.IdleSeconds) * time.Second
-	var raw io.Reader = &idleReader{r: r.Body, rc: responseControllerOf(r), idle: idle}
+	var raw io.Reader = &idleReader{r: r.Body, rc: responseControllerOf(r), idle: idle, minRate: s.cfg.Limits.MinRate}
 	bd := &body{length: length}
 	trailer := r.Header.Get("X-Amz-Trailer")
+	for _, t := range strings.Split(trailer, ",") {
+		t = strings.ToLower(strings.TrimSpace(t))
+		if t == "" {
+			continue
+		}
+		alg, ok := strings.CutPrefix(t, "x-amz-checksum-")
+		if _, known := checksumAlgos[alg]; !ok || !known {
+			return nil, invalidArgument("x-amz-trailer names a trailer this gateway does not check: " + t)
+		}
+	}
+	if a := strings.ToLower(r.Header.Get("X-Amz-Sdk-Checksum-Algorithm")); a != "" {
+		if _, known := checksumAlgos[a]; !known {
+			return nil, invalidArgument("x-amz-sdk-checksum-algorithm is not one this gateway checks")
+		}
+	}
 	bd.hashes = newBodyHashes(r.Header, trailer)
 	if chunked {
 		signed := a.Payload == streamSigned || a.Payload == streamSignedT
@@ -495,6 +515,8 @@ func bodyError(err error) *s3Error {
 		return &s3Error{"InvalidRequest", "The aws-chunked body is malformed.", http.StatusBadRequest}
 	case errors.Is(err, io.ErrUnexpectedEOF):
 		return errIncomplete
+	case errors.Is(err, errTooSlow):
+		return &s3Error{"RequestTimeout", "Your socket connection to the server was not read from or written to within the timeout period.", http.StatusBadRequest}
 	}
 	return &s3Error{"RequestTimeout", "Your socket connection to the server was not read from or written to within the timeout period.", http.StatusBadRequest}
 }
@@ -510,16 +532,19 @@ func (s *Server) putObject(ctx context.Context, w http.ResponseWriter, r *http.R
 	if e != nil {
 		return e
 	}
-	release, e := acquire(s.writes)
+	// The body streams in under a stage slot; a write slot is taken only
+	// to publish, so slow bodies cannot hold up publishing.
+	stageDone, e := acquire(s.stages)
 	if e != nil {
 		return e
 	}
-	defer release()
 	bd, e := s.openBody(r, a, s.cfg.Limits.MaxObject)
 	if e != nil {
+		stageDone()
 		return e
 	}
 	staged, err := s.store.Stage(ctx, bd.r, uint64(bd.length))
+	stageDone()
 	if err != nil {
 		return bodyError(err)
 	}
@@ -527,6 +552,11 @@ func (s *Server) putObject(ctx context.Context, w http.ResponseWriter, r *http.R
 	if e := bd.check(); e != nil {
 		return e
 	}
+	release, e := acquire(s.writes)
+	if e != nil {
+		return e
+	}
+	defer release()
 	s.metrics.add("bstore_s3d_bytes_in_total", int64(staged.Size))
 	etag := bd.hashes.md5Hex()
 	rec, e := s.publishPut(ctx, a, b, key, ct, meta, &etag, publish.Object{Root: staged.Root, Size: staged.Size,
@@ -566,6 +596,9 @@ func (s *Server) afterPublish(b *bucket, rec *publish.Receipt, err error) (*publ
 	}
 	if err != nil {
 		s.opts.Logf("s3d: publish to %s: %v", b.name, err)
+		if errors.Is(err, publish.ErrNoHold) {
+			return rec, &s3Error{"SlowDown", "No mined hold output is ready for the bounty yet; try again shortly.", http.StatusServiceUnavailable}
+		}
 		if errors.Is(err, publish.ErrNotSent) {
 			return rec, &s3Error{"SlowDown", "The entry was made but no host took it yet; it is sent again.", http.StatusServiceUnavailable}
 		}
@@ -741,9 +774,12 @@ func (s *Server) deleteObjects(ctx context.Context, w http.ResponseWriter, r *ht
 	if e != nil {
 		return e
 	}
-	raw, err := io.ReadAll(bd.r)
+	raw, err := io.ReadAll(io.LimitReader(bd.r, 2<<20+1))
 	if err != nil {
 		return bodyError(err)
+	}
+	if len(raw) > 2<<20 {
+		return errMalformedXML
 	}
 	if e := bd.check(); e != nil {
 		return e
@@ -779,18 +815,34 @@ func (s *Server) deleteObjects(ctx context.Context, w http.ResponseWriter, r *ht
 	return nil
 }
 
-// idleReader holds each read of a body to the idle bound.
+// idleReader holds each read of a body to the idle bound, and the body as
+// a whole to a least average rate once its first idle period has passed,
+// so a body trickled in to hold a slot is cut off.
 type idleReader struct {
-	r    io.Reader
-	rc   *http.ResponseController
-	idle time.Duration
+	r       io.Reader
+	rc      *http.ResponseController
+	idle    time.Duration
+	minRate int64
+	start   time.Time
+	n       int64
 }
 
+var errTooSlow = errors.New("the request body arrives too slowly")
+
 func (i *idleReader) Read(p []byte) (int, error) {
-	if i.rc != nil {
-		_ = i.rc.SetReadDeadline(time.Now().Add(i.idle))
+	now := time.Now()
+	if i.start.IsZero() {
+		i.start = now
 	}
-	return i.r.Read(p)
+	if el := now.Sub(i.start); i.minRate > 0 && el > i.idle && i.n < int64(el.Seconds()*float64(i.minRate)) {
+		return 0, errTooSlow
+	}
+	if i.rc != nil {
+		_ = i.rc.SetReadDeadline(now.Add(i.idle))
+	}
+	n, err := i.r.Read(p)
+	i.n += int64(n)
+	return n, err
 }
 
 type rcKey struct{}

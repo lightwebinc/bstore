@@ -2,16 +2,13 @@ package publish
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
 
-	"github.com/bsv-blockchain/go-sdk/script"
 	"github.com/bsv-blockchain/go-sdk/transaction"
 
 	"github.com/lightwebinc/bcommon/carrier"
-	"github.com/lightwebinc/bcommon/funding"
 	"github.com/lightwebinc/bcommon/mint"
 
 	"github.com/lightwebinc/bstore/internal/storerec"
@@ -87,9 +84,9 @@ func (p *Publisher) Put(ctx context.Context, f Fields, obj Object, b *Bounty) (*
 	defer p.mintMu.Unlock()
 	var hold *HoldRecord
 	if b != nil && obj.Size > 0 {
-		h, err := p.holdOutput(ctx, f.Bucket, b.Satoshis)
+		h, err := p.takeHold(ctx, f.Bucket, b.Satoshis)
 		if err != nil {
-			return nil, fmt.Errorf("hold output: %w", err)
+			return nil, err
 		}
 		hold = h
 		tip, err := p.cfg.Asset.BestHeader(ctx)
@@ -173,7 +170,7 @@ func (p *Publisher) publishPieces(ctx context.Context, bucket string, root [32]b
 			if err != nil {
 				return done + i, err
 			}
-			if ok := p.outbox.send(ctx, it, beef); len(ok) == 0 {
+			if ok, refused := p.outbox.sendAll(ctx, it, beef); len(ok)+len(refused) == 0 {
 				// Every target failed: the next put would only add to the
 				// backlog, so this one stops here. Its pieces stay in the
 				// outbox and are sent again.
@@ -222,79 +219,24 @@ func (p *Publisher) publishEntry(ctx context.Context, e *storerec.Entry, rec []b
 	if err != nil {
 		return nil, err
 	}
-	r.Sent = p.cfg.Delivery.sent(p.outbox.send(ctx, it, beef))
+	// The entry counts as sent once the facade or a host quorum takes it.
+	// A put whose entry is minted is not given up lightly: a client that
+	// retries would mint a second entry, so the targets still owed it are
+	// asked again for a while before the put answers.
+	ok := p.outbox.send(ctx, it, beef)
+	for wait := time.Second; !p.cfg.Delivery.sent(ok) && len(it.Targets) > 0 && wait <= 8*time.Second; wait *= 2 {
+		select {
+		case <-ctx.Done():
+			return r, ErrNotSent
+		case <-time.After(wait):
+		}
+		ok = append(ok, p.outbox.send(ctx, it, beef)...)
+	}
+	r.Sent = p.cfg.Delivery.sent(ok)
 	if !r.Sent {
 		return r, ErrNotSent
 	}
 	return r, nil
-}
-
-// holdOutput mints and mines a hold output of sats (spec section 9.2) and
-// delivers it, alone with its proof, to the records topic. It is recorded
-// in the state before it reaches the settlement leg.
-func (p *Publisher) holdOutput(ctx context.Context, bucket string, sats uint64) (*HoldRecord, error) {
-	key, err := storerec.LockingKey(storerec.HoldDerivation, p.Identity())
-	if err != nil {
-		return nil, err
-	}
-	s := script.Script(storerec.HoldScript(key))
-	if h, err := p.cfg.Asset.BestHeader(ctx); err == nil {
-		p.payer.Tip = h.Height
-	}
-	fee, err := p.payer.TakeAtLeast(ctx, sats+p.cfg.Fees.Floor*4)
-	if err != nil {
-		return nil, feeError(err)
-	}
-	change, err := p.signer.FundScript()
-	if err != nil {
-		p.payer.GiveBack()
-		return nil, err
-	}
-	tx, err := mint.Transition(&s, sats, nil, fee, change, p.cfg.Fees)
-	if err != nil {
-		p.payer.GiveBack()
-		return nil, err
-	}
-	rec := HoldRecord{Txid: tx.TxID().String(), Vout: 0, Sats: sats, RawHex: hex.EncodeToString(tx.Bytes())}
-	p.mu.Lock()
-	p.st.Holds = append(p.st.Holds, rec)
-	err = p.saveLocked()
-	p.mu.Unlock()
-	if err != nil {
-		p.payer.GiveBack()
-		return nil, err
-	}
-	mp, height, err := p.payer.SettleAndWait(ctx, "hold output", tx)
-	if err != nil {
-		p.payer.GiveBack()
-		return nil, err
-	}
-	tx.MerklePath = mp
-	p.payer.Change(tx, height, mp)
-	rec.BumpHex, rec.Height = funding.BumpHex(mp), height
-	p.mu.Lock()
-	for i := range p.st.Holds {
-		if p.st.Holds[i].Txid == rec.Txid {
-			p.st.Holds[i] = rec
-		}
-	}
-	err = p.saveLocked()
-	p.mu.Unlock()
-	if err != nil {
-		return nil, err
-	}
-	beef, err := aloneBEEF(tx)
-	if err != nil {
-		return nil, err
-	}
-	if targets := p.cfg.Delivery.recordTargets(bucket, false); len(targets) > 0 {
-		it, err := p.outbox.add(rec.Txid, "hold output", beef, targets)
-		if err != nil {
-			return nil, err
-		}
-		p.outbox.send(ctx, it, beef)
-	}
-	return &rec, nil
 }
 
 // aloneBEEF is a mined transaction as a host admits a mined object: alone,

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -112,9 +113,19 @@ func TestPutDeliversAndRetries(t *testing.T) {
 	if p.Outbox().Pending() != 0 {
 		t.Fatal("delivered objects left in the outbox")
 	}
-	holds := p.Holds()
-	if len(holds) != 1 || holds[0].Entry != r.Txid || holds[0].BumpHex == "" {
-		t.Fatalf("hold record: %+v", holds)
+	// The hold outputs are minted ahead; exactly one is taken, by this
+	// entry, and the rest stay ready.
+	used, ready := 0, 0
+	for _, h := range p.Holds() {
+		switch {
+		case h.Used && h.Entry == r.Txid && h.BumpHex != "":
+			used++
+		case !h.Used && h.BumpHex != "":
+			ready++
+		}
+	}
+	if used != 1 || ready < 1 {
+		t.Fatalf("hold records: %d used by the entry, %d ready", used, ready)
 	}
 
 	// The provider is down: the pieces stay in the outbox and the put
@@ -173,3 +184,36 @@ func TestStageBound(t *testing.T) {
 		t.Fatalf("trim: %d %v", n, err)
 	}
 }
+
+// A put cut short leaves blobs no closure names; Trim removes them once
+// they are older than orphanAge, and never a pinned one.
+func TestTrimSweepsOrphans(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := io.MultiReader(bytes.NewReader(make([]byte, 5<<20)), &failing{})
+	if _, err := store.Stage(context.Background(), r, 10<<20); err == nil {
+		t.Fatal("a body that failed was staged")
+	}
+	n := 0
+	_ = filepath.Walk(filepath.Join(dir, "objects"), func(p string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() {
+			n++
+			old := time.Now().Add(-2 * orphanAge)
+			_ = os.Chtimes(p, old, old)
+		}
+		return nil
+	})
+	if n != 1 {
+		t.Fatalf("%d objects after a failed stage", n)
+	}
+	if got, err := store.Trim(1 << 40); err != nil || got != 0 {
+		t.Fatalf("after the sweep %d bytes are held (%v)", got, err)
+	}
+}
+
+type failing struct{}
+
+func (*failing) Read([]byte) (int, error) { return 0, errors.New("the client went away") }

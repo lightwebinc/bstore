@@ -20,12 +20,15 @@ func sprintf(format string, args ...any) string { return fmt.Sprintf(format, arg
 // answered 409. Signatures are kept for the clock skew S3 allows, or a
 // presigned URL's life.
 type replayCache struct {
-	now func() time.Time
-	mu  sync.Mutex
-	m   map[string]*replayEntry
+	now    func() time.Time
+	perKey int
+	mu     sync.Mutex
+	m      map[string]*replayEntry
+	byKey  map[string]int
 }
 
 type replayEntry struct {
+	key    string
 	until  time.Time
 	done   bool
 	status int
@@ -33,31 +36,48 @@ type replayEntry struct {
 	body   []byte
 }
 
-const maxReplay = 200_000
-
-func newReplayCache(now func() time.Time) *replayCache {
-	return &replayCache{now: now, m: map[string]*replayEntry{}}
+func newReplayCache(now func() time.Time, perKey int) *replayCache {
+	return &replayCache{now: now, perKey: perKey, m: map[string]*replayEntry{}, byKey: map[string]int{}}
 }
 
-func (c *replayCache) begin(sig string, until time.Time) (*replayEntry, bool, bool) {
+// sweep drops expired signatures; the caller holds c.mu.
+func (c *replayCache) sweep(now time.Time) {
+	for k, e := range c.m {
+		if !now.Before(e.until) {
+			delete(c.m, k)
+			if c.byKey[e.key]--; c.byKey[e.key] <= 0 {
+				delete(c.byKey, e.key)
+			}
+		}
+	}
+}
+
+// begin claims a signature for key. It returns the entry, whether its
+// write is done (answer from the cache) or busy (in progress), or nil when
+// the key holds its bound of unexpired signatures: each key fills only its
+// own share, so one key cannot stop another's writes.
+func (c *replayCache) begin(sig, key string, until time.Time) (*replayEntry, bool, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := c.now()
-	if e, ok := c.m[sig]; ok && now.Before(e.until) {
-		return e, e.done, !e.done
-	}
-	if len(c.m) >= maxReplay {
-		for k, e := range c.m {
-			if !now.Before(e.until) {
-				delete(c.m, k)
-			}
+	if e, ok := c.m[sig]; ok {
+		if now.Before(e.until) {
+			return e, e.done, !e.done
 		}
-		if len(c.m) >= maxReplay {
+		delete(c.m, sig)
+		if c.byKey[e.key]--; c.byKey[e.key] <= 0 {
+			delete(c.byKey, e.key)
+		}
+	}
+	if c.perKey > 0 && c.byKey[key] >= c.perKey {
+		c.sweep(now)
+		if c.byKey[key] >= c.perKey {
 			return nil, false, false
 		}
 	}
-	e := &replayEntry{until: until}
+	e := &replayEntry{key: key, until: until}
 	c.m[sig] = e
+	c.byKey[key]++
 	return e, false, false
 }
 
@@ -65,7 +85,12 @@ func (c *replayCache) finish(sig string, e *replayEntry, ok bool, status int, h 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !ok {
-		delete(c.m, sig)
+		if c.m[sig] == e {
+			delete(c.m, sig)
+			if c.byKey[e.key]--; c.byKey[e.key] <= 0 {
+				delete(c.byKey, e.key)
+			}
+		}
 		return
 	}
 	e.done, e.status, e.header, e.body = true, status, h, body
@@ -113,7 +138,7 @@ func (s *Server) replayed(w http.ResponseWriter, r *http.Request, a *Auth, f fun
 		fmt.Sscan(exp, &secs)
 		until = a.Time.Add(time.Duration(secs) * time.Second)
 	}
-	e, done, busy := s.replay.begin(a.Seed, until)
+	e, done, busy := s.replay.begin(a.Seed, a.Key.ID, until)
 	switch {
 	case e == nil:
 		return errSlowDown

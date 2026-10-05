@@ -218,6 +218,11 @@ func (s *Server) listObjects(ctx context.Context, w http.ResponseWriter, r *http
 		}
 		cursor = marker
 	}
+	done, e := acquire(s.lookups)
+	if e != nil {
+		return e
+	}
+	defer done()
 	l := &lister{prefix: prefix, cursor: cursor, next: cursor,
 		list: func(after string) (*reader.Page, error) { return s.reader.List(ctx, b.chain, prefix, after) }}
 	l.pend = s.st.inRange(b.chain.Bucket, prefix, cursor)

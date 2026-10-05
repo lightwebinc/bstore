@@ -59,7 +59,7 @@ type Server struct {
 	limits  *keyLimits
 	metrics *metrics
 
-	writes, parts, reads chan struct{}
+	writes, parts, reads, stages, lookups chan struct{}
 
 	srv    *http.Server
 	msrv   *http.Server
@@ -87,9 +87,10 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Server, error) {
 		opts.Tick = 10 * time.Second
 	}
 	s := &Server{cfg: cfg, opts: opts, pubs: map[string]*publish.Publisher{}, buckets: map[string]*bucket{},
-		replay: newReplayCache(opts.Now), metrics: newMetrics(),
+		replay: newReplayCache(opts.Now, cfg.Limits.ReplayPerKey), metrics: newMetrics(),
 		writes: make(chan struct{}, cfg.Limits.Writes), parts: make(chan struct{}, cfg.Limits.PartWrites),
-		reads: make(chan struct{}, cfg.Limits.Reads)}
+		reads: make(chan struct{}, cfg.Limits.Reads), stages: make(chan struct{}, cfg.Limits.Stages),
+		lookups: make(chan struct{}, cfg.Limits.Lookups)}
 	s.limits = newKeyLimits(cfg.Limits.RequestsPerSec, cfg.Limits.Burst, opts.Now)
 	if err := os.MkdirAll(cfg.Data, 0o700); err != nil {
 		return nil, err
@@ -109,7 +110,8 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Server, error) {
 		return nil, err
 	}
 	hostHTTP := &http.Client{Timeout: 2 * time.Minute, Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool},
-		MaxIdleConnsPerHost: 16, IdleConnTimeout: 90 * time.Second}}
+		MaxIdleConnsPerHost: 16, IdleConnTimeout: 90 * time.Second},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	fetchHTTP := &http.Client{Timeout: 2 * time.Minute, Transport: fetchTransport(pool, cfg.FetchPrivate),
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	hc, err := headers.NewSource(cfg.Headers)
@@ -119,6 +121,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Server, error) {
 	s.reader = &reader.Reader{Hosts: cfg.Hosts, HTTP: hostHTTP, Fetch: fetchHTTP, Headers: hc, Held: s.st, Logf: opts.Logf, Now: opts.Now}
 	asset := &nodeapi.Asset{Base: cfg.Node}
 	s.reader.Spender = asset.Spender
+	s.reader.OnToken = s.st.named
 	settler, err := settlerOf(cfg)
 	if err != nil {
 		return nil, err
@@ -127,7 +130,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Server, error) {
 	for _, name := range cfg.Identities {
 		p, err := publish.Open(ctx, publish.Config{Dir: cfg.IdentityDir(name), Asset: asset, Settler: settler,
 			Fees: mint.Fees{SatPerByte: cfg.FeeRate, Floor: cfg.FeeFloor}, Mainnet: cfg.Mainnet,
-			PieceTree: cfg.PieceTree, EntryTree: cfg.EntryTree, Store: s.store, Delivery: d, Logf: opts.Logf, Now: opts.Now})
+			PieceTree: cfg.PieceTree, EntryTree: cfg.EntryTree, HoldAhead: cfg.HoldAhead, Store: s.store, Delivery: d, Logf: opts.Logf, Now: opts.Now})
 		if err != nil {
 			return nil, fmt.Errorf("identity %s (bstore s3d init creates it): %w", name, err)
 		}
@@ -199,17 +202,43 @@ func fetchTransport(pool *x509.CertPool, private bool) *http.Transport {
 			if err != nil {
 				return err
 			}
-			ip := net.ParseIP(host)
-			if ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-				ip.IsUnspecified() || ip.IsMulticast() || ip.IsInterfaceLocalMulticast() {
+			if !publicAddr(net.ParseIP(host)) {
 				return fmt.Errorf("refused: %s is not a public address", host)
 			}
 			return nil
 		}
 	}
 	return &http.Transport{DialContext: d.DialContext, TLSClientConfig: &tls.Config{RootCAs: pool},
-		MaxIdleConnsPerHost: 8, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 15 * time.Second,
-		ResponseHeaderTimeout: time.Minute}
+		MaxIdleConnsPerHost: 8, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second,
+		ResponseHeaderTimeout: 15 * time.Second}
+}
+
+// nonPublic are the ranges an advertised URL is never fetched from, beside
+// what net.IP classifies as loopback, private, link-local, multicast or
+// unspecified: shared address space, benchmarking, "this network", and the
+// IPv6 forms that carry an IPv4 address (NAT64, 6to4, Teredo) or are
+// discard-only and documentation.
+var nonPublic = func() []*net.IPNet {
+	var out []*net.IPNet
+	for _, c := range []string{"0.0.0.0/8", "100.64.0.0/10", "192.0.0.0/24", "192.0.2.0/24", "198.18.0.0/15", "198.51.100.0/24",
+		"203.0.113.0/24", "240.0.0.0/4", "64:ff9b::/96", "64:ff9b:1::/48", "2002::/16", "2001::/32", "100::/64", "2001:db8::/32"} {
+		_, n, _ := net.ParseCIDR(c)
+		out = append(out, n)
+	}
+	return out
+}()
+
+func publicAddr(ip net.IP) bool {
+	if ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsUnspecified() || ip.IsMulticast() || ip.IsInterfaceLocalMulticast() {
+		return false
+	}
+	for _, n := range nonPublic {
+		if n.Contains(ip) {
+			return false
+		}
+	}
+	return true
 }
 
 // Identity is an identity's key, 66 hex digits.
@@ -301,9 +330,30 @@ func (s *Server) background(ctx context.Context) {
 	defer s.wg.Done()
 	t := time.NewTicker(s.opts.Tick)
 	defer t.Stop()
+	// The outbox is sent again on a run of its own, so a backlog never
+	// holds up the store's trimming or the hold outputs minted ahead.
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		t := time.NewTicker(s.opts.Tick)
+		defer t.Stop()
+		for {
+			for _, p := range s.pubs {
+				p.Outbox().Retry(ctx)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+		}
+	}()
 	for {
 		for _, p := range s.pubs {
-			p.Outbox().Retry(ctx)
+			p.CheckHolds(ctx)
+			if b := s.cfg.Bounty; b != nil {
+				go p.FillHolds(ctx, b.Satoshis)
+			}
 		}
 		if _, err := s.store.Trim(s.cfg.StoreBytes); err != nil {
 			s.opts.Logf("store: %v", err)
@@ -539,7 +589,7 @@ func (s *Server) bucketOp(ctx context.Context, w http.ResponseWriter, r *http.Re
 			if e := checkSub(r, map[string]bool{"delete": true}); e != nil {
 				return "DeleteObjects", e
 			}
-			return "DeleteObjects", s.deleteObjects(ctx, w, r, a, b)
+			return "DeleteObjects", s.replayed(w, r, a, func(w http.ResponseWriter) *s3Error { return s.deleteObjects(ctx, w, r, a, b) })
 		}
 		return "PostBucket", errMethod
 	case http.MethodPut:
@@ -577,7 +627,10 @@ func (s *Server) objectOp(ctx context.Context, w http.ResponseWriter, r *http.Re
 			if r.Header.Get("X-Amz-Copy-Source") != "" {
 				return "UploadPartCopy", notImplemented("UploadPartCopy")
 			}
-			return "UploadPart", s.replayed(w, r, a, func(w http.ResponseWriter) *s3Error { return s.uploadPart(ctx, w, r, a, b, key) })
+			// Not replay-cached: a part publishes nothing, and a part sent
+			// again only rewrites itself (a completion names each part's
+			// MD5, so a part swapped by a replay is refused there).
+			return "UploadPart", s.uploadPart(ctx, w, r, a, b, key)
 		}
 		if e := checkSub(r, nil); e != nil {
 			return "PutObject", e
@@ -591,7 +644,7 @@ func (s *Server) objectOp(ctx context.Context, w http.ResponseWriter, r *http.Re
 			if e := checkSub(r, map[string]bool{"uploads": true}); e != nil {
 				return "CreateMultipartUpload", e
 			}
-			return "CreateMultipartUpload", s.replayed(w, r, a, func(w http.ResponseWriter) *s3Error { return s.createUpload(w, r, a, b, key) })
+			return "CreateMultipartUpload", s.createUpload(w, r, a, b, key)
 		}
 		if hasUpload {
 			if e := checkSub(r, map[string]bool{"uploadId": true}); e != nil {
