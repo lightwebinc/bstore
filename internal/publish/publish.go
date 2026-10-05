@@ -29,6 +29,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -103,8 +104,12 @@ type Config struct {
 	// Reader, when set, asks the hosts and verifies what they answer: the
 	// race's advertisements and fronts, and closures the store lacks.
 	Reader *reader.Reader
-	Logf   func(format string, args ...any)
-	Now    func() time.Time
+	// FrontHTTP reaches the fronts that advertisements and statements name
+	// (challenges, terms, remittances): addresses a stranger chose, so it
+	// should refuse private ones. Nil uses Delivery's client.
+	FrontHTTP *http.Client
+	Logf      func(format string, args ...any)
+	Now       func() time.Time
 }
 
 // Publisher is one identity's writer.
@@ -125,7 +130,11 @@ type Publisher struct {
 	outs   *producer.Trees
 	outbox *Outbox
 	lock   *dirLock
-	auth   *authClient
+	// auth reaches the providers configured (upload sessions); frontAuth
+	// reaches the fronts advertisements and statements name, through
+	// FrontHTTP.
+	auth      *authClient
+	frontAuth *authClient
 }
 
 type state struct {
@@ -143,6 +152,8 @@ type state struct {
 	Sweeps []SweepRecord `json:"sweeps,omitempty"`
 	// Uploads are the unicast upload sessions owed a closure.
 	Uploads []UploadRecord `json:"uploads,omitempty"`
+	// Payments are BRC-105 payments made and not yet seen mined.
+	Payments []PaymentRecord `json:"payments,omitempty"`
 }
 
 type treeSet struct {
@@ -175,6 +186,9 @@ type HoldRecord struct {
 	Entry string `json:"entry,omitempty"`
 	// Sent is when it was handed to the settlement leg (Unix seconds).
 	Sent int64 `json:"sent,omitempty"`
+	// Reclaim is its spend back to the fund key when no entry names it,
+	// recorded before it is sent.
+	Reclaim *ReclaimRecord `json:"reclaim,omitempty"`
 }
 
 const (
@@ -246,6 +260,11 @@ func Open(ctx context.Context, cfg Config) (*Publisher, error) {
 		return nil, err
 	}
 	p.auth = newAuthClient(p, cfg.Delivery.HTTP)
+	fh := cfg.FrontHTTP
+	if fh == nil {
+		fh = cfg.Delivery.HTTP
+	}
+	p.frontAuth = newAuthClient(p, fh)
 	if err := p.save(); err != nil {
 		return nil, err
 	}

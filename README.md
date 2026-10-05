@@ -55,7 +55,7 @@ Go 1.27 and Node 24. [docs/codec.md](docs/codec.md) and
 ## Status
 
 Contract signed: every row of [docs/frozen.md](docs/frozen.md) is frozen,
-with twenty-two clarifications pending confirmation (section 14). The codec, in
+with twenty-four clarifications pending confirmation (section 14). The codec, in
 Go and TypeScript, its golden vectors, the overlay host module
 (`tm_bstore_`, `tm_bstoreblob_` and `ls_bstore`), the storage provider
 (`bstore-provider`), the S3 gateway (`bstore s3d`) and the command line

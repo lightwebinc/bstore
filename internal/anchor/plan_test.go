@@ -3,6 +3,7 @@ package anchor
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"reflect"
 	"strings"
@@ -15,7 +16,7 @@ func c(s string) [32]byte { return sha256.Sum256([]byte(s)) }
 
 func sizer() func([]storerec.Change, [][32]byte) (int, error) {
 	return RecordSizer(storerec.Bucket{Bucket: "example_photos_hmqzvtkwrx", Owner: append([]byte{0x02}, bytes.Repeat([]byte{0x11}, 32)...),
-		Seq: 1, Count: storerec.MaxKeysInMap, Created: 253402300799999, Writers: [][]byte{}})
+		Seq: storerec.MaxSafe, Count: storerec.MaxKeysInMap, Created: 253402300799999, Writers: [][]byte{}})
 }
 
 // fold applies plan's steps as a host folds tokens, from current.
@@ -218,5 +219,40 @@ func TestPlanNeverAppliesTwice(t *testing.T) {
 	// and deleted in one batch) is consumed, and not found again.
 	if !named[c("d1")] || !named[c("p1")] {
 		t.Fatal("the first run did not name every entry")
+	}
+}
+
+// Every token of a split encodes at its own seq: the sizing takes the
+// widest seq, so a later token whose seq needs another byte still fits.
+func TestPlanFitsAtEveryTokensSeq(t *testing.T) {
+	cur := storerec.Map{}
+	for i := 0; i < 70000; i++ {
+		cur[fmt.Sprintf("a%06d", i)] = c(fmt.Sprint("m", i))
+	}
+	owner, _ := hex.DecodeString("02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5")
+	for trial := 0; trial < 20; trial++ {
+		latest := uint64(254) // the next tokens' seqs cross a CBOR width
+		base := SizingBase("example_photos_hmqzvtkwrx", owner, c("id"), c("prev"), [][]byte{})
+		var batch []storerec.Applicable
+		for i := 0; i < 2500; i++ {
+			k := fmt.Sprintf("k%05d/%s", i, strings.Repeat("x", 60+(i*7+trial*13)%140))
+			batch = append(batch, storerec.Applicable{C: c(fmt.Sprint(trial, i)), Key: k, Kind: storerec.KindPut, Created: 1})
+		}
+		plan, err := PlanBatch(cur, nil, batch, RecordSizer(base))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, s := range plan.Steps {
+			b := base
+			b.Seq = latest + 1 + uint64(i)
+			b.Changes, b.Consumed = s.Changes, s.Consumed
+			if b.Consumed == nil {
+				b.Consumed = [][32]byte{}
+			}
+			b.Count, b.Created = uint64(len(s.Map)), 1_800_000_000_000
+			if _, err := b.Encode(); err != nil {
+				t.Fatalf("trial %d step %d seq %d: %v", trial, i, b.Seq, err)
+			}
+		}
 	}
 }

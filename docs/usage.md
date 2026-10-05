@@ -170,17 +170,30 @@ $ bstore settle
   before it exists and is mined, and an advertisement says nothing about the
   bytes: possession is what the challenge proves.
 - **The settlement challenge.** In rank order, each candidate is challenged
-  at its front (derived from its advertisement's URL, then any front
-  statement naming it) with `min(checkC, freeC)` samples, `freeC` from its
-  terms (30, the floor every provider's `freeC` meets, when its terms cannot
-  be read), seeded by the tip and a fresh nonce, and the signed response is
+  at its front (derived from its advertisement's URL; a front statement
+  naming it, four at most, only once its own front has not answered) with
+  `min(checkC, freeC)` samples, `freeC` from its terms (30, the floor every
+  provider's `freeC` meets, when its terms cannot be read), seeded two
+  blocks below the tip with a fresh nonce, and the signed response is
   checked sample-major, by-reference samples fetched from the advertised URL
-  and rechecked from the whole blob. A provider whose `minAge` the hold
-  output is not yet deep enough for waits for a later look; one whose
-  `minBounty` the bounty is below is priced, and is paid only up to
-  `-budget`. A candidate that does not pass is skipped and its failure is
-  published as an outcome record; one that gives no signed answer is asked
-  again, three times at most.
+  and rechecked from the whole blob.
+- **Draws.** A candidate gets two requests (draws) over the whole race,
+  every front counted. A draw is recorded before it is sent, and one not
+  answered (a timeout, a server error, a price) is sent again unchanged,
+  the same nonce, until its seed leaves the answerer's window or three sends
+  have failed; only then is it spent. So a provider cannot answer the draws
+  it can serve and refuse the rest: refusing only delays it. A refusal of
+  the request itself, or a signed answer, spends the draw.
+- **Whose failure.** A failure is the answerer's (spec section 7.4): at the
+  advertiser's own front it fails the candidate; at a front that is not the
+  advertiser it is the front's, that front is not asked again, and the
+  candidate is not failed (an unretrievable sample, which is about the
+  advertiser's URL, fails it whoever answered). A provider whose `minAge`
+  the hold output is not yet deep enough for waits for a later look; one
+  whose `minBounty` the bounty is below is priced, and is paid only up to
+  `-budget`; neither is passed or failed. A failure at a signed answer is
+  published as an outcome record. One candidate takes at most four minutes
+  of a look.
 - **Close.** The race closes when `K` have passed, when the window
   (`race_window_seconds`) ends with at least `t` passed, or with `settle
   -close`. With fewer than `t` when the window ends nothing is paid.
@@ -193,19 +206,27 @@ again. One transaction spends the hold output and pays rank `i` the
 square-root share `floor(R * sqrt(k - i + 1) / S)`, the remainder to rank 1,
 as a P2PKH output to the key BRC-29 derives for its advertiser with prefix
 the entry's commitment and suffix the two-byte rank; the payouts sum to
-exactly the hold output and the fee comes from another coin. The
+exactly the hold output and the fee comes from another coin. A payee's
+advertisement is followed through sixteen renewals at most, one successor a
+spend; a longer chain is taken as not live. The
 settlement is signed and recorded before it reaches the settlement leg: a
 `settle` killed at any point is finished by running it again, which sends
 the same bytes and never builds a second settlement for the hold output.
-Once it mines, each payee's remittance goes, unicast, to its `settle` route;
-`settle` again resends any a payee has not taken. A settlement is made only
+Once it mines, each payee's remittance goes, unicast, to the `settle` route
+of the advertiser's own front, derived from its advertisement, never to a
+front that answered for it; `settle` again resends any a payee has not
+taken. A settlement that can never mine (a fee coin spent elsewhere) is set
+aside and the next `settle` builds another; a settlement a miner re-encoded
+is taken as the one sent. A settlement is made only
 while the tip is below the deadline.
 
 `reclaim` spends a hold output nobody won back to the fund key once the tip
 reaches its deadline: a race closed with fewer than `t`, or one whose
-deadline came first. A hold output with a settlement recorded is never
-reclaimed, and a reclaimed one is never settled. `reclaim -unused` also
-spends back the hold outputs minted ahead that no put took.
+deadline came first. A hold output with a settlement recorded (and not set
+aside as never able to mine) is never reclaimed, and a reclaimed one is
+never settled. A put that stops before its entry is made gives its hold
+output back to the next put; `reclaim -unused` spends back every mined hold
+output no entry names, each reclaim recorded whole before it is sent.
 
 The gateway's puts with a bounty are judged and settled the same way: run
 `bstore holds` and `bstore settle` with `-home` at the identity's directory
@@ -217,7 +238,7 @@ the gateway is stopped.
 ```console
 $ bstore get photos/cat.jpg ./cat.jpg -proof-root
 $ bstore ls photos/
-1048576	2026-01-01T00:00:00Z	photos/cat.jpg
+1048576	<created>	photos/cat.jpg
 ```
 
 `get` makes every check of spec section 15.2 in order: the chain's latest
@@ -254,7 +275,10 @@ blob of a 100 MiB object is caught by `c = 113` 99 times in 100.
 
 - `sync` sends everything owed: the outbox, closures owed to an upload
   session, hold transactions not yet seen mined, the change of payments
-  made; then records which of this identity's entries a token has named.
+  made; then records which of this identity's entries a token has named. A
+  BRC-105 payment is kept once it has left this process, answered or not,
+  since the payee may broadcast it; one the node has not seen in an hour,
+  whose coin the node shows unspent, gives its coin back.
 - `fill` replays to every host what this home made and the host lacks: its
   entries no token has named yet, and every token of the chains it owns
   (spec section 12.6).
@@ -304,6 +328,23 @@ provider's words) is filtered for the terminal (bcommon `termsafe`).
 | The outbox | an object is sent again for a week, then given up and said so |
 | A request | an authenticated call is retried after `429` twice, waiting what `Retry-After` asks up to 10 seconds |
 | A provider's bounds | a provider bounds the BRC-103 handshakes and the upload sessions one address opens ([provider.md](provider.md), Limits); each command opens its own sessions |
+| An authenticated answer | 9 MiB (a signed response at its bound and room); fronts named by advertisements and statements are reached through the same private-address guard as advertised URLs |
+| Anchoring time | the walk of every writer's unanchored entries takes ten minutes at most a run; a host whose page does not verify is not asked for more that run |
+
+What the race cannot tell:
+
+- **An advertiser may point its URL at another's bytes.** A by-reference
+  sample proves the advertised URL served the bytes, not whose disk they are
+  on: an advertiser that proxies another provider's blob route passes. As
+  with keys that are not copies (spec section 9.7), independence is the
+  writer's judgement.
+- **Ties go to the lower txid.** Advertisements first seen in one look tie,
+  and the lower advertisement txid ranks first (spec section 9.4, row C18):
+  a provider can grind its txid, and every advertisement that existed
+  before the race ties on the first look.
+- **A front that is not the advertiser** is asked only when the advertiser's
+  own front has not answered; then a hostile one can spend the candidate's
+  draws, though never fail it by its own answer.
 
 ## Test it end to end
 

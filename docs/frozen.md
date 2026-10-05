@@ -6,8 +6,8 @@ already published. Once one record using it is on a public host, readers
 verify against it for as long as anyone reads that record, so changing it
 afterwards is a new identifier or a new record version, never an edit.
 
-**Status: signed, with twenty-two clarifications pending owner confirmation
-(section 14, rows C1 to C22).** Every other row below is signed with the
+**Status: signed, with twenty-four clarifications pending owner confirmation
+(section 14, rows C1 to C24).** Every other row below is signed with the
 value it gives, and none is provisional. The rows marked "vectors" are pinned byte for byte by
 the golden vectors the codec generates ([spec.md](spec.md) section 22); a
 vector that disagrees with a row is a defect in the codec, not a change to
@@ -206,7 +206,7 @@ least 1024. As ceilings, not floors: the BEEF ceilings of section 2.
 A clarification rewords a signed rule where the signed wording leaves a
 case open. Each below is pending the owner's confirmation; the codec and its
 vectors (C1 to C7), the host module (C8), the provider (C9 to C11), the S3
-gateway (C13 to C16) and the command line (C17 to C22) already follow it.
+gateway (C13 to C16) and the command line (C17 to C24) already follow it.
 C12 rewords how the contract describes the challenge seed, and binds a later
 on-chain form.
 
@@ -234,3 +234,5 @@ on-chain form.
 | C20 | Exit codes, spec section 15.4 | A key the map proves absent, asked for by name, exits 1 (`NoSuchKey`): what was asked for is proven not to be there. A key whose entry no host produces stays 3 | PENDING owner confirmation |
 | C21 | Anchoring, spec sections 3.4, 3.5 and 4.4 | The tooling walks the unanchored entries of the owner and of the writers the token it mints names (a writer it adds included, against which a reader then checks that token's entries). It splits a batch over tokens so that one token carries each key's change, the key's superseded entries going to that token's `consumed` or to tokens of `consumed` alone before it. It mints only on a latest token whose output the spend source shows unspent | PENDING owner confirmation |
 | C22 | Remittance, spec sections 9.5 and 10.1 | The `settle` remittance carries the settlement as Atomic BEEF with its proof: the writer sends it once the settlement has mined, and a payee takes it only once it verifies against the payee's headers | PENDING owner confirmation |
+| C23 | The settlement challenge, spec sections 7.2, 7.4 and 9.4 | The writer gives each candidate at most two requests over the race, at every front together. A request is seeded at a block below the writer's tip (two blocks), and one not answered (no response, a server error, a price, a `seed` refusal) is sent again unchanged until its seed leaves the answerer's window or it has gone unanswered three times, and only then counts; any other answer to it counts at once. A failure is the answerer's: it fails the candidate when the answerer is the advertiser, or when a sample is unretrievable from the advertiser's URL; a failure at a front that is not the advertiser is that front's, which is not asked again | PENDING owner confirmation |
+| C24 | Remittance, spec sections 9.5 and 10.1 | The `settle` remittance goes to the route of the front derived from the payee's own advertisement, never to a front statement's: a third party that answered for the advertiser is not the payee's route | PENDING owner confirmation |

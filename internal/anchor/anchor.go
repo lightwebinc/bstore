@@ -13,6 +13,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/bsv-blockchain/go-sdk/transaction"
 
@@ -406,20 +407,41 @@ func (t *Tool) finishPending(ctx context.Context, c *Chain) error {
 	asset := t.Pub.Asset()
 	mp, height, perr := asset.Proof(ctx, pt.Txid)
 	if perr != nil {
-		free, by, err := t.Pub.Unspent(ctx, parent.TxID().String(), pt.Vout)
+		cf, err := t.Pub.SpentElsewhere(ctx, tx)
 		if err != nil {
 			return fmt.Errorf("%w: %v", ErrIncomplete, err)
 		}
-		if !free && by != pt.Txid {
-			t.logf("token %d of %s: %s lost: the output it spends is spent by %s; the chain is rebuilt on the winner", pt.Seq, c.Bucket, short(pt.Txid), short(by))
+		parentID := parent.TxID().String()
+		spendsParent := cf != nil && tx.Inputs[cf.Input].SourceTXID.String() == parentID && tx.Inputs[cf.Input].SourceTxOutIndex == pt.Vout
+		switch {
+		case cf != nil && cf.Same:
+			// A miner re-encoded the token (spec section 13.3): the same
+			// record, the successor builds on the mined txid.
+			t.logf("token %d of %s: %s was mined re-encoded as %s", pt.Seq, c.Bucket, short(pt.Txid), short(cf.By.TxID().String()))
+			tx = cf.By
+			pt.Txid, pt.Raw = tx.TxID().String(), hex.EncodeToString(tx.Bytes())
+			if err := t.Store.Save(c); err != nil {
+				return err
+			}
+		case spendsParent:
+			t.logf("token %d of %s: %s lost: the output it spends is spent by %s; the chain is rebuilt on the winner", pt.Seq, c.Bucket, short(pt.Txid), short(cf.By.TxID().String()))
 			t.Pub.ReturnCoin(ctx, pt.Fee)
 			c.Pending = nil
 			if err := t.Store.Save(c); err != nil {
 				return err
 			}
 			return fmt.Errorf("%w: another token spent the chain's latest token first; run anchor again", ErrIncomplete)
-		}
-		if free {
+		case cf != nil:
+			// Its fee coin went elsewhere: it can never mine, and the
+			// chain's latest token is still unspent. The next run builds
+			// the token again.
+			t.logf("token %d of %s: %s can never mine (its fee input was spent by %s); it is built again", pt.Seq, c.Bucket, short(pt.Txid), short(cf.By.TxID().String()))
+			c.Pending = nil
+			if err := t.Store.Save(c); err != nil {
+				return err
+			}
+			return fmt.Errorf("%w: a token could never mine; run anchor again", ErrIncomplete)
+		default:
 			if err := t.Pub.Settler().Submit(ctx, tx); err != nil && !strings.Contains(strings.ToLower(err.Error()), "already") {
 				t.logf("token %s: sent: %v", short(pt.Txid), err)
 			}
@@ -449,6 +471,11 @@ func (t *Tool) finishPending(ctx context.Context, c *Chain) error {
 	}
 	return nil
 }
+
+// walkBudget bounds the walk of every writer's unanchored entries at every
+// host in one run: a host that answers slowly delays the run, not stalls
+// it.
+const walkBudget = 10 * time.Minute
 
 // Options are what an anchoring run may change besides the map.
 type Options struct {
@@ -548,9 +575,11 @@ func (t *Tool) Anchor(ctx context.Context, c *Chain, o Options) (*Report, error)
 	// Every writer's unanchored entries, at every host.
 	found := map[[32]byte]*candidate{}
 	ask := append([]string{hex.EncodeToString(owner)}, writerHex...)
+	wctx, cancel := context.WithTimeout(ctx, walkBudget)
 	for _, w := range ask {
-		t.walkUnanchored(ctx, ch, w, found, rep)
+		t.walkUnanchored(wctx, ch, w, found, rep)
 	}
+	cancel()
 	var batch []storerec.Applicable
 	keysOf := make([][32]byte, 0, len(found))
 	for k := range found {
@@ -576,8 +605,7 @@ func (t *Tool) Anchor(ctx context.Context, c *Chain, o Options) (*Report, error)
 		e := cd.e.Entry
 		batch = append(batch, storerec.Applicable{C: cd.e.C, Key: e.Key, Kind: e.Kind, Created: e.Created})
 	}
-	base := storerec.Bucket{Bucket: c.Bucket, Owner: owner, ID: ch.ID, Seq: latest.Bucket.Seq + 1, Prev: latest.Txid,
-		Writers: writerKeys, Count: storerec.MaxKeysInMap, Created: 253402300799999}
+	base := SizingBase(c.Bucket, owner, ch.ID, latest.Txid, writerKeys)
 	if base.Writers == nil {
 		base.Writers = [][]byte{}
 	}
@@ -660,8 +688,13 @@ func (t *Tool) walkUnanchored(ctx context.Context, ch reader.Chain, w string, fo
 			}
 			bad := ""
 			last := after
+			if len(a.Outputs) > 64 {
+				// The class answers at most 64: more is not an answer.
+				rep.Hosts = append(rep.Hosts, fmt.Sprintf("host %s: unanchored for %s: %d outputs to one page", h, short(w), len(a.Outputs)))
+				break
+			}
 			for _, o := range a.Outputs {
-				tx, err := transaction.NewTransactionFromBEEF(o.Beef)
+				tx, err := publish.BEEFSubject(o.Beef, 1<<20)
 				if err != nil {
 					bad = "an output that is not a transaction"
 					break
@@ -688,10 +721,10 @@ func (t *Tool) walkUnanchored(ctx context.Context, ch reader.Chain, w string, fo
 				}
 			}
 			if bad != "" {
+				// What verified on the page is kept; the host is not asked
+				// for more this run.
 				rep.Hosts = append(rep.Hosts, fmt.Sprintf("host %s: unanchored for %s: %s", h, short(w), bad))
-				if strings.HasPrefix(bad, "outputs not") || strings.HasPrefix(bad, "an output that") {
-					break
-				}
+				break
 			}
 			if len(a.Outputs) < 64 {
 				break
@@ -729,4 +762,12 @@ func short(s string) string {
 		return s[:12]
 	}
 	return s
+}
+
+// SizingBase is the record a batch's tokens are measured against: every
+// token at the widest seq, count and time it could carry, so a later token
+// of a split, whose seq is wider, still fits.
+func SizingBase(bucket string, owner []byte, id, prev [32]byte, writers [][]byte) storerec.Bucket {
+	return storerec.Bucket{Bucket: bucket, Owner: owner, ID: id, Seq: storerec.MaxSafe, Prev: prev,
+		Writers: writers, Count: storerec.MaxKeysInMap, Created: 253402300799999}
 }

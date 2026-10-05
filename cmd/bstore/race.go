@@ -53,6 +53,7 @@ func cmdHolds(ctx context.Context, g *global, args []string) error {
 	}
 	o := h.raceOptions(*budget)
 	end := time.Now().Add(*watch)
+	failed := map[string]bool{}
 	for {
 		open := 0
 		for _, r := range races {
@@ -61,6 +62,9 @@ func cmdHolds(ctx context.Context, g *global, args []string) error {
 			}
 			if err := h.pub.Step(ctx, r, o); err != nil {
 				g.say("race %s: %v", short(r.Entry), err)
+				failed[r.Entry] = true
+			} else {
+				delete(failed, r.Entry)
 			}
 			if r.Open() && !r.Closed(time.Now(), 0) {
 				open++
@@ -77,6 +81,9 @@ func cmdHolds(ctx context.Context, g *global, args []string) error {
 	}
 	for _, r := range races {
 		h.printRace(r)
+	}
+	if len(failed) > 0 {
+		return incomplete("%d race(s) could not be judged now", len(failed))
 	}
 	return nil
 }
@@ -173,7 +180,7 @@ func cmdSettle(ctx context.Context, g *global, args []string) error {
 		return err
 	}
 	o := h.raceOptions(*budget)
-	var left []string
+	var left, hard []string
 	for _, r := range races {
 		switch r.State {
 		case publish.RaceOpen, publish.RaceSettling, publish.RaceSettled:
@@ -214,13 +221,17 @@ func cmdSettle(ctx context.Context, g *global, args []string) error {
 		case errors.Is(err, publish.ErrNotYet), errors.Is(err, publish.ErrPastDeadline):
 			left = append(left, fmt.Sprintf("race %s: %v", short(r.Entry), err))
 		default:
-			return err
+			// The next race is still settled; this one is reported.
+			hard = append(hard, fmt.Sprintf("race %s: %v", short(r.Entry), err))
 		}
 	}
-	for _, l := range left {
+	for _, l := range append(hard, left...) {
 		g.say("%s", l)
 	}
-	if len(left) > 0 {
+	switch {
+	case len(hard) > 0:
+		return &exitError{code: exitUsage}
+	case len(left) > 0:
 		return &exitError{code: exitIncomplete}
 	}
 	return nil

@@ -16,8 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bsv-blockchain/go-sdk/transaction"
-
 	"github.com/lightwebinc/bcommon/chaintoken"
 	"github.com/lightwebinc/bcommon/chirp"
 
@@ -72,13 +70,19 @@ type Race struct {
 	Started    int64  `json:"started"`
 	// RootLen is the root node's length, which an eligible advertisement's
 	// fileSize must equal.
-	RootLen    uint64          `json:"rootLen,omitempty"`
-	State      string          `json:"state"`
-	Cands      []*Cand         `json:"candidates,omitempty"`
-	Settlement *SettleRecord   `json:"settlement,omitempty"`
-	Reclaim    *ReclaimRecord  `json:"reclaim,omitempty"`
-	Note       string          `json:"note,omitempty"`
-	Outcomes   []PublishedNote `json:"outcomes,omitempty"`
+	RootLen uint64 `json:"rootLen,omitempty"`
+	State   string `json:"state"`
+	// Closing is set when the race has closed for settlement (the window
+	// ended with at least t passed) and is waiting to be settled.
+	Closing    bool          `json:"closing,omitempty"`
+	Cands      []*Cand       `json:"candidates,omitempty"`
+	Settlement *SettleRecord `json:"settlement,omitempty"`
+	// Abandoned are settlements recorded that could never mine (a fee
+	// input spent elsewhere), kept for the record.
+	Abandoned []SettleRecord  `json:"abandoned,omitempty"`
+	Reclaim   *ReclaimRecord  `json:"reclaim,omitempty"`
+	Note      string          `json:"note,omitempty"`
+	Outcomes  []PublishedNote `json:"outcomes,omitempty"`
 
 	entry *storerec.Entry
 }
@@ -106,6 +110,11 @@ type Cand struct {
 	Expiry   uint64    `json:"expiry"`
 	Status   string    `json:"status"`
 	Attempts []Attempt `json:"attempts,omitempty"`
+	// Draws are the settlement challenges spent; Pending is the one made
+	// and not yet answered; BadFronts are fronts not asked again.
+	Draws     int          `json:"draws,omitempty"`
+	Pending   *PendingDraw `json:"pending,omitempty"`
+	BadFronts []string     `json:"badFronts,omitempty"`
 	// Front and Answerer are where it passed.
 	Front    string `json:"front,omitempty"`
 	Answerer string `json:"answerer,omitempty"`
@@ -135,8 +144,6 @@ type RaceOptions struct {
 	// Publish publishes failed challenges as outcome records.
 	Publish bool
 }
-
-const maxNoAnswers = 3
 
 func (p *Publisher) racesDir() string { return filepath.Join(p.cfg.Dir, "races") }
 
@@ -323,6 +330,7 @@ func (p *Publisher) Step(ctx context.Context, r *Race, o RaceOptions) error {
 			r.State = RaceClosed
 			r.Note = fmt.Sprintf("the window ended with %d passed, fewer than t = %d: nothing is paid", passed, e.Hold.T)
 		} else {
+			r.Closing = true
 			r.Note = fmt.Sprintf("closed: the window ended with %d passed", passed)
 		}
 	}
@@ -333,7 +341,7 @@ func (p *Publisher) Step(ctx context.Context, r *Race, o RaceOptions) error {
 // window ended with at least t.
 func (r *Race) Closed(now time.Time, window time.Duration) bool {
 	passed := uint64(len(r.Passed()))
-	if passed >= r.entry.Hold.K {
+	if passed >= r.entry.Hold.K || (r.Closing && passed >= r.entry.Hold.T) {
 		return true
 	}
 	return window > 0 && now.Sub(time.Unix(r.Started, 0)) >= window && passed >= r.entry.Hold.T
@@ -366,8 +374,12 @@ func (p *Publisher) watch(ctx context.Context, r *Race) error {
 				break
 			}
 			last := ""
+			if len(a.Outputs) > 64 {
+				errs = append(errs, fmt.Sprintf("host %s: %d outputs to one ads page", h, len(a.Outputs)))
+				break
+			}
 			for _, out := range a.Outputs {
-				tx, err := transaction.NewTransactionFromBEEF(out.Beef)
+				tx, err := BEEFSubject(out.Beef, 1<<20)
 				if err != nil {
 					continue
 				}
@@ -493,7 +505,8 @@ func (p *Publisher) terms(ctx context.Context, front string) providerTerms {
 func (p *Publisher) fronts(ctx context.Context, r *Race, c *Cand) []frontAt {
 	adv, _ := hex.DecodeString(c.Advertiser)
 	var out []frontAt
-	if f, ok := storerec.DerivedFront(c.URL); ok {
+	bad := func(u string) bool { return slices.Contains(c.BadFronts, u) }
+	if f, ok := storerec.DerivedFront(c.URL); ok && !bad(f) {
 		out = append(out, frontAt{url: f, answerer: adv})
 	}
 	rd := p.cfg.Reader
@@ -502,17 +515,23 @@ func (p *Publisher) fronts(ctx context.Context, r *Race, c *Cand) []frontAt {
 	}
 	seen := map[string]bool{}
 	for _, h := range rd.Hosts {
+		if len(out) >= maxFronts {
+			break
+		}
 		a, err := rd.Ask(ctx, h, map[string]string{"bucket": r.Bucket, "advertiser": c.Advertiser, "after": ""})
-		if err != nil {
+		if err != nil || len(a.Outputs) > 8 {
 			continue
 		}
 		for _, o := range a.Outputs {
+			if len(out) >= maxFronts {
+				break
+			}
 			ad, err := storerec.Admit(ctx, o.Beef, nil, storerec.Host{Bucket: r.Bucket, Headers: rd.Headers})
 			if err != nil || ad.Carrier == nil || ad.Carrier.Front == nil {
 				continue
 			}
 			f := ad.Carrier.Front
-			if f.Bucket != r.Bucket || !bytes.Equal(f.Advertiser, adv) || seen[f.URL+hex.EncodeToString(f.Front)] {
+			if f.Bucket != r.Bucket || !bytes.Equal(f.Advertiser, adv) || seen[f.URL+hex.EncodeToString(f.Front)] || bad(f.URL) {
 				continue
 			}
 			seen[f.URL+hex.EncodeToString(f.Front)] = true
@@ -586,84 +605,179 @@ func (p *Publisher) closureBlobs(ctx context.Context, e *storerec.Entry) ([]chir
 	return o.Blobs(), nil
 }
 
+// The settlement challenge's draws. A draw is one request: a nonce and a
+// seed, bound to one front. A candidate gets maxDraws of them over the
+// whole race, every front counted: a provider that could choose which
+// draws it answers (refusing those that sample what it lacks, and waiting
+// for a fresh nonce) would pass with a fraction of the bytes. A draw is
+// spent by any answer the front gives to the request (a signed response, or
+// a refusal of the request itself); one not answered (a timeout, a 5xx, a
+// price) is sent again as it is, the same nonce, until its seed leaves the
+// answerer's window or pendingTries sends have failed, and is then spent
+// too. So refusing a draw gains a provider nothing but delay.
+const (
+	maxDraws     = 2
+	maxFronts    = 4
+	pendingTries = 3
+	// candBudget bounds the time one candidate takes in one step.
+	candBudget = 4 * time.Minute
+)
+
+// PendingDraw is a request made and not yet answered.
+type PendingDraw struct {
+	Request  string `json:"request"` // hex
+	Front    string `json:"front"`
+	Answerer string `json:"answerer"`
+	Tries    int    `json:"tries"`
+}
+
 func (p *Publisher) challengeCand(ctx context.Context, r *Race, c *Cand, blobs []chirp.Child, tip uint32, o RaceOptions) {
+	ctx, cancel := context.WithTimeout(ctx, candBudget)
+	defer cancel()
 	e := r.entry
 	adv, _ := hex.DecodeString(c.Advertiser)
-	for _, f := range p.fronts(ctx, r, c) {
-		t := p.terms(ctx, f.url)
-		depth := int64(0)
-		if r.HoldHeight > 0 {
-			depth = int64(tip) - int64(r.HoldHeight) + 1
-		}
-		if t.MinAge > 1 && depth < int64(t.MinAge) && o.Budget == 0 {
-			c.Status = CandWaiting
-			c.Attempts = append(c.Attempts, Attempt{At: p.cfg.Now().Unix(), Front: f.url, Outcome: "waiting",
-				Why: fmt.Sprintf("the hold output is %d deep, the provider's minAge is %d", depth, t.MinAge)})
-			return
-		}
-		if t.Known && e.Hold.Satoshis < t.MinBounty && o.Budget == 0 {
-			c.Status = CandPriced
-			c.Attempts = append(c.Attempts, Attempt{At: p.cfg.Now().Unix(), Front: f.url, Outcome: "priced",
-				Why: fmt.Sprintf("the bounty is below the provider's minimum of %d", t.MinBounty)})
-			return
-		}
-		n := min(e.Hold.CheckC, t.FreeC)
-		ch := &Challenge{Bucket: r.Bucket, Root: e.Root, ProofRoot: e.ProofRoot, Size: e.Size, Entry: r.Entry,
-			Provider: adv, Answerer: f.answerer, Front: f.url, URL: c.URL, Blobs: blobs, C: n, Budget: o.Budget}
-		res, err := p.Challenge(ctx, ch, o.Fetch)
-		at := Attempt{At: p.cfg.Now().Unix(), C: n, Front: f.url}
-		if errors.Is(err, ErrOverBudget) {
-			at.Outcome, at.Why = "priced", "the provider's price is over the budget"
-			c.Attempts = append(c.Attempts, at)
-			c.Status = CandPriced
-			continue
-		}
-		if err != nil {
-			at.Outcome, at.Why = "not asked", err.Error()
-			c.Attempts = append(c.Attempts, at)
-			return
-		}
-		at.Outcome, at.Why, at.Paid = OutcomeName(res.Outcome), res.Why, res.Paid
-		c.Attempts = append(c.Attempts, at)
-		c.Paid += res.Paid
-		switch res.Outcome {
-		case storerec.OutcomePass:
-			c.Status, c.Front, c.Answerer = CandPassed, f.url, hex.EncodeToString(f.answerer)
-			p.cfg.Logf("race %s: advertiser %s passed its settlement challenge (c = %d)", short(r.Entry), short(c.Advertiser), n)
-			return
-		case storerec.OutcomeInvalid, storerec.OutcomeUnretrievable:
-			c.Status = CandFailed
-			p.cfg.Logf("race %s: advertiser %s did not pass: %s (%s)", short(r.Entry), short(c.Advertiser), at.Outcome, res.Why)
-			if o.Publish {
-				if rec := res.OutcomeRecord(r.Bucket); rec != nil {
-					if txid, err := p.PublishOutcome(ctx, rec); err == nil {
-						r.Outcomes = append(r.Outcomes, PublishedNote{Advertiser: c.Advertiser, Outcome: at.Outcome, Txid: txid})
-					} else {
-						p.cfg.Logf("race %s: the outcome was not published: %v", short(r.Entry), err)
-					}
-				}
-			}
-			return
-		default:
-			if res.Refusal == "unknown-root" {
-				// The provider says it does not hold the root it
-				// advertised: it does not pass.
-				c.Status = CandFailed
-				return
-			}
-			if res.Status == http.StatusPaymentRequired {
-				c.Status = CandPriced
-				continue
-			}
+	note := func(a Attempt) {
+		a.At = p.cfg.Now().Unix()
+		c.Attempts = append(c.Attempts, a)
+		if len(c.Attempts) > 32 {
+			c.Attempts = c.Attempts[len(c.Attempts)-32:]
 		}
 	}
-	noAnswers := 0
-	for _, a := range c.Attempts {
-		if a.Outcome == OutcomeName(storerec.OutcomeNoAnswer) {
-			noAnswers++
+	spend := func(why string) {
+		c.Draws++
+		c.Pending = nil
+		note(Attempt{Outcome: "spent", Why: why})
+	}
+	if pd := c.Pending; pd != nil {
+		raw, _ := hex.DecodeString(pd.Request)
+		q, err := storerec.DecodeRequest(raw)
+		if err != nil || uint64(tip) >= q.SeedHeight+storerec.SeedWindow {
+			spend("the draw's seed left the answerer's window unanswered")
 		}
 	}
-	if noAnswers >= maxNoAnswers {
+	if c.Draws >= maxDraws {
 		c.Status = CandFailed
+		note(Attempt{Outcome: "failed", Why: fmt.Sprintf("no pass in %d draws", maxDraws)})
+		return
+	}
+	var f frontAt
+	if pd := c.Pending; pd != nil {
+		ans, _ := hex.DecodeString(pd.Answerer)
+		f = frontAt{url: pd.Front, answerer: ans}
+	} else {
+		fronts := p.fronts(ctx, r, c)
+		if len(fronts) == 0 {
+			note(Attempt{Outcome: "waiting", Why: "no front to answer for the advertiser"})
+			return
+		}
+		f = fronts[0]
+	}
+	own := bytes.Equal(f.answerer, adv)
+	t := p.terms(ctx, f.url)
+	depth := int64(0)
+	if r.HoldHeight > 0 {
+		depth = int64(tip) - int64(r.HoldHeight) + 1
+	}
+	if t.MinAge > 1 && depth < int64(t.MinAge) && o.Budget == 0 {
+		c.Status = CandWaiting
+		note(Attempt{Front: f.url, Outcome: "waiting", Why: fmt.Sprintf("the hold output is %d deep, the provider's minAge is %d", depth, t.MinAge)})
+		return
+	}
+	if t.Known && e.Hold.Satoshis < t.MinBounty && o.Budget == 0 {
+		c.Status = CandPriced
+		note(Attempt{Front: f.url, Outcome: "priced", Why: fmt.Sprintf("the bounty is below the provider's minimum of %d", t.MinBounty)})
+		return
+	}
+	n := min(e.Hold.CheckC, t.FreeC)
+	ch := &Challenge{Bucket: r.Bucket, Root: e.Root, ProofRoot: e.ProofRoot, Size: e.Size, Entry: r.Entry,
+		Provider: adv, Answerer: f.answerer, Front: f.url, URL: c.URL, Blobs: blobs, C: n, Budget: o.Budget}
+	if c.Pending != nil {
+		ch.Request, _ = hex.DecodeString(c.Pending.Request)
+		if q, err := storerec.DecodeRequest(ch.Request); err == nil {
+			ch.C = q.C
+		}
+	} else {
+		_, raw, err := p.NewRequest(ctx, ch)
+		if err != nil {
+			note(Attempt{Front: f.url, Outcome: "not asked", Why: err.Error()})
+			return
+		}
+		ch.Request = raw
+		// The draw is recorded before it is sent: a run that stops after
+		// sending sends the same request again, never a fresh one.
+		c.Pending = &PendingDraw{Request: hex.EncodeToString(raw), Front: f.url, Answerer: hex.EncodeToString(f.answerer)}
+		if err := p.saveRace(r); err != nil {
+			c.Pending = nil
+			return
+		}
+	}
+	res, err := p.Challenge(ctx, ch, o.Fetch)
+	at := Attempt{C: ch.C, Front: f.url}
+	switch {
+	case errors.Is(err, ErrOverBudget):
+		at.Outcome, at.Why = "priced", "the provider's price is over the budget"
+		note(at)
+		c.Status = CandPriced
+		return
+	case err != nil:
+		at.Outcome, at.Why = "not asked", err.Error()
+		note(at)
+		return
+	}
+	at.Outcome, at.Why, at.Paid = OutcomeName(res.Outcome), res.Why, res.Paid
+	note(at)
+	c.Paid += res.Paid
+	answered := res.Status == http.StatusOK ||
+		(res.Status == http.StatusUnprocessableEntity && res.Refusal != "seed")
+	switch {
+	case res.Status == http.StatusPaymentRequired:
+		c.Status = CandPriced
+		return
+	case !answered:
+		// Not answered: the same request goes again later.
+		c.Pending.Tries++
+		if c.Pending.Tries >= pendingTries {
+			if !own {
+				c.BadFronts = append(c.BadFronts, f.url)
+			}
+			spend(fmt.Sprintf("the front gave no answer to the draw in %d tries", pendingTries))
+		}
+		if c.Status != CandFailed {
+			c.Status = CandSeen
+		}
+		return
+	}
+	c.Pending = nil
+	c.Draws++
+	switch {
+	case res.Outcome == storerec.OutcomePass:
+		c.Status, c.Front, c.Answerer = CandPassed, f.url, hex.EncodeToString(f.answerer)
+		p.cfg.Logf("race %s: advertiser %s passed its settlement challenge (c = %d)", short(r.Entry), short(c.Advertiser), ch.C)
+		return
+	case res.Outcome == storerec.OutcomeUnretrievable || own:
+		// An unretrievable sample is about the advertiser's URL, whoever
+		// answered; any other failure is the answerer's, here the
+		// advertiser's own.
+		c.Status = CandFailed
+		p.cfg.Logf("race %s: advertiser %s did not pass: %s (%s)", short(r.Entry), short(c.Advertiser), at.Outcome, res.Why)
+	default:
+		// A front that is not the advertiser failed: the outcome is the
+		// front's (spec section 7.4), and the front is not asked again.
+		c.BadFronts = append(c.BadFronts, f.url)
+		if c.Draws >= maxDraws {
+			c.Status = CandFailed
+		} else {
+			c.Status = CandSeen
+		}
+		p.cfg.Logf("race %s: front %s for advertiser %s: %s (%s)", short(r.Entry), f.url, short(c.Advertiser), at.Outcome, res.Why)
+	}
+	if o.Publish && res.Status == http.StatusOK {
+		if rec := res.OutcomeRecord(r.Bucket); rec != nil {
+			if txid, err := p.PublishOutcome(ctx, rec); err == nil {
+				r.Outcomes = append(r.Outcomes, PublishedNote{Advertiser: c.Advertiser, Outcome: at.Outcome, Txid: txid})
+			} else {
+				p.cfg.Logf("race %s: the outcome was not published: %v", short(r.Entry), err)
+			}
+		}
 	}
 }

@@ -96,6 +96,14 @@ func (p *Publisher) Put(ctx context.Context, f Fields, obj Object, b *Bounty) (*
 	p.mintMu.Lock()
 	defer p.mintMu.Unlock()
 	var hold *HoldRecord
+	minted := false
+	defer func() {
+		// A put that stops before its entry is made gives its hold output
+		// back: no entry names it.
+		if hold != nil && !minted {
+			p.releaseHold(hold)
+		}
+	}()
 	if b != nil && obj.Size > 0 {
 		h, err := p.takeHold(ctx, f.Bucket, b.Satoshis)
 		if err != nil {
@@ -142,6 +150,7 @@ func (p *Publisher) Put(ctx context.Context, f Fields, obj Object, b *Bounty) (*
 		}
 	}
 	r, err := p.publishEntry(ctx, e, rec, hold)
+	minted = r != nil
 	if r != nil {
 		r.Pieces = n
 		r.Uploads = ups
@@ -255,9 +264,6 @@ func (p *Publisher) publishEntry(ctx context.Context, e *storerec.Entry, rec []b
 		return nil, err
 	}
 	r := &Receipt{Entry: e, Record: rec, C: carrier.Commitment(tx), Txid: tx.TxID().String()}
-	if err := p.logEntry(e, rec, r.Txid, beef); err != nil {
-		return nil, err
-	}
 	if hold != nil {
 		p.mu.Lock()
 		for i := range p.st.Holds {
@@ -273,6 +279,9 @@ func (p *Publisher) publishEntry(ctx context.Context, e *storerec.Entry, rec []b
 		if err := p.registerRace(e, rec, r.Txid, hold); err != nil {
 			return nil, err
 		}
+	}
+	if err := p.logEntry(e, rec, r.Txid, beef); err != nil {
+		return nil, err
 	}
 	it, err := p.outbox.add(r.Txid, "entry", beef, targets)
 	if err != nil {

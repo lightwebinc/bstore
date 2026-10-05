@@ -271,6 +271,37 @@ func (o *Outbox) sendAll(ctx context.Context, it *outItem, beef []byte) (ok, ref
 	return ok, refused
 }
 
+// Drop removes every item of the given kinds ("piece", "entry",
+// "outcome"): after a kill, what the sweeps retracted is not sent again.
+func (o *Outbox) Drop(kinds ...string) int {
+	ents, err := os.ReadDir(o.dir)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range ents {
+		if !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(o.dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		var it outItem
+		if json.Unmarshal(raw, &it) != nil || it.ID+".json" != e.Name() {
+			continue
+		}
+		for _, k := range kinds {
+			if it.What == k {
+				o.remove(it.ID)
+				n++
+				break
+			}
+		}
+	}
+	return n
+}
+
 // Pending is the number of objects not yet delivered everywhere.
 func (o *Outbox) Pending() int {
 	ents, _ := os.ReadDir(o.dir)

@@ -53,6 +53,10 @@ type Challenge struct {
 	Nonce *[16]byte
 	// Budget is the most paid for the answer; 0 pays nothing.
 	Budget uint64
+	// Request, when set, is a request made before (its encoding), sent
+	// again as it is: a draw is not redrawn because an answer was not
+	// given.
+	Request []byte
 }
 
 // ChallengeResult is a challenge's outcome.
@@ -73,18 +77,31 @@ type ChallengeResult struct {
 // ErrNoTip is a buyer with no tip to seed a request from.
 var ErrNoTip = errors.New("publish: the node did not answer its tip")
 
-// NewRequest builds a challenge request seeded at the node's tip.
+// SeedBack is how many blocks below the buyer's tip a request is seeded:
+// an answerer whose headers are a block or two behind still holds the
+// seed, and it stays within the answerer's six-block window for a while.
+const SeedBack = 2
+
+// NewRequest builds a challenge request seeded SeedBack blocks below the
+// node's tip.
 func (p *Publisher) NewRequest(ctx context.Context, ch *Challenge) (*storerec.Request, []byte, error) {
 	h, err := p.cfg.Asset.BestHeader(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %v", ErrNoTip, err)
 	}
-	seed, err := chainhash.NewHashFromHex(h.Hash)
+	height, hash := h.Height, h.Hash
+	if height > SeedBack {
+		height -= SeedBack
+		if hash, err = p.cfg.Asset.HashAtHeight(ctx, height); err != nil {
+			return nil, nil, fmt.Errorf("%w: %v", ErrNoTip, err)
+		}
+	}
+	seed, err := chainhash.NewHashFromHex(hash)
 	if err != nil {
 		return nil, nil, err
 	}
 	q := &storerec.Request{Root: ch.Root, ProofRoot: ch.ProofRoot, Size: ch.Size, Provider: ch.Provider, Answerer: ch.Answerer,
-		SeedHeight: uint64(h.Height), SeedHash: [32]byte(*seed), C: ch.C}
+		SeedHeight: uint64(height), SeedHash: [32]byte(*seed), C: ch.C}
 	if ch.Nonce != nil {
 		q.Nonce = *ch.Nonce
 	} else if _, err := rand.Read(q.Nonce[:]); err != nil {
@@ -104,13 +121,19 @@ func (p *Publisher) Challenge(ctx context.Context, ch *Challenge, fetch *http.Cl
 	if ch.Size == 0 {
 		return nil, errors.New("publish: an empty object has no segments to challenge")
 	}
-	q, raw, err := p.NewRequest(ctx, ch)
-	if err != nil {
+	var q *storerec.Request
+	raw := ch.Request
+	var err error
+	if raw != nil {
+		if q, err = storerec.DecodeRequest(raw); err != nil {
+			return nil, err
+		}
+	} else if q, raw, err = p.NewRequest(ctx, ch); err != nil {
 		return nil, err
 	}
 	res := &ChallengeResult{Request: raw, Req: q}
 	body, _ := json.Marshal(map[string]string{"request": base64.StdEncoding.EncodeToString(raw), "entry": ch.Entry})
-	cctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	cctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	call, err := p.Post(cctx, strings.TrimRight(ch.Front, "/")+"/challenge", body, ch.Budget)
 	if errors.Is(err, ErrOverBudget) {
@@ -139,7 +162,7 @@ func (p *Publisher) Challenge(ctx context.Context, ch *Challenge, fetch *http.Cl
 		return res, nil
 	}
 	res.Signed = call.Body
-	f := &segmentFetcher{hc: fetch, url: ch.URL, blobs: ch.Blobs}
+	f := &segmentFetcher{ctx: cctx, hc: fetch, url: ch.URL, blobs: ch.Blobs}
 	res.Verdict = storerec.VerifyResponse(q, raw, call.Body, func(b uint64) [32]byte {
 		if b >= uint64(len(ch.Blobs)) {
 			return [32]byte{}
@@ -190,6 +213,7 @@ func OutcomeName(o int) string {
 // a Range fetch of one segment within its blob at the blob's object route,
 // and the whole blob.
 type segmentFetcher struct {
+	ctx           context.Context
 	hc            *http.Client
 	url           string
 	blobs         []chirp.Child
@@ -220,7 +244,7 @@ func (f *segmentFetcher) Range(blob, offset, length uint64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(f.ctx, 30*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -255,7 +279,7 @@ func (f *segmentFetcher) Blob(blob uint64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(f.ctx, time.Minute)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {

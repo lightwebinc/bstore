@@ -106,45 +106,64 @@ func (p *Publisher) unspent(ctx context.Context, txid string, vout uint32) (bool
 	return by == "", by, nil
 }
 
+// maxAdHops bounds the renewals followed from one advertisement: a chain
+// longer than that is taken as not live, and its candidate dropped.
+const maxAdHops = 16
+
 // adChain follows an advertisement through its renewal successors, as far
-// as positive evidence goes, into the shape storerec.Settle reads.
-func (p *Publisher) adChain(ctx context.Context, txid string, vout uint32, adv []byte, root [32]byte, expiry uint64, depth int) (*storerec.Ad, error) {
-	a := &storerec.Ad{Advertiser: adv, Root: root, Expiry: expiry}
-	a.Txid, _ = parseDisplay(txid)
-	free, by, err := p.unspent(ctx, txid, vout)
-	if err != nil {
-		return nil, err
-	}
-	if free {
-		return a, nil
-	}
-	a.Spent = true
-	if depth >= 16 {
-		return a, nil
-	}
-	raw, err := p.cfg.Asset.TxRaw(ctx, by)
-	if err != nil {
-		return nil, fmt.Errorf("%w: the transaction that spends advertisement %s: %v", ErrNotYet, short(txid), err)
-	}
-	tx, err := guard.ParseTransaction(raw, len(raw))
-	if err != nil || tx.TxID().String() != by {
-		return nil, fmt.Errorf("%w: the node answered other bytes for %s", ErrNotYet, short(by))
-	}
-	for i, o := range tx.Outputs {
-		if o.LockingScript == nil {
-			continue
+// as positive evidence goes, into the shape storerec.Settle reads: one
+// successor a spend (the first output of the spending transaction that is
+// an advertisement of the same key for the same root with a later expiry,
+// which is the one storerec.Ad.Live follows), each outpoint asked once,
+// at most maxAdHops of them.
+func (p *Publisher) adChain(ctx context.Context, txid string, vout uint32, adv []byte, root [32]byte, expiry uint64, _ int) (*storerec.Ad, error) {
+	first := &storerec.Ad{Advertiser: adv, Root: root, Expiry: expiry}
+	first.Txid, _ = parseDisplay(txid)
+	cur := first
+	seen := map[string]bool{}
+	for hop := 0; ; hop++ {
+		op := fmt.Sprintf("%s.%d", txid, vout)
+		if seen[op] || hop >= maxAdHops {
+			cur.Spent = true
+			return first, nil
 		}
-		ad, err := storerec.DecodeAdvertisement(*o.LockingScript)
-		if err != nil || string(ad.Host) != string(adv) || ad.Hash != root || ad.Expiry <= expiry {
-			continue
-		}
-		next, err := p.adChain(ctx, by, uint32(i), adv, root, ad.Expiry, depth+1)
+		seen[op] = true
+		free, by, err := p.unspent(ctx, txid, vout)
 		if err != nil {
 			return nil, err
 		}
-		a.SpentBy = append(a.SpentBy, next)
+		if free {
+			return first, nil
+		}
+		cur.Spent = true
+		raw, err := p.cfg.Asset.TxRaw(ctx, by)
+		if err != nil {
+			return nil, fmt.Errorf("%w: the transaction that spends advertisement %s: %v", ErrNotYet, short(txid), err)
+		}
+		tx, err := guard.ParseTransaction(raw, len(raw))
+		if err != nil || tx.TxID().String() != by {
+			return nil, fmt.Errorf("%w: the node answered other bytes for %s", ErrNotYet, short(by))
+		}
+		var next *storerec.Ad
+		for i, o := range tx.Outputs {
+			if o.LockingScript == nil {
+				continue
+			}
+			ad, err := storerec.DecodeAdvertisement(*o.LockingScript)
+			if err != nil || string(ad.Host) != string(adv) || ad.Hash != root || ad.Expiry <= cur.Expiry {
+				continue
+			}
+			next = &storerec.Ad{Advertiser: adv, Root: root, Expiry: ad.Expiry}
+			next.Txid, _ = parseDisplay(by)
+			txid, vout = by, uint32(i)
+			break
+		}
+		if next == nil {
+			return first, nil
+		}
+		cur.SpentBy = []*storerec.Ad{next}
+		cur = next
 	}
-	return a, nil
 }
 
 // Settle settles a race whose race has closed: or resumes a settlement a
@@ -171,7 +190,7 @@ func (p *Publisher) Settle(ctx context.Context, r *Race, force bool) (*SettleRec
 		return nil, ErrPastDeadline
 	}
 	passed := r.Passed()
-	if !force && uint64(len(passed)) < e.Hold.K && r.State == RaceOpen {
+	if !force && !r.Closing && uint64(len(passed)) < e.Hold.K && r.State == RaceOpen {
 		return nil, fmt.Errorf("%w: %d of K = %d passed; the race is open", ErrNotYet, len(passed), e.Hold.K)
 	}
 	hold, err := p.holdOf(r)
@@ -216,7 +235,7 @@ func (p *Publisher) Settle(ctx context.Context, r *Race, force bool) (*SettleRec
 		}
 	}
 	if !s.Settled {
-		if r.State == RaceOpen && !force {
+		if r.State == RaceOpen && !force && !r.Closing {
 			_ = p.saveRace(r)
 			return nil, fmt.Errorf("%w: fewer than t = %d live passed advertisers", ErrNotYet, e.Hold.T)
 		}
@@ -276,9 +295,11 @@ func (p *Publisher) buildSettlement(ctx context.Context, r *Race, hold *HoldReco
 			pay.GiveBack()
 			return nil, err
 		}
+		// The remittance goes to the advertiser's own route, derived from
+		// its advertisement, never to a front that answered for it.
 		front := ""
 		if c := byKey[k]; c != nil {
-			front = c.Front
+			front, _ = storerec.DerivedFront(c.URL)
 		}
 		rec.Payees = append(rec.Payees, PayeeRecord{Rank: py.Rank, Advertiser: k, Ad: displayOf(py.Ad), Satoshis: py.Satoshis,
 			Vout: uint32(len(tx.Outputs)), Front: front})
@@ -330,27 +351,43 @@ func (p *Publisher) resumeSettlement(ctx context.Context, r *Race) error {
 		return err
 	}
 	if s.Bump == "" {
-		hold, err := p.holdOf(r)
-		if err != nil {
-			return err
-		}
 		mp, height, perr := p.cfg.Asset.Proof(ctx, s.Txid)
 		if perr != nil {
-			free, by, err := p.unspent(ctx, hold.Txid, hold.Vout)
+			cf, err := p.SpentElsewhere(ctx, tx)
 			if err != nil {
 				return err
 			}
-			if !free && by != s.Txid {
+			switch {
+			case cf != nil && cf.Same:
+				// A miner re-encoded it: the same settlement, under
+				// another txid.
+				p.cfg.Logf("settlement %s was mined re-encoded as %s", short(s.Txid), short(cf.By.TxID().String()))
+				tx = cf.By
+				s.Txid, s.Raw = tx.TxID().String(), hex.EncodeToString(tx.Bytes())
+				if err := p.saveRace(r); err != nil {
+					return err
+				}
+			case cf != nil && cf.Input == 0:
 				// Another transaction spent the hold output: this
 				// settlement never mines and nobody was told of it.
-				s.Abandoned = "the hold output was spent by " + by
+				s.Abandoned = "the hold output was spent by " + cf.By.TxID().String()
 				r.State, r.Note = RaceSpent, s.Abandoned
-				if f, _, err := p.unspent(ctx, s.Fee.TxID, s.Fee.Vout); err == nil && f {
-					_ = p.wallet.Pool.Return(s.Fee)
-				}
+				p.ReturnCoin(ctx, s.Fee)
 				return p.saveRace(r)
-			}
-			if free {
+			case cf != nil:
+				// Its fee coin went elsewhere: it can never mine. It is set
+				// aside and the next settle builds it again on another
+				// coin; both spend the one hold output, so at most one of
+				// them ever pays.
+				s.Abandoned = "its fee input was spent by " + cf.By.TxID().String()
+				r.Abandoned = append(r.Abandoned, *s)
+				r.Settlement, r.State = nil, RaceOpen
+				r.Closing = true
+				if err := p.saveRace(r); err != nil {
+					return err
+				}
+				return fmt.Errorf("%w: settlement %s can never mine (%s); settle again builds it anew", ErrNotYet, short(s.Txid), s.Abandoned)
+			default:
 				if err := p.cfg.Settler.Submit(ctx, tx); err != nil && !strings.Contains(strings.ToLower(err.Error()), "already") {
 					p.cfg.Logf("settlement %s: sent again: %v", short(s.Txid), err)
 				}
@@ -434,9 +471,6 @@ func (p *Publisher) remit(ctx context.Context, r *Race, tx *transaction.Transact
 func (p *Publisher) frontOf(r *Race, adv string) (string, bool) {
 	for _, c := range r.Cands {
 		if c.Advertiser == adv {
-			if c.Front != "" {
-				return c.Front, true
-			}
 			return storerec.DerivedFront(c.URL)
 		}
 	}
@@ -552,123 +586,165 @@ func (p *Publisher) resumeReclaim(ctx context.Context, r *Race) error {
 	if rc.Height > 0 {
 		return nil
 	}
-	hold, err := p.holdOf(r)
-	if err != nil {
+	_, height, adopted, err := p.sendSpend(ctx, "reclaim", rc.Raw, rc.Txid)
+	switch {
+	case errors.Is(err, errSpentElsewhere):
+		r.State, r.Note = RaceSpent, err.Error()
+		p.ReturnCoin(ctx, rc.Fee)
+		return p.saveRace(r)
+	case errors.Is(err, errStranded):
+		// Its fee coin went elsewhere: built again on the next reclaim.
+		r.Reclaim, r.State = nil, RaceLapsed
+		if serr := p.saveRace(r); serr != nil {
+			return serr
+		}
+		return fmt.Errorf("%w: %v; reclaim again builds it anew", ErrNotYet, err)
+	case err != nil:
 		return err
 	}
-	mp, height, err := p.sendSpend(ctx, "reclaim", rc.Raw, rc.Txid, hold, rc.Fee)
-	if err != nil {
-		if errors.Is(err, errSpentElsewhere) {
-			r.State, r.Note = RaceSpent, err.Error()
-			return p.saveRace(r)
-		}
-		return err
+	if adopted != nil {
+		rc.Txid, rc.Raw = adopted.TxID().String(), hex.EncodeToString(adopted.Bytes())
 	}
 	rc.Height = height
-	_ = mp
 	r.State = RaceReclaimd
 	return p.saveRace(r)
 }
 
-var errSpentElsewhere = errors.New("publish: the hold output was spent by another transaction")
+var (
+	errSpentElsewhere = errors.New("publish: the hold output was spent by another transaction")
+	errStranded       = errors.New("publish: a fee input was spent by another transaction")
+)
 
-// sendSpend sends a recorded spend of a hold output (the same bytes again
-// on a later run) and waits for it to mine; its change goes to the pool.
-func (p *Publisher) sendSpend(ctx context.Context, what, rawHex, txid string, hold *HoldRecord, fee bwallet.Output) (*transaction.MerklePath, uint32, error) {
+// sendSpend sends a recorded spend of a hold output (its first input; the
+// same bytes again on a later run) and waits for it to mine; its change
+// goes to the pool. The hold output spent by another transaction is
+// errSpentElsewhere, unless that transaction is this one re-encoded, which
+// is adopted and returned; the fee input spent elsewhere is errStranded.
+func (p *Publisher) sendSpend(ctx context.Context, what, rawHex, txid string) (*transaction.MerklePath, uint32, *transaction.Transaction, error) {
 	raw, err := hex.DecodeString(rawHex)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	tx, err := transaction.NewTransactionFromBytes(raw)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	if mp, height, err := p.cfg.Asset.Proof(ctx, txid); err == nil {
 		tx.MerklePath = mp
 		p.newPayer(ctx).Change(tx, height, mp)
-		return mp, height, nil
+		return mp, height, nil, nil
 	}
-	free, by, err := p.unspent(ctx, hold.Txid, hold.Vout)
-	if err != nil {
-		return nil, 0, err
-	}
-	if !free && by != txid {
-		if f, _, err := p.unspent(ctx, fee.TxID, fee.Vout); err == nil && f {
-			_ = p.wallet.Pool.Return(fee)
-		}
-		return nil, 0, fmt.Errorf("%w: %s", errSpentElsewhere, by)
-	}
-	if free {
+	var adopted *transaction.Transaction
+	cf, err := p.SpentElsewhere(ctx, tx)
+	switch {
+	case err != nil:
+		return nil, 0, nil, err
+	case cf != nil && cf.Same:
+		adopted, tx = cf.By, cf.By
+	case cf != nil && cf.Input == 0:
+		return nil, 0, nil, fmt.Errorf("%w: %s", errSpentElsewhere, cf.By.TxID())
+	case cf != nil:
+		return nil, 0, nil, fmt.Errorf("%w: %s", errStranded, cf.By.TxID())
+	default:
 		if err := p.cfg.Settler.Submit(ctx, tx); err != nil && !strings.Contains(strings.ToLower(err.Error()), "already") {
 			p.cfg.Logf("%s %s: sent: %v", what, short(txid), err)
 		}
 	}
 	mp, height, err := p.newPayer(ctx).Await(ctx, what, tx)
 	if err != nil {
-		return nil, 0, fmt.Errorf("%w: %s %s: %v", ErrNotYet, what, short(txid), err)
+		return nil, 0, nil, fmt.Errorf("%w: %s %s: %v", ErrNotYet, what, short(txid), err)
 	}
 	tx.MerklePath = mp
 	p.newPayer(ctx).Change(tx, height, mp)
-	return mp, height, nil
+	return mp, height, adopted, nil
 }
 
-// UnusedHold is a hold output minted ahead that no entry took.
-type UnusedHold struct {
-	Hold HoldRecord
-	Txid string
-}
-
-// ReclaimUnused spends every mined hold output no entry took back to the
-// fund key: each is marked taken, and saved, before it is spent, so no put
-// can name it. It returns the reclaims made.
+// ReclaimUnused spends back to the fund key every mined hold output no
+// entry names: one minted ahead and never taken, and one a put took and
+// then failed before its entry was made. Each is marked taken, and its
+// reclaim recorded, raw transaction and all, before it is sent; one a run
+// left on its way is sent again; an error on one does not stop the rest.
+// It returns the reclaims seen mined.
 func (p *Publisher) ReclaimUnused(ctx context.Context) ([]string, error) {
 	p.mu.Lock()
 	var todo []HoldRecord
-	for i := range p.st.Holds {
-		h := &p.st.Holds[i]
-		if !h.Used && h.BumpHex != "" {
-			h.Used = true
-			h.Entry = "reclaimed"
-			todo = append(todo, *h)
+	for _, h := range p.st.Holds {
+		free := !h.Used || h.Entry == ""
+		if h.BumpHex != "" && (free || (h.Reclaim != nil && h.Reclaim.Height == 0)) {
+			todo = append(todo, h)
 		}
 	}
-	err := p.saveLocked()
 	p.mu.Unlock()
-	if err != nil {
-		return nil, err
-	}
 	var done []string
+	var errs []error
 	for i := range todo {
 		h := todo[i]
-		rec, err := p.reclaimHold(ctx, &h)
-		if err != nil {
-			return done, err
+		if h.Reclaim == nil {
+			if err := p.updateHold(h, func(x *HoldRecord) { x.Used, x.Entry = true, "reclaiming" }); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			rec, err := p.reclaimHold(ctx, &h)
+			if err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			if rec == nil {
+				_ = p.updateHold(h, func(x *HoldRecord) { x.Entry = "spent elsewhere" })
+				continue
+			}
+			if err := p.updateHold(h, func(x *HoldRecord) { x.Reclaim = rec }); err != nil {
+				_ = p.wallet.Pool.Return(rec.Fee)
+				errs = append(errs, err)
+				continue
+			}
+			h.Reclaim = rec
 		}
-		if rec == nil {
+		rc := h.Reclaim
+		_, height, adopted, err := p.sendSpend(ctx, "reclaim", rc.Raw, rc.Txid)
+		switch {
+		case errors.Is(err, errSpentElsewhere):
+			p.ReturnCoin(ctx, rc.Fee)
+			_ = p.updateHold(h, func(x *HoldRecord) { x.Entry, x.Reclaim = "spent elsewhere", nil })
+			continue
+		case errors.Is(err, errStranded):
+			_ = p.updateHold(h, func(x *HoldRecord) { x.Reclaim = nil })
+			errs = append(errs, fmt.Errorf("%w: hold %s.%d: %v", ErrNotYet, short(h.Txid), h.Vout, err))
+			continue
+		case err != nil:
+			errs = append(errs, err)
 			continue
 		}
-		if err := p.recordUnusedReclaim(h, rec); err != nil {
-			_ = p.wallet.Pool.Return(rec.Fee)
-			return done, err
+		if adopted != nil {
+			rc.Txid, rc.Raw = adopted.TxID().String(), hex.EncodeToString(adopted.Bytes())
 		}
-		if _, _, err := p.sendSpend(ctx, "reclaim", rec.Raw, rec.Txid, &h, rec.Fee); err != nil {
-			return done, err
-		}
-		done = append(done, rec.Txid)
+		rc.Height = height
+		_ = p.updateHold(h, func(x *HoldRecord) { x.Reclaim, x.Entry = rc, "reclaimed by "+rc.Txid })
+		done = append(done, rc.Txid)
 	}
-	return done, nil
+	return done, errors.Join(errs...)
 }
 
-func (p *Publisher) recordUnusedReclaim(h HoldRecord, rec *ReclaimRecord) error {
+func (p *Publisher) updateHold(h HoldRecord, f func(*HoldRecord)) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for i := range p.st.Holds {
 		x := &p.st.Holds[i]
 		if x.Txid == h.Txid && x.Vout == h.Vout {
-			x.Entry = "reclaimed by " + rec.Txid
+			f(x)
 		}
 	}
 	return p.saveLocked()
+}
+
+// releaseHold gives a hold output a put took back for the next put, when
+// no entry names it.
+func (p *Publisher) releaseHold(h *HoldRecord) {
+	_ = p.updateHold(*h, func(x *HoldRecord) {
+		if x.Entry == "" {
+			x.Used = false
+		}
+	})
 }
 
 // HoldScriptOf is the hold output's locking script for this identity.

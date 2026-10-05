@@ -147,6 +147,8 @@ func (p *Publisher) Kill(ctx context.Context) ([]SweepRecord, error) {
 	if err := p.finishSweeps(ctx); err != nil {
 		errs = append(errs, err)
 	}
+	// What the sweeps retract is never sent again.
+	p.outbox.Drop("piece", "entry", "outcome")
 	return done, errors.Join(errs...)
 }
 
@@ -223,8 +225,26 @@ func (p *Publisher) finishSweeps(ctx context.Context) error {
 		if sw.Bump == "" {
 			mp, height, err := p.cfg.Asset.Proof(ctx, sw.Txid)
 			if err != nil {
-				if serr := p.cfg.Settler.Submit(ctx, tx); serr != nil {
-					p.cfg.Logf("sweep %s: sent: %v", short(sw.Txid), serr)
+				cf, cerr := p.SpentElsewhere(ctx, tx)
+				switch {
+				case cerr != nil:
+					errs = append(errs, fmt.Errorf("sweep %s: %w", short(sw.Txid), cerr))
+					continue
+				case cf != nil && cf.Same:
+					tx = cf.By
+					sw.Txid, sw.Raw = tx.TxID().String(), hex.EncodeToString(tx.Bytes())
+					p.updateSweepTxid(sw)
+				case cf != nil:
+					// It can never mine: the outputs left are swept again
+					// by the next kill.
+					sw.Failed = "an input was spent by " + cf.By.TxID().String()
+					p.updateSweepTxid(sw)
+					errs = append(errs, fmt.Errorf("%w: sweep %s: %s; kill again sweeps what is left", ErrNotYet, short(sw.Txid), sw.Failed))
+					continue
+				default:
+					if serr := p.cfg.Settler.Submit(ctx, tx); serr != nil {
+						p.cfg.Logf("sweep %s: sent: %v", short(sw.Txid), serr)
+					}
 				}
 				mp, height, err = p.newPayer(ctx).Await(ctx, "sweep", tx)
 				if err != nil {
@@ -262,6 +282,20 @@ func (p *Publisher) finishSweeps(ctx context.Context) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// updateSweepTxid replaces the sweep recorded for the same tree and
+// outputs: its txid may have changed (re-encoded).
+func (p *Publisher) updateSweepTxid(sw SweepRecord) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i := range p.st.Sweeps {
+		x := &p.st.Sweeps[i]
+		if x.Tree == sw.Tree && x.Failed == "" && slices.Equal(x.Vouts, sw.Vouts) {
+			*x = sw
+		}
+	}
+	_ = p.saveLocked()
 }
 
 func (p *Publisher) updateSweep(sw SweepRecord) {

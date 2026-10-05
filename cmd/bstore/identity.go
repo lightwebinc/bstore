@@ -333,11 +333,12 @@ func cmdSync(ctx context.Context, g *global, args []string) error {
 	}
 	defer h.close()
 	h.pub.CollectChange(ctx)
+	payments := h.pub.ReconcilePayments(ctx)
 	h.pub.CheckHolds(ctx)
 	h.pub.Outbox().RetryAll(ctx)
 	left := h.pub.RetryUploads(ctx)
 	named, problems := h.markNamed(ctx)
-	g.out("outbox %d left; uploads %d owed; %d entr(ies) named by a token", h.pub.Outbox().Pending(), left, named)
+	g.out("outbox %d left; uploads %d owed; payments %d not yet mined; %d entr(ies) named by a token", h.pub.Outbox().Pending(), left, payments, named)
 	for _, p := range problems {
 		g.say("%s", p)
 	}
@@ -432,6 +433,10 @@ func cmdFill(ctx context.Context, g *global, args []string) error {
 func (h *home) fillEntries(ctx context.Context) (int, []string) {
 	sent := 0
 	var problems []string
+	if h.pub.Killed() {
+		// The kill retracted every entry no token anchored.
+		return 0, nil
+	}
 	for _, l := range h.pub.Entries() {
 		if l.Named != nil {
 			continue
@@ -677,7 +682,7 @@ func displayHex(h [32]byte) string {
 
 // transactionOf is the display txid of a BEEF's subject.
 func transactionOf(beef []byte) (string, error) {
-	tx, err := transaction.NewTransactionFromBEEF(beef)
+	tx, err := publish.BEEFSubject(beef, 1<<20)
 	if err != nil {
 		return "", err
 	}

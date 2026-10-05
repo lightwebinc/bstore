@@ -236,8 +236,12 @@ func (g *global) open(ctx context.Context) (*home, error) {
 	if cfg.FeeFloor > 0 {
 		fees.Floor = cfg.FeeFloor
 	}
+	// Fronts are named by advertisements and statements anyone can make:
+	// reached through the same guard as advertised URLs.
+	frontHC := &http.Client{Timeout: 2 * time.Minute, Transport: fetchTransport(pool, cfg.FetchPrivate),
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	pub, err := publish.Open(ctx, publish.Config{Dir: g.home, Asset: asset, Settler: settler, Fees: fees, Mainnet: cfg.Network == "main",
-		PieceTree: cfg.PieceTree, EntryTree: cfg.EntryTree, HoldAhead: cfg.HoldAhead, Store: st, Delivery: d, Reader: rd, Logf: g.logf})
+		PieceTree: cfg.PieceTree, EntryTree: cfg.EntryTree, HoldAhead: cfg.HoldAhead, Store: st, Delivery: d, Reader: rd, FrontHTTP: frontHC, Logf: g.logf})
 	if errors.Is(err, publish.ErrInUse) {
 		return nil, usage("%v: one process at a time uses a home", err)
 	}
