@@ -83,9 +83,7 @@ and per renewal.
   binds.
 - **Hashes.** SHA-256 unless stated. A txid or commitment inside a record is
   in hash byte order (the order SHA-256d produces); in JSON (a lookup
-  question, an outpoint) it is in display order, the byte-reversed hex. A
-  CHIRP object hash, a content hash, a proof root and a map root are
-  SHA-256 digests in their natural order, never reversed, in records and in
+  question, an outpoint) it is in display order, the byte-reversed hex. A CHIRP object hash, a content hash, a proof root, a map root and a bucket id are SHA-256 digests in their natural order, never reversed, in records and in
   JSON alike. All hex is lowercase. **Two identities for one object:** the
   plane names an object by `SHA-256d` of the whole BEEF object; CHIRP and
   UHRP name bytes by single SHA-256. bstore never compares one with the
@@ -446,10 +444,7 @@ A buyer checks, in order, and stops at the first that fails:
 A response that fails step 1 is attributable to nobody: it is a
 **no-answer**. One that passes step 1 and fails step 2, 3, 5 or 6 for an
 inline segment is **invalid**: signed by its answerer, and checkable again
-by anyone who holds the request and the response. A `fetch` failure, or a
-step 5 or 6 failure of a fetched segment, is **unretrievable**: the
-advertised URL did not serve the bytes when the buyer asked, which is the
-buyer's statement, because a later fetch may succeed. One that passes every
+by anyone who holds the request and the response. A `siblings` array of the wrong length is always invalid. A `fetch` failure, or a step 5 or 6 failure of a fetched segment, needs one more look before it is anyone's: the buyer fetches the whole blob from the advertised URL and checks it against its CHIRP object hash. If the blob verifies, the advertised bytes are right and the answerer's path is wrong: **invalid**, the answerer's. If it does not, or cannot be fetched, it is **unretrievable**: the advertised URL did not serve the bytes when the buyer asked, which is the buyer's statement, because a later fetch may succeed. One that passes every
 step is a **pass**. Each outcome is the **answerer's**; it is also the
 advertiser's only when the answerer is the advertiser, and an unretrievable
 outcome is about the advertiser's URL whoever answered. The buyer's deadline for an answer, and what it pays, are its own.
@@ -555,7 +550,7 @@ What each outcome proves:
   so a reader weighs a pass by who the buyer is (its own challenges, buyers
   it trusts), never by the count.
 - **invalid**: the answerer signed a response that, by the buyer's
-  statement, failed section 7.4 at an inline segment. Anyone who holds the
+  statement, failed section 7.4 at an inline segment, or at a fetched segment whose blob the advertised URL served intact. Anyone who holds the
   request and the response (its hash is `response`) checks it again, so an
   invalid outcome is provable to whoever obtains the response, and a false
   one provably false; how the buyer makes the response available (its own
@@ -648,8 +643,7 @@ evidence: the hold output exists, is mined, is locked to `derive(writer,
 "hold")` and holds exactly `satoshis`, and is unspent by positive evidence from a spend source (bcommon `chainview` or `nodeapi`; an empty or failed answer is not evidence); and `deadline` is far enough ahead to be worth racing for. An eligible advertisement names the entry's `root`, is by an advertiser key that is not the anyone key and is not already counted, expires no
 earlier than the entry's `created / 1000 + retention`, has `fileSize` equal
 to the root node's length, and has a `url` of the CHIRP form for that root.
-An advertisement that already exists for the root (the provider held it for
-another entry) is eligible if it meets these.
+An advertisement that already exists for the root (the provider held it for another entry) is eligible if it meets these. Before it settles, the writer checks each payee's advertisement unspent by positive evidence from a spend source: an advertisement cancelled after it passed is not paid. Hosts do not learn of a cancellation (section 12.1), so `ads` may answer a cancelled advertisement until it expires; a reader names an advertiser at section 15.2 step 7 only after its own spend source shows the advertisement unspent, and otherwise just moves on.
 
 ### 9.4 Ranking and the settlement challenge
 
@@ -665,14 +659,7 @@ entry's writer (its BRC-103 authenticated identity) that names an entry
 with hold terms whose `root` the provider advertises, before the entry's
 `deadline`, when the provider's own section 9.3 checks of the bounty pass
 (the hold output exists, is mined, is the writer's, holds `satoshis`, is
-unspent, and is worth at least the provider's own minimum), with `c` at most
-`min(checkC, freeC)`, `freeC` being the maximum the provider publishes in
-its terms (at least 30), and at most two per hold outpoint and advertiser,
-whatever entries name it. A provider that is not competing for that bounty
-owes nothing. Every other challenge is the provider's to price. These
-conditions make the free answer cost the writer a real, unspent bounty per
-two answers, so that cheap entries naming a popular root cannot drain the
-root's advertisers.
+unspent, and is worth at least the provider's own minimum), with `c` at most `min(checkC, freeC)`, `freeC` being the maximum the provider publishes in its terms (at least 30), and at most two per hold outpoint and advertiser, whatever entries name it. The writer challenges each candidate with `min(checkC, freeC)` samples for that candidate's `freeC`; it MAY pay for more at the provider's price. A provider competes for a bounty when it advertises the root with an advertisement eligible under section 9.3; one that does not owes nothing. Every other challenge is the provider's to price. These conditions make the free answers cost the writer a bounty locked, unspent and worth the provider's minimum, per two answers, so that cheap entries naming a popular root cannot drain the root's advertisers; the writer can reclaim the bounty later, so what it pays is locked capital and fees, and a provider MAY also rate-limit free challenges per writer and per hold transaction.
 
 The writer's ranking is its own and is not auditable by anyone else; a
 provider that believes it was passed over has its own outcome records and
@@ -680,8 +667,7 @@ its own record of the writer's settlements to go by.
 
 ### 9.5 The settlement rule
 
-If fewer than `t` distinct advertisers passed by `deadline`, nothing is
-paid. Otherwise let `k = min(K, passed)` and `R` the hold output's value.
+If fewer than `t` distinct advertisers passed by the race's close (section 9.4), nothing is paid. Otherwise let `k = min(K, passed)` and `R` the hold output's value.
 For rank `i` from 1 (the first to pass in the writer's ranking) to `k`:
 
 ```text
@@ -812,14 +798,15 @@ host keeps the map of served chains only.
 | `pending` | `{"bucket": b, "owner": o, "id": i, "pending": k}` | served: entries for key `k` that no token of the chain names, written by the owner or the latest token's writers, newest `created` first, never one dated after the host's time, at most 8 | free |
 | `unanchored` | `{"bucket": b, "owner": o, "id": i, "writer": w, "after": e}` | served: the entries by `w` for the chain that no token names, admitted within the last 7 days, ascending by txid (display order) strictly after `e` (empty: from the start), at most 64 | free |
 | `entry` | `{"bucket": b, "entry": e}` | the entry carrier whose txid is `e` | free |
-| `ads` | `{"bucket": b, "root": r, "after": e}` | the advertisements for `r` that are unspent as far as the host knows and expire after the host's time, ascending by txid strictly after `e` (empty: from the start), at most 64 | free |
+| `ads` | `{"bucket": b, "root": r, "after": e}` | the advertisements for `r` that are unspent as far as the host knows and expire after the host's time, ascending by txid (display order) strictly after `e` (empty: from the start), at most 64 | free |
 | `ad` | `{"bucket": b, "root": r, "advertiser": a}` | the same, by advertiser `a` only, at most 8 | free |
-| `fronts` | `{"bucket": b, "advertiser": a}` | the front statements naming `a`, newest `created` first, never one dated after the host's time, at most 8 | free |
+| `fronts` | `{"bucket": b, "advertiser": a, "after": e}` | the front statements naming `a`, ascending by txid (display order) strictly after `e` (empty: from the start), at most 8 | free |
 | `front` | `{"bucket": b, "advertiser": a, "front": f}` | the statements by front `f` naming `a`, newest first, at most 8 | free |
 | `hold` | `{"bucket": b, "hold": h}` | the transaction holding hold output `h` | free |
 | `outcomes` | `{"bucket": b, "answerer": a}` | outcome records whose request names `a` as answerer, admitted within the last 31 days, newest `created` first, never one dated after the host's time, at most 64 | free |
 | `outcomes-of` | `{"bucket": b, "provider": p}` | the same, by the request's provider | free |
 | `outcomes-by` | `{"bucket": b, "answerer": a, "buyer": y}` | the same as `outcomes`, by buyer `y` only | free |
+| `outcomes-of-by` | `{"bucket": b, "provider": p, "buyer": y}` | the same as `outcomes-of`, by buyer `y` only | free |
 | `sweep` | `{"bucket": b, "spent": x}` | the admitted sweeps that spend outpoint `x`, at most 8 | free |
 | `history` | `{"bucket": b, "owner": o, "id": i, "history": k, "before": s}` | served: the entries that the tokens below `seq` `s` whose `changes` set `k` named, newest first, each preceded by that token, at most 64 entries | priceable |
 | `chain` | `{"bucket": b, "owner": o, "chain": i, "after": s}` | the chain's rooted tokens above `seq` `s`, in `seq` order, at most 64 | priceable |
@@ -873,18 +860,32 @@ chain), and every entry output is checked against that token's `mapRoot`.
   leaf whose key is `k`: the key exists, and this host cannot produce its
   entry. A reader then asks `entry` for that `C` elsewhere, and a gateway
   answers 503, never `NoSuchKey`.
-- In a **`list`** or **`export`** answer: role 0 is the leaf just before
-  the first answered index (absent when that is index 0), and role 1 the
-  leaf just after the last answered index (absent when that is `count -
-  1`). A page stops early at the first index in range whose entry the host
-  cannot produce, which it gives as the role 2 leaf; the next page asks with
-  `after` set to that leaf's key. A page with no entry is the absence form
-  around the point where `max(p, a)` would sort. The reader checks: the
-  answered indices are consecutive between the neighbours; the role 0 key
-  does not both start with `p` and sort after `a`; and, unless the page
-  holds its maximum or stops at a role 2 leaf, the role 1 key does not start
-  with `p`. Then no key between the neighbours, within the prefix, was left
-  out, and a page always completes, whatever the host holds.
+- In a **`list`** or **`export`** answer (`p` the prefix, empty for
+  `export`; `a` the `after` member): role 0 is the leaf just before the
+  first answered index, and role 1 the leaf just after the last. A page
+  stops early at the first index in range whose entry the host cannot
+  produce, which it gives as the role 2 leaf, and then carries no role 1;
+  the next page asks with `after` set to that leaf's key. Let `s` be the
+  index the page starts at (the first answered index, else the role 2 leaf's,
+  else role 1's, else `count`). The reader checks, and a page that fails any
+  check is incomplete and names the host:
+  1. every answered entry's key starts with `p` and sorts after `a`, and the
+     answered indices run consecutively from `s`;
+  2. role 0 is present exactly when `s > 0`, its index is `s - 1`, and its
+     key does not both start with `p` and sort after `a` (it sorts at or
+     before `a`, or before `p`, or after every key with prefix `p`, the
+     last only on an empty page with no role 1 or 2);
+  3. a role 2 leaf's index is the last answered index plus one (or `s`), and
+     its key starts with `p` and sorts after `a`;
+  4. unless the page holds its maximum or stops at a role 2 leaf, role 1 is
+     present exactly when the next index is below `count`, its index is that
+     next index, and its key does not start with `p` and sorts after `a`.
+  Together these prove that no key with prefix `p` after `a` lies between
+  role 0 and the end of the page: a host can withhold an entry only by
+  naming it (role 2), never by hiding it, and can never fake an empty page,
+  because role 0 and role 1 must then be adjacent leaves bracketing the
+  point where such keys would sort. A page always completes. A reader that
+  meets repeated role 2 stops at one host asks another.
 - A token's context is at most 4,096 bytes and an entry's at most 1,024.
 
 Each page is proven against the token it names. Pages of one listing may
@@ -941,8 +942,7 @@ anything but what the object needs:
   path;
 - a **bucket token**: exactly two transactions, the token and its parent,
   each with its minimal path or one merged path; never Atomic BEEF;
-- any **mined object** (an advertisement's or a hold output's transaction, a
-  sweep, a spend): exactly one transaction and its own minimal path.
+- any **mined object** (an advertisement's or a hold output's transaction, a sweep): exactly one transaction and its own minimal path.
 
 Whatever the host's own bound, an entry carrier's BEEF is at most 81,920
 bytes, an outcome's and a front statement's at most 81,920, a token's and a
@@ -1042,10 +1042,7 @@ as latest.
   of a hold output's settlement not at all; readers and providers use a
   spend source (section 12.2).
 
-A sweep's spends are kept for as long as the sweep's transaction is kept,
-at least 31 days after first sight, so that a sweep that arrives before its
-carriers still retracts them; a host keeps every sweep it admits for that
-floor and never in a table a stranger can flush. A host SHOULD keep an
+A host keeps the input outpoints of every sweep it admits (36 bytes each), once per host whatever topics name it, for at least 31 days after first sight, and the sweep's transaction only where an input matches a carrier it holds, so that a sweep that arrives before its carriers still retracts them, and nothing a stranger mines can flush them. A host SHOULD keep an
 object it refused `unmined` for a short while and decide it again once its
 headers move, because a mined object on the plane is delivered once.
 
@@ -1118,13 +1115,9 @@ How long a host keeps what it no longer answers is its policy, with floors:
 - every token of a chain it serves (its owner the served triple's owner), rooted or pending, for the host's life; any other token, whatever `id` it carries, at least 24 hours after first sight;
 - an entry the current map of a served chain names, for as long as it
   names it, and at least 31 days after a later token replaces or removes it;
-- an entry that no token names, of a served chain's owner or writers: at
-  least 7 days after first sight, long enough for the owner to anchor it;
-- an advertisement whose `hash` is the root of an entry a served chain's current map names, until the earlier of its expiry and 31 days after first sight (or after its last renewal), by the host's clock, plus 24 hours; a
-  hold output named by such an entry, or by a pending entry of a served
-  chain, until it is spent plus 24 hours or 31 days after first sight,
-  whichever is later;
-- an outcome record whose `buyer` is a served chain's owner or one of its latest token's writers, naming such a root: at least 31 days after first sight; the newest 8 front statements per advertiser of such a root: at least 31 days; any other outcome or front statement 24 hours;
+- an entry that no token names, of a served chain's owner or its latest token's writers: at least 7 days after first sight, long enough for the owner to anchor it (an entry by a writer the owner has not yet named in a token is a stranger's until it does, so the owner anchors it, or names the writer, within 24 hours);
+- an advertisement whose `hash` is the root of an entry a served chain's current map names, until the earlier of its expiry and 31 days after first sight (or after its last renewal), by the host's clock, plus 24 hours; a hold output named by such an entry, or by a pending entry of a served chain: at least 31 days after first sight (a host does not learn of its spend);
+- an outcome record whose `buyer` is a served chain's owner or one of its latest token's writers, naming such a root: at least 31 days after first sight; the first 16 front statements, by the host's first sight, naming advertisers of such a root, per root: at least 31 days; any other outcome or front statement 24 hours;
 - for every outpoint of an admitted carrier that a mined sweep the host
   admitted spends, a **retraction mark** (the outpoint alone, 36 bytes), for
   the host's life;
@@ -1214,7 +1207,7 @@ under a new txid, and a token would name a commitment nobody can produce.
 A writer makes at most one carrier per funding output.
 
 A piece carrier is the same with a record of up to 4,194,560 bytes. Its BEEF
-is at most 4,259,840 bytes (4 MiB plus 64 KiB): a writer sizes the trees that fund pieces so that the tree, its path and the carrier's own overhead (about 300 bytes) fit in what the ceiling leaves above the record (65,536 bytes less 256 less that overhead), and small trees cost less per piece (section 19.2).
+is at most 4,259,840 bytes (4 MiB plus 64 KiB): a writer sizes the trees that fund pieces so that the tree, its path and the carrier's own overhead (about 300 bytes) fit in what the ceiling leaves above the record (the 65,536 bytes above 4 MiB, less the record's 256 bytes of keys), and small trees cost less per piece (section 19.2).
 
 ### 13.3 Bucket tokens
 
@@ -1357,8 +1350,7 @@ version. What follows is the contract between S3 and the records.
 An S3 bucket name is the bucket identifier with every `_` replaced by `-`
 (for example `photos-qzvmkwerty`): 12 to 36 lowercase letters and hyphens,
 starting and ending with a letter, which S3's naming rules and virtual-host
-addressing accept. The mapping is one to one because an identifier holds no hyphen. An identifier whose S3 name would begin with a prefix S3 reserves (`sthree-`) is refused by the gateway for S3 use; no other reserved prefix or suffix can arise from the grammar. The gateway's configuration names, per S3 bucket, the bucket id it
-reads (`ListBuckets` answers those). An S3 object key is a bstore object key;
+addressing accept. The mapping is one to one because an identifier holds no hyphen. An identifier whose S3 name would begin with a prefix S3 reserves (`sthree-`) is refused by the gateway for S3 use; no other reserved prefix or suffix can arise from the grammar. The gateway's configuration names, per S3 bucket, the chain it reads, `(owner, id)` (`ListBuckets` answers those). An S3 object key is a bstore object key;
 a key S3 would accept but section 2 refuses (a control character) is refused with `InvalidArgument`. The gateway accepts the `aws-chunked` bodies with trailing checksums that current AWS SDKs send by default, and checks the trailer.
 
 ### 16.2 Operations
@@ -1370,7 +1362,7 @@ a key S3 would accept but section 2 refuses (a control character) is refused wit
 | `CopyObject` | a new put entry naming the same `root`, `size`, `contentHash` and `proofRoot` as the source's current entry. Within one bucket no piece is published again, and providers already holding the root may advertise it for a new bounty; across buckets the gateway publishes the closure's pieces again on the destination's blob topic, whose providers have not seen them |
 | `DeleteObject` | a delete entry; `204`. The key leaves the map at the next token |
 | `HeadObject`, `GetObject` | `object` at the hosts configured, the checks of section 15.2 (steps 1 to 5 for a head, which never asks a provider), blobs from the advertisers of `ads`; a `Range` maps to the blobs it overlaps, each verified before any byte is sent |
-| `ListObjectsV2` | `list` pages, proven complete per page (section 11.3); `Delimiter` is applied by the gateway to the proven page; `ContinuationToken` is the base64 of the last key; `MaxKeys` at most 1000 |
+| `ListObjectsV2` | `list` pages, proven complete per page (section 11.3); a key a page names as unheld (role 2) is listed from its entry fetched by `entry` at another host, and if no host produces it the listing answers 503; `Delimiter` is applied by the gateway to the proven page; `ContinuationToken` is the base64 of the last key; `MaxKeys` at most 1000 |
 | `ListBuckets` | the configured buckets |
 | everything else (versioning, ACLs, policies, lifecycle, tagging, object lock, encryption headers, presigned POST) | `NotImplemented` |
 
@@ -1383,8 +1375,7 @@ a key S3 would accept but section 2 refuses (a control character) is refused wit
   is informative; integrity is the CHIRP root and the content hash. An
   entry without `etag` is answered with `"<64 hex of root>-1"`, which such
   clients read as a multipart ETag and do not compare.
-- **`x-amz-checksum-sha256`** is the base64 of `contentHash`, with
-  `x-amz-checksum-type: FULL_OBJECT`.
+- **`x-amz-checksum-sha256`** is the base64 of `contentHash`, with `x-amz-checksum-type: FULL_OBJECT`, for multipart objects too; S3 itself gives SHA-256 multipart objects only a composite checksum, so this is a deviation, and clients that check the value still pass.
 - **`x-amz-meta-bstore-root`** is the hex of `root`; `x-amz-meta-*` the entry's `meta`. User metadata keys starting `bstore-` are reserved and refused on a put.
 - **`Content-Type`** is the entry's `contentType`. On a put the gateway lowercases the client's value and strips its parameters; with none, or one that breaks section 4.1's rule, it records `application/octet-stream`.
 - **`Last-Modified`** is the entry's `created`: the writer's claim. The
@@ -1392,9 +1383,7 @@ a key S3 would accept but section 2 refuses (a control character) is refused wit
 - **Consistency.** A gateway reads its own pending entries at once; other
   gateways see a write when a token anchors it. S3's strong read-after-write
   consistency holds only at the writing gateway.
-- **Not found.** `NoSuchKey` when the host's answer proves the key absent
-  (section 11.3) or the current entry is a delete; when no host answers at
-  all, `503 SlowDown`, because an empty answer proves nothing.
+- **Not found.** `NoSuchKey` when the host's answer proves the key absent (section 11.3) or the current entry is a delete; `503 SlowDown` when no host answers at all, because an empty answer proves nothing, or when the map names the key's entry and no host produces it.
 - **Errors in flight.** A blob that fails its hash at every advertiser after
   headers were sent ends the response early; the declared
   `Content-Length` makes the truncation visible to the client.
@@ -1426,11 +1415,7 @@ UHRP host to the market without changing how it runs:
   own key; the bridge mirrors it, unchanged, onto the bucket's records topic
   and publishes a front statement naming itself as the incumbent's front;
 - the bridge keeps every segment hash of the proof tree (32 bytes per 4 KiB:
-  1/128 of the data, about 7.8 GB per TB), never the bytes, and answers a
-  challenge by reference (section 7.5) or by fetching each sampled segment
-  from the incumbent's blob route with a `Range` request and checking it
-  against the hash it keeps, so that a passing proof shows what a reader of
-  the incumbent's public URL gets;
+  1/128 of the data, about 7.8 GB per TB), never the bytes, and answers every challenge by reference (section 7.5), with the paths built from the hashes it keeps; it MAY first fetch each sampled segment from the incumbent's blob route with a `Range` request and check it, to know what the buyer will find. A passing proof shows what a reader of the incumbent's public URL gets;
 - `renew` translates to the incumbent's own renewal route; the incumbent
   redeems and recreates its advertisement as its SDK does, and the bridge
   answers the buyer with that advertisement;
@@ -1531,8 +1516,7 @@ the tree transaction).
   renewal; by the owner: a share of one token.
 - Proof tree: 25,600 segments, depth 15. A sample is 4,096 + 15 x 32 =
   4,576 bytes; a `c = 30` response about 138 KB. The settlement challenge
-  of `K = 5` winners moves about 690 KB in all. A native provider that
-  rebuilds subtrees reads at most 30 blobs (120 MiB) for one challenge; one
+  of `K = 5` winners moves about 690 KB in all. A native provider that rebuilds subtrees reads at most 25 blobs (100 MiB, every blob of the object) for one challenge; one
   that keeps segment hashes (819,200 bytes for this object) reads 30
   segments (120 KiB).
 - Finding one dropped blob (4 %) with 99 % confidence takes `c = 113`, a
@@ -1668,6 +1652,6 @@ pin byte for byte the rows of frozen.md marked "vectors".
 | `map-v1.json` | key maps and their roots; folds of change lists, `map-mismatch` cases; inclusion, absence and page-completeness contexts |
 | `proof-v1.json` | proof roots for 0, 1, 4,095, 4,096, 4,097 bytes, one blob, one blob plus one byte, 25 and 257 blobs (by deterministic content); index derivations for given seeds; audit paths; responses that pass and fail at each step of section 7.4 |
 | `settle-v1.json` | payouts for `k` 1 to 16 and assorted `R`, the BRC-178 examples among them; derivation prefixes and suffixes |
-| `transaction-v1.json` | carriers, tokens, advertisements, hold outputs, sweeps and spends admitted and refused by each rule of section 12.1 |
+| `transaction-v1.json` | carriers, tokens, advertisements, hold outputs and sweeps admitted and refused by each rule of section 12.1, and transactions that only spend held outputs, refused |
 | `query-v1.json` | every class and every value rule, admitted and refused |
 | `chirp-v1.json` | BRC-167's own vectors, read by the CHIRP codec |

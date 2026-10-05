@@ -115,9 +115,9 @@ registered names; no basket starts with `bstore`.
 | Answerer's refusals | 422 `seed`, `request`, `unknown-root` (a `proofRoot` or `size` not its own computation for `root`) | PROVISIONAL |
 | Response body | 0 `magic`, 1 `request` (its hash), 2 `samples` (`c` entries `[segment or null, siblings]`, every segment `null` when the answerer is not the provider), 3 `answerer`; no other key | PROVISIONAL (vectors) |
 | Signed response | CBOR `[body, signature]`; signature over `SHA-256(request) \|\| SHA-256(body)` under `derive(answerer, "challenge")`; at most 8,388,608 bytes | PROVISIONAL (vectors) |
-| Buyer's check order | `signature`, `request`, `count`, `fetch`, `segment`, `path`; failing `signature` is no-answer; a later failure of an inline segment invalid; a fetch failure, or a failure of a fetched segment, unretrievable; outcomes the answerer's | PROVISIONAL (vectors) |
+| Buyer's check order | `signature`, `request`, `count`, `fetch`, `segment`, `path`; failing `signature` is no-answer; a later failure invalid, except that a fetched segment's failure is unretrievable unless the whole blob fetched from the advertised URL verifies (then invalid); a wrong-length path always invalid; outcomes the answerer's | PROVISIONAL (vectors) |
 | By-reference samples | fetched by the buyer from the advertised blob route with `Range`, or the whole blob | PROVISIONAL |
-| The settlement challenge | not priced for the entry's writer, before `deadline`, when the provider's own bounty checks pass and the bounty meets its minimum, `c` at most `min(checkC, freeC)` with `freeC` at least 30, at most two per hold outpoint and advertiser | PROVISIONAL |
+| The settlement challenge | the writer uses `min(checkC, freeC)` per candidate; not priced for the entry's writer, before `deadline`, when the provider's own bounty checks pass and the bounty meets its minimum, `c` at most `min(checkC, freeC)` with `freeC` at least 30, at most two per hold outpoint and advertiser | PROVISIONAL |
 | Default `c` | 30 for a paid challenge and as the recommended `checkC`; policy, not frozen | (not frozen) |
 
 ## 8. Outcomes and front statements
@@ -136,7 +136,7 @@ registered names; no basket starts with `bstore`.
 | Advertisements | BRC-26 exactly as the SDK validates it (its signature canonical DER, any S); CHIRP URL form for a root; never the anyone key | PROVISIONAL |
 | Hold output | `<derive(writer, "hold")> OP_CHECKSIG <73 74 03> OP_DROP`, mined, value the bounty | PROVISIONAL |
 | Eligibility | spec section 9.3 | PROVISIONAL |
-| Ranking | first sight at the writer's client, ties to the lower advertisement txid; candidates must pass a settlement challenge; the race closes at `K` passed, the writer's window, or `deadline`; settled only if `t` passed | PROVISIONAL |
+| Ranking | first sight at the writer's client, ties to the lower advertisement txid; candidates must pass a settlement challenge; the race closes at `K` passed, the writer's window, or `deadline`; settled only if `t` passed; payees' advertisements unspent by positive evidence | PROVISIONAL |
 | Payouts | BRC-178's square-root weights in binary64, floors, remainder to rank 1, no zero output; payouts sum to the hold output's value | PROVISIONAL (vectors) |
 | Settlement derivation | BRC-29 to the advertiser's key; prefix `base64(C)`, suffix `base64(uint16be(rank))` | PROVISIONAL (vectors) |
 | Payee | always the advertisement's identity key | PROVISIONAL |
@@ -146,10 +146,10 @@ registered names; no basket starts with `bstore`.
 
 | Item | Value | Status |
 | --- | --- | --- |
-| Classes | free `bucket`, `bucket-seq`, `object`, `list`, `pending`, `unanchored`, `entry`, `ads`, `ad`, `fronts`, `front`, `hold`, `outcomes`, `outcomes-of`, `outcomes-by`, `sweep`; priceable `history`, `chain`, `export`, `outcome-history`; chain classes name `(owner, id)`; map classes for served chains only; no priced class a superset of a free class | PROVISIONAL |
+| Classes | free `bucket`, `bucket-seq`, `object`, `list`, `pending`, `unanchored`, `entry`, `ads`, `ad`, `fronts`, `front`, `hold`, `outcomes`, `outcomes-of`, `outcomes-by`, `outcomes-of-by`, `sweep`; priceable `history`, `chain`, `export`, `outcome-history`; chain classes name `(owner, id)`; map classes for served chains only; no priced class a superset of a free class | PROVISIONAL |
 | Query values | every member a string; the value rules of spec section 11.2; an unknown member, a missing member or an unknown bucket refused | PROVISIONAL |
-| Contexts | an entry's `[index, path]`; the leading token's array of at most two leaves `[role, index, key, C, path]` (0 before, 1 after, 2 unheld); pages stop at an unheld leaf and always complete; 1,024 and 4,096 bytes | PROVISIONAL (vectors) |
-| Order | `list` and `export` by key bytes; `ads` and `unanchored` ascending txid after a txid cursor; `pending`, `fronts`, `outcomes`, `outcome-history` newest `created` first, never dated after the host's time | PROVISIONAL |
+| Contexts | an entry's `[index, path]`; the leading token's array of at most two leaves `[role, index, key, C, path]` (0 before, 1 after, 2 unheld); pages stop at an unheld leaf and always complete; the reader's page checks of spec section 11.3; 1,024 and 4,096 bytes | PROVISIONAL (vectors) |
+| Order | `list` and `export` by key bytes; `ads`, `unanchored` and `fronts` ascending txid (display order) after a txid cursor; `pending`, `outcomes`, `outcome-history` newest `created` first, never dated after the host's time | PROVISIONAL |
 | Free window | `outcomes` within 31 days of admission | PROVISIONAL |
 | Terms and payment | `<base>/ls_bstore/terms`; the 402 authoritative; payment output 0 of the BRC-105 transaction, P2PKH to the BRC-29 key | PROVISIONAL |
 | Retention floors | spec section 12.3 | PROVISIONAL (floors: a later version may lengthen them, never shorten) |
@@ -158,7 +158,7 @@ registered names; no basket starts with `bstore`.
 
 | Item | Value | Status |
 | --- | --- | --- |
-| S3 bucket names | the identifier with `_` replaced by `-` | PROVISIONAL |
+| S3 bucket names | the identifier with `_` replaced by `-`; the gateway names `(owner, id)` per S3 bucket | PROVISIONAL |
 | Authentication | SigV4 gateway mode only, one identity per access key | PROVISIONAL |
 | ETag | the entry's `etag` (MD5, or S3's multipart form), else `"<root hex>-1"` | PROVISIONAL |
 | Headers | `x-amz-checksum-sha256` the content hash (`FULL_OBJECT`); `x-amz-meta-bstore-root`, `bstore-` metadata keys reserved; `Content-Type` lowercased without parameters, default `application/octet-stream`; `HeadObject` never asks a provider; `sthree-` names refused | PROVISIONAL |
