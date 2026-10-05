@@ -48,7 +48,7 @@ registered names; no basket starts with `bstore`.
 | Carrier shape and refusal order | spec section 12.1: `shape`, `beef`, record rules, `bucket`, `mineable`, `unlock`, `lock`, `signature`, `funding` | PROVISIONAL (vectors) |
 | Token shape and refusal order | spec section 12.1: `shape`, `beef`, record rules, `bucket`, `lock`, `signature`, `unmined`, `token-input`, `bucket-id`; admitted whether or not the predecessor is held | PROVISIONAL (vectors) |
 | Classifier | spec section 12.1: claiming outputs by push data; funding-shaped `21 <33> ac 03 73 74 02 75`; hold-shaped `21 <33> ac 03 73 74 03 75`; advertisements as the SDK validates them; two claiming outputs refuse (`shape`); a piece is refused (`piece`) | PROVISIONAL (vectors) |
-| Mined objects | advertisement and hold-shaped outputs admitted when mined, at most 16 a transaction (`beef`, `unmined`, `too-many`); a sweep is a transaction of at most two outputs whose output 0 is funding-shaped, its spends kept with it at least 31 days; anything else `not-bstore`, a transaction that only spends held outputs included; settlements and reclaims never published | PROVISIONAL (vectors) |
+| Mined objects | advertisement and hold-shaped outputs admitted when mined, at most 16 a transaction (`beef`, `unmined`, `too-many`); a sweep is a transaction of at most two outputs whose output 0 is funding-shaped; its input outpoints kept at least 31 days once per host, its transaction only where it matched a held carrier; anything else `not-bstore`, a transaction that only spends held outputs included; settlements and reclaims never published | PROVISIONAL (vectors) |
 | BEEF ceilings | entry, outcome and front carriers 81,920 bytes; tokens and sweeps 196,608; other mined objects 65,536; piece carriers 4,259,840; a host's own bound at least 262,144 | PROVISIONAL |
 | Admission | a verdict depends only on the submission's bytes and the host's headers; the engine's previous coins decide retention only, never acceptance; never on another topic, on what the topic holds, or on arrival order; an allow-list is static operator configuration, never computed from any topic; a topic manager returns instructions only for what it admits and raises for every refusal | PROVISIONAL |
 | Hosts hold no bytes | no host admits a piece; no host fetches anything a record names; no broadcaster | PROVISIONAL |
@@ -68,7 +68,7 @@ registered names; no basket starts with `bstore`.
 | Refusal order | spec section 3.2, ending in `first` | PROVISIONAL (vectors) |
 | Bucket id | `SHA-256("bstore bucket id v1" \|\| txid \|\| uint32be(vout))` of the outpoint the first token spends | PROVISIONAL (vectors) |
 | Chain identity | a chain is `(owner, id)`; questions, served configuration and reader memory name both; a token of another owner never displaces the owner's in any cap | PROVISIONAL |
-| The map | changes applied in order; a zero `C` removes; every change must change the map | PROVISIONAL |
+| The map | changes applied in order; a zero `C` removes; every change must change the map, and tooling drops any change that would not before minting; a delete entry anchors as a removal and no token names a delete's `C` | PROVISIONAL (vectors) |
 | Map root | RFC 6962 Merkle Tree Hash over `uint16be(len(key)) \|\| key \|\| C`, ascending by key bytes; empty map `SHA-256("")` | PROVISIONAL (vectors) |
 | Token statuses | `pending`, `map-mismatch` (sticky), `consistent`; only rooted, consistent tokens answered as latest | PROVISIONAL |
 | Writers | the owner and up to 16 keys a token names; a reader refuses an entry by anyone else, checked against the latest token (`writer`); tooling never removes a writer while the map names its entries | PROVISIONAL |
@@ -83,7 +83,7 @@ registered names; no basket starts with `bstore`.
 | The empty object | `size` 0 with the CHIRP empty root, `contentHash` and `proofRoot` `SHA-256("")`, no hold | PROVISIONAL (vectors) |
 | Refusal order | spec section 4.2, ending in `kind`, `empty` | PROVISIONAL (vectors) |
 | Hold terms | `[txid, vout, satoshis, t, K, retention, deadline, checkC]`, bounds of spec section 4.3 | PROVISIONAL |
-| Anchored and pending | the latest token's map decides; pending entries are claims any reader may ask for (`pending`), and the writing gateway serves its own at once | PROVISIONAL |
+| Anchored and pending | the latest token's map decides; pending entries are claims any reader may ask for (`pending`: only those claiming a `created` after the latest token's), and the writing gateway serves its own at once; anchoring tooling MUST, and pending readers SHOULD, check an entry's funding outpoint unspent by positive evidence | PROVISIONAL |
 
 ## 5. Pieces
 
@@ -115,9 +115,9 @@ registered names; no basket starts with `bstore`.
 | Answerer's refusals | 422 `seed`, `request`, `unknown-root` (a `proofRoot` or `size` not its own computation for `root`) | PROVISIONAL |
 | Response body | 0 `magic`, 1 `request` (its hash), 2 `samples` (`c` entries `[segment or null, siblings]`, every segment `null` when the answerer is not the provider), 3 `answerer`; no other key | PROVISIONAL (vectors) |
 | Signed response | CBOR `[body, signature]`; signature over `SHA-256(request) \|\| SHA-256(body)` under `derive(answerer, "challenge")`; at most 8,388,608 bytes | PROVISIONAL (vectors) |
-| Buyer's check order | `signature`, `request`, `count`, `fetch`, `segment`, `path`; failing `signature` is no-answer; a later failure invalid, except that a fetched segment's failure is unretrievable unless the whole blob fetched from the advertised URL verifies (then invalid); a wrong-length path always invalid; outcomes the answerer's | PROVISIONAL (vectors) |
-| By-reference samples | fetched by the buyer from the advertised blob route with `Range`, or the whole blob | PROVISIONAL |
-| The settlement challenge | the writer uses `min(checkC, freeC)` per candidate; not priced for the entry's writer, before `deadline`, when the provider's own bounty checks pass and the bounty meets its minimum, `c` at most `min(checkC, freeC)` with `freeC` at least 30, at most two per hold outpoint and advertiser | PROVISIONAL |
+| Buyer's check order | steps 1 to 3 once (`signature`, `request`, `count` including every path's length), then per sample in `k` order `fetch`, `segment`, `path`; failing `signature` is no-answer; `request`, `count`, or an inline sample's failure invalid; a fetched sample's failure rechecked from the whole blob: blob verifies and segment then passes, pass; blob verifies and segment still fails, invalid; blob fails, unretrievable; outcomes the answerer's; a reorged seed accepted on any branch seen | PROVISIONAL (vectors) |
+| By-reference samples | fetched by the buyer from the tested URL (the provider's live advertisement for the root with the latest expiry, ties to the lower txid), blob route, with `Range`, or the whole blob | PROVISIONAL |
+| The settlement challenge | the writer uses `min(checkC, freeC)` per candidate; not priced for the entry's writer, before `deadline`, when the provider's own bounty checks pass and the bounty meets its minimum, `c` at most `min(checkC, freeC)` with `freeC` at least 30, at most two per hold outpoint and advertiser, the hold output at least the provider's published `minAge` blocks deep (0 to 1008) | PROVISIONAL |
 | Default `c` | 30 for a paid challenge and as the recommended `checkC`; policy, not frozen | (not frozen) |
 
 ## 8. Outcomes and front statements
@@ -136,7 +136,7 @@ registered names; no basket starts with `bstore`.
 | Advertisements | BRC-26 exactly as the SDK validates it (its signature canonical DER, any S); CHIRP URL form for a root; never the anyone key | PROVISIONAL |
 | Hold output | `<derive(writer, "hold")> OP_CHECKSIG <73 74 03> OP_DROP`, mined, value the bounty | PROVISIONAL |
 | Eligibility | spec section 9.3 | PROVISIONAL |
-| Ranking | first sight at the writer's client, ties to the lower advertisement txid; candidates must pass a settlement challenge; the race closes at `K` passed, the writer's window, or `deadline`; settled only if `t` passed; payees' advertisements unspent by positive evidence | PROVISIONAL |
+| Ranking | first sight at the writer's client, ties to the lower advertisement txid; candidates must pass a settlement challenge; the race closes at `K` passed, the writer's window, or `deadline`; settled only if `t` passed; payees' advertisements unspent by positive evidence, a renewal successor counting as unspent and keeping the original's first sight; a cancelled payee dropped, ranks below moved up, `t` counted again | PROVISIONAL (vectors) |
 | Payouts | BRC-178's square-root weights in binary64, floors, remainder to rank 1, no zero output; payouts sum to the hold output's value | PROVISIONAL (vectors) |
 | Settlement derivation | BRC-29 to the advertiser's key; prefix `base64(C)`, suffix `base64(uint16be(rank))` | PROVISIONAL (vectors) |
 | Payee | always the advertisement's identity key | PROVISIONAL |
@@ -146,9 +146,9 @@ registered names; no basket starts with `bstore`.
 
 | Item | Value | Status |
 | --- | --- | --- |
-| Classes | free `bucket`, `bucket-seq`, `object`, `list`, `pending`, `unanchored`, `entry`, `ads`, `ad`, `fronts`, `front`, `hold`, `outcomes`, `outcomes-of`, `outcomes-by`, `outcomes-of-by`, `sweep`; priceable `history`, `chain`, `export`, `outcome-history`; chain classes name `(owner, id)`; map classes for served chains only; no priced class a superset of a free class | PROVISIONAL |
+| Classes | free `bucket`, `bucket-seq`, `object`, `list`, `pending`, `unanchored`, `entry`, `ads`, `ad`, `fronts`, `front`, `hold`, `outcomes`, `outcomes-of`, `outcomes-by`, `outcomes-of-by`, `sweep`; priceable `history`, `chain`, `export`, `outcome-history`, `outcome-history-of`; chain classes name `(owner, id)`; map classes for served chains only; no priced class a superset of a free class | PROVISIONAL |
 | Query values | every member a string; the value rules of spec section 11.2; an unknown member, a missing member or an unknown bucket refused | PROVISIONAL |
-| Contexts | an entry's `[index, path]`; the leading token's array of at most two leaves `[role, index, key, C, path]` (0 before, 1 after, 2 unheld); pages stop at an unheld leaf and always complete; the reader's page checks of spec section 11.3; 1,024 and 4,096 bytes | PROVISIONAL (vectors) |
+| Contexts | an entry's `[index, path]`; the leading token's array of at most two leaves `[role, index, key, C, path]` (0 before, 1 after, 2 unheld); pages stop at an unheld leaf and always complete; the reader's page checks of spec section 11.3 (role 0 strictly before the range: at or before `a`, or before `p`; role 1 strictly after it: after `a`, after `p`, not starting with `p`); page maxima 256 (`list`) and 512 (`export`) as the checks use them; 1,024 and 4,096 bytes | PROVISIONAL (vectors) |
 | Order | `list` and `export` by key bytes; `ads`, `unanchored` and `fronts` ascending txid (display order) after a txid cursor; `pending`, `outcomes`, `outcome-history` newest `created` first, never dated after the host's time | PROVISIONAL |
 | Free window | `outcomes` within 31 days of admission | PROVISIONAL |
 | Terms and payment | `<base>/ls_bstore/terms`; the 402 authoritative; payment output 0 of the BRC-105 transaction, P2PKH to the BRC-29 key | PROVISIONAL |
@@ -162,7 +162,8 @@ registered names; no basket starts with `bstore`.
 | Authentication | SigV4 gateway mode only, one identity per access key | PROVISIONAL |
 | ETag | the entry's `etag` (MD5, or S3's multipart form), else `"<root hex>-1"` | PROVISIONAL |
 | Headers | `x-amz-checksum-sha256` the content hash (`FULL_OBJECT`); `x-amz-meta-bstore-root`, `bstore-` metadata keys reserved; `Content-Type` lowercased without parameters, default `application/octet-stream`; `HeadObject` never asks a provider; `sthree-` names refused | PROVISIONAL |
-| Not found | `NoSuchKey` only on a proven absence or a delete; `503 SlowDown` when no host answers or the entry is unheld | PROVISIONAL |
+| Writes | `Content-MD5` checked (`BadDigest`); `If-None-Match` and `If-Match` refused with `501 NotImplemented`; a multipart upload belongs to one gateway; `CopyObject` keeps `contentType`, `etag` and `meta` (`COPY`) or takes the request's (`REPLACE`), republishing pieces across buckets | PROVISIONAL |
+| Not found | `NoSuchKey` only on a proven absence, or at the writing gateway on its own newer pending delete; `503 SlowDown` when no host answers or the entry is unheld | PROVISIONAL |
 | Provider route bodies | the JSON bodies of `challenge`, `renew`, `settle` and `terms` (spec section 10.1); BRC-105 on every priced route, BRC-121 optional | PROVISIONAL |
 | Hold-backend interface | `Put`, `Has`, `Get(hash, offset, length)`, `ServeURL`, `Advertise`, as spec section 17 | PROVISIONAL |
 
@@ -188,7 +189,7 @@ least 1024. As ceilings, not floors: the BEEF ceilings of section 2.
   deadlines, its race window, which operators it treats as independent.
 - Host policy: retention beyond the floors, allow-lists, rate limits,
   prices, the handshake budget, metric names.
-- The answer limits, which a later version may raise.
+- The answer limits other than the `list` and `export` page maxima, which a later version may raise.
 - The buyer's `c` beyond the default and its timeout.
 - Gateway policy: which buckets and identities it serves, its default
   bounty, part buffering.
