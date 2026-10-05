@@ -1152,8 +1152,10 @@ export class StoreLookupService implements LookupService {
       matched = true
       for (const c of [...on]) this.retract(this.carriers.get(c)!, this.table.get(op)!.at)
     }
-    // A restore keeps what storage kept: a sweep is in storage only because it matched.
-    if (!matched && !this.restoring) {
+    // A restore reads what storage kept: a sweep that matched left a mark on the outpoint of what it retracted;
+    // one that did not was being dropped when the host stopped, and is dropped now.
+    if (this.restoring && !matched) matched = spent.some((op) => this.marks.has(op))
+    if (!matched) {
       this.queueDrop(b, txid, 0)
       this.host.metrics.inc('bstore_dropped_total', { why: 'unmatched-sweep' })
       return false

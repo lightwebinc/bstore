@@ -157,6 +157,24 @@ test("a drop decided while the engine admits the object waits for the engine's r
   assert.deepEqual(await answer(w.r, { bucket, entry: s.txid }), [s.txid])
 })
 
+test('a sweep that matched nothing, left in storage when the host stopped before its drop ran, is dropped by the restore; one that matched stays', async () => {
+  const w = await world()
+  const e = await w.alice.put(w.owner.id, 'm')
+  await submitTx(w.r, e.tx)
+  const matched = await sweep(e.tree, [e.vout], w.alice.party, KeyEntry, w.chain)
+  await submitTx(w.r, matched)
+  const lone = await sweep(e.tree, [100], w.alice.party, KeyEntry, w.chain)
+  // Admitted, and the host stops before the drop runs.
+  w.r.ls.flush = async () => {}
+  await w.r.engine.submit({ beef: lone.toAtomicBEEF(), topics: [topic] })
+  assert.notEqual(await w.r.storage.findOutput(lone.id('hex'), 0, topic), null)
+  const again = await restart(w.r)
+  assert.equal(await again.storage.findOutput(lone.id('hex'), 0, topic), null)
+  assert.deepEqual(await answer(again, { bucket, spent: `${e.tree.id('hex')}.100` }), [])
+  assert.deepEqual(await answer(again, { bucket, spent: e.op }), [matched.id('hex')])
+  assert.equal(again.ls.swept(`${e.tree.id('hex')}.100`), true, 'its outpoints are kept')
+})
+
 test("the first carrier of an outpoint and the retraction marks hold across a compaction and a restart", async () => {
   const w = await world()
   await submit(w.r, (await w.owner.token()).beef)
