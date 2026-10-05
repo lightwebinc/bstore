@@ -159,20 +159,20 @@ A topic may hold more than one bucket chain, by more than one owner: a chain is 
 | 4 | `seq` | uint | 0 to 2^53 - 1; the token's position in the chain |
 | 5 | `prev` | bytes(32) | 32 zero bytes at `seq` 0; otherwise the txid of the token at `seq - 1`, hash byte order |
 | 6 | `writers` | array | 0 to 16 identity keys, ascending, none the owner or the anyone key: the keys besides the owner whose entries the owner intends to anchor |
-| 7 | `changes` | array | 0 to 1024 entries `[key, C]`, ascending by `key`, no key twice: `key` an object key, `C` 32 bytes, the commitment of the entry the key names from this token on, or 32 zero bytes to remove the key |
+| 7 | `changes` | array | 0 to 1024 entries, ascending by `key`, no key twice: a put `[key, C]`, `C` the commitment of the put entry the key names from this token on; or a removal `[key, Z, D]`, `Z` 32 zero bytes and `D` the commitment of the delete entry that removes the key; `key` an object key, `C` and `D` 32 bytes, neither zero |
 | 8 | `count` | uint | 0 to 1,048,576: the number of keys in the map after this token's changes |
 | 9 | `mapRoot` | bytes(32) | the root of the map after this token's changes (section 3.4) |
 | 10 | `created` | uint | Unix milliseconds |
+| 11 | `consumed` | array | 0 to 1024 commitments (32 bytes each), ascending, none equal to a `C` or `D` in this token's `changes`: the entries the owner applied in this interval without naming them in `changes` (a put superseded by a later put of the same key in the same batch, a delete of a key the map does not hold, a put of a key whose value it would not change) |
 
-All keys 0 to 10 are required; 11 and above are unknown. The record is at
+All keys 0 to 11 are required; 12 and above are unknown. The record is at
 most 65,536 bytes encoded, and that bound governs over the list bounds: an
 owner whose changes do not fit splits them over several tokens.
 
 **The refusal order.** A record is refused for the first rule it breaks:
 `too-large` (over 65,536 bytes, before decoding), `cbor`, `key-type`,
-`magic`, then per key in key order `missing`, `type` and the key's own rule (`bucket`, `identity` for `owner` and for any key in `writers`, `seq`, `writers` for order, count and the owner, `changes`, `count`, `created`),
-then `first`: at `seq` 0, `prev` is not 32 zero bytes, or `changes` is not
-empty, or `count` is not 0, or `mapRoot` is not `SHA-256` of the empty
+`magic`, then per key in key order `missing`, `type` and the key's own rule (`bucket`, `identity` for `owner` and for any key in `writers`, `seq`, `writers` for order, count and the owner, `changes`, `count`, `created`, `consumed`),
+then `first`: at `seq` 0, `prev` is not 32 zero bytes, or `changes` or `consumed` is not empty, or `count` is not 0, or `mapRoot` is not `SHA-256` of the empty
 string; at `seq > 0`, `prev` is 32 zero bytes.
 
 A host checks these on the record's bytes. It cannot check, at admission,
@@ -192,10 +192,26 @@ output locked to `derive(owner, "chain")`, section 13.4). Checked at admission (
 ### 3.4 The key map and its root
 
 The **map** of a token is the set of `(key, C)` pairs after its changes,
-applied to the map of its predecessor in `changes` order: a non-zero `C`
-sets the key, a zero `C` removes it. Every change MUST change the map: a removal of an absent key, or a `C` the key already names, is a fold error (`map-mismatch`, section 12.2), which breaks the chain for good. The owner's tooling therefore MUST fold before it mints and drop every change that would not change the map: a delete entry for a key the map does not hold, or a put the key already names, is dropped from the batch, not anchored. The map at `seq` 0 is empty.
+applied to the map of its predecessor in `changes` order: a put `[key, C]` sets the key, a removal `[key, Z, D]` removes it. Every change MUST change the map: a removal of an absent key, or a `C` the key already names, is a fold error (`map-mismatch`, section 12.2), which breaks the chain for good. The map at `seq` 0 is empty.
 
-A **delete** entry anchors as a removal: the change for its key is 32 zero bytes, and no token ever names a delete entry's `C`. A key is deleted when the map does not hold it; there is no anchored "current entry is a delete".
+A token **names** an entry when the entry's commitment appears in the
+token's `changes` (as a put's `C` or a removal's `D`) or in its `consumed`.
+Every entry the owner's tooling applies is named exactly once, by the token
+that applies it, and the tooling never applies an entry that any token of
+the chain has named: it keeps the set of commitments its chain has named
+and skips every entry in it, whatever the entry says and whenever it is
+seen again. Within one batch, when several entries for one key are to be
+applied, the tooling orders them by `created`, then by commitment, and the
+last one decides the key's change; the others go to `consumed`. Before it
+mints, the tooling folds the batch against the current map and moves to
+`consumed` every entry whose change would not change the map (a delete of a
+key the map does not hold, a put of the value the key already names), so
+no change it writes can be a fold error. Because naming is by commitment,
+not by time, an entry applied once is never applied again: a delete that
+removed a key is not found again as unapplied after a later put sets it,
+and a put superseded within a batch does not come back over its successor.
+
+A **delete** entry anchors as a removal, `[key, Z, D]`, whose `D` is its own commitment. A key is deleted when the map does not hold it; there is no "current entry is a delete", and the removal records which delete entry removed it.
 
 ```text
 leaf(key, C) = uint16be(len(key)) || key || C
@@ -286,12 +302,10 @@ reader's check (section 9.3).
 
 ### 4.4 Anchored and pending
 
-An entry is **anchored** when a token of the bucket's chain names its `C`
-for its key; the key's current entry is the one the latest token's map
-names. An entry no token names yet is **pending**. A put through a gateway
+An entry is **applied** when a token of the bucket's chain names it (section 3.4), and **anchored** while the latest token's map holds its `C` for its key. An entry no token names yet is **pending**. A put through a gateway
 is acknowledged when the facade accepts its entry, before any token anchors
 it: that gateway serves its own pending entries at once (read your writes),
-and every other reader sees the change once a token anchors it. A reader that asks for pending entries (`pending`, section 11.1) receives the unanchored entries of the owner and the latest token's writers for a key that claim a `created` later than the latest token's, newest claim first, and treats them as claims: nothing orders two writers' pending entries but the owner's next token. Entries the latest token superseded or dropped (a delete already applied, a put of a value already named) are not pending, because they predate it. A reader of pending entries SHOULD check each entry's funding outpoint unspent by positive evidence from a spend source, as the anchoring tooling must. The owner's anchoring tooling walks each writer's unanchored entries with `unanchored`, which pages by txid and always completes; it walks again from the start each time it anchors, so an entry admitted behind its cursor is picked up on the next pass. Before it anchors an entry the tooling MUST check the entry carrier's funding outpoint unspent by positive evidence from a spend source: a carrier is never mined, so a spent funding outpoint means the writer swept it, and a host that never saw the sweep (it joined later, or the sweep's outpoints aged out) may still answer the carrier.
+and every other reader sees the change once a token anchors it. A reader that asks for pending entries (`pending`, section 11.1) receives the unanchored entries of the owner and the latest token's writers for a key that no token of the chain names, newest claim first, and treats them as claims: nothing orders two writers' pending entries but the owner's next token. Entries a token superseded or dropped are named in its `consumed`, and a delete already applied is named by its removal, so none of them is pending; no clock decides it. A reader of pending entries SHOULD check each entry's funding outpoint unspent by positive evidence from a spend source, as the anchoring tooling must. The owner's anchoring tooling walks each writer's unnamed entries with `unanchored`, which pages by txid and always completes; it walks again from the start each time it anchors, so an entry admitted behind its cursor is picked up on the next pass. Before it applies an entry the tooling MUST check the entry carrier's funding outpoint unspent by positive evidence from a spend source: a carrier is never mined, so a spent funding outpoint means the writer swept it, and a host that never saw the sweep (it joined later, or the sweep's outpoints aged out) may still answer the carrier.
 
 ## 5. Pieces (magic `stp` `0x01`)
 
@@ -677,7 +691,7 @@ entry's writer (its BRC-103 authenticated identity) that names an entry
 with hold terms whose `root` the provider advertises, before the entry's
 `deadline`, when the provider's own section 9.3 checks of the bounty pass
 (the hold output exists, is mined, is the writer's, holds `satoshis`, is
-unspent, and is worth at least the provider's own minimum), with `c` at most `min(checkC, freeC)`, `freeC` being the maximum the provider publishes in its terms (at least 30), and at most two per hold outpoint and advertiser, whatever entries name it, and only when the hold output is at least `minAge` blocks deep, `minAge` being a number of blocks the provider publishes in its terms (0 to 1008). The writer challenges each candidate with `min(checkC, freeC)` samples for that candidate's `freeC`; it MAY pay for more at the provider's price. A provider competes for a bounty when it advertises the root with an advertisement eligible under section 9.3; one that does not owes nothing. Every other challenge is the provider's to price. These conditions make the free answers cost the writer a bounty locked, unspent and worth the provider's minimum, per two answers, so that cheap entries naming a popular root cannot drain the root's advertisers; the writer can reclaim the bounty later, so what it pays is locked capital and fees, and a provider MAY also rate-limit free challenges per writer and per hold transaction. A writer can still respend a hold output into a new one and so restart the two-per-outpoint count; `minAge` makes each restart cost that many blocks of locked capital and one mined transaction (which may carry 16 hold outputs, so up to 32 free answers per advertiser per restart). That residual is stated in section 20.
+unspent, and is worth at least the provider's own minimum), with `c` at most `min(checkC, freeC)`, `freeC` being the maximum the provider publishes in its terms (at least 30), and at most two per hold outpoint and advertiser, whatever entries name it, and only when the hold output is at least `minAge` blocks deep, `minAge` being a number of blocks the provider publishes in its terms (0 to 1008). A hold output in the block at height `h` is `tip - h + 1` blocks deep at the provider's tip `tip` (one confirmation is 1 deep); `minAge` 0 and 1 both require only that it is mined, which the bounty check requires anyway. A `minAge` longer than the writer's race window prices that provider's settlement challenge in effect: a writer SHOULD mine its hold output well before it publishes the entry, by at least the largest `minAge` among the providers it wants. The writer challenges each candidate with `min(checkC, freeC)` samples for that candidate's `freeC`; it MAY pay for more at the provider's price. A provider competes for a bounty when it advertises the root with an advertisement eligible under section 9.3; one that does not owes nothing. Every other challenge is the provider's to price. These conditions make the free answers cost the writer a bounty locked, unspent and worth the provider's minimum, per two answers, so that cheap entries naming a popular root cannot drain the root's advertisers; the writer can reclaim the bounty later, so what it pays is locked capital and fees, and a provider MAY also rate-limit free challenges per writer and per hold transaction. A writer can still respend a hold output into a new one and so restart the two-per-outpoint count; `minAge` makes each restart cost that many blocks of locked capital and one mined transaction (which may carry 16 hold outputs, so up to 32 free answers per advertiser per restart). That residual is stated in section 20.
 
 The writer's ranking is its own and is not auditable by anyone else; a
 provider that believes it was passed over has its own outcome records and
@@ -826,7 +840,7 @@ host keeps the map of served chains only.
 | `outcomes-by` | `{"bucket": b, "answerer": a, "buyer": y}` | the same as `outcomes`, by buyer `y` only | free |
 | `outcomes-of-by` | `{"bucket": b, "provider": p, "buyer": y}` | the same as `outcomes-of`, by buyer `y` only | free |
 | `sweep` | `{"bucket": b, "spent": x}` | the admitted sweeps that spend outpoint `x`, at most 8 | free |
-| `history` | `{"bucket": b, "owner": o, "id": i, "history": k, "before": s}` | served: the entries that the tokens below `seq` `s` whose `changes` set `k` named, newest first, each preceded by that token, at most 64 entries | priceable |
+| `history` | `{"bucket": b, "owner": o, "id": i, "history": k, "before": s}` | served: the tokens below `seq` `s` whose `changes` set or remove `k`, newest first, each followed by the entry its change names (the put for a put, the delete for a removal) when the host holds it, at most 64 tokens | priceable |
 | `chain` | `{"bucket": b, "owner": o, "chain": i, "after": s}` | the chain's rooted tokens above `seq` `s`, in `seq` order, at most 64 | priceable |
 | `export` | `{"bucket": b, "owner": o, "export": i, "after": a}` | served: as `list` with an empty prefix, at most 512 entries a page | priceable |
 | `outcome-history` | `{"bucket": b, "outcome-history": a, "before": q}` | outcome records naming answerer `a` strictly before cursor `q`, with no window, newest first, at most 64 | priceable |
@@ -1104,7 +1118,7 @@ applies:
 | Status | When |
 | --- | --- |
 | `pending` | it is not rooted |
-| `map-mismatch` | its changes do not each change the map, or the map after them has a size other than `count`, more than 1,048,576 keys, or a root other than `mapRoot`. Sticky: every later token of the chain has it too |
+| `map-mismatch` | its changes do not each change the map, or a commitment it names (in `changes` or `consumed`) was named by an earlier token of the chain, or the map after them has a size other than `count`, more than 1,048,576 keys, or a root other than `mapRoot`. Sticky: every later token of the chain has it too |
 | `consistent` | otherwise |
 
 A chain with a sticky status is **broken** from that token: its map is the
@@ -1115,8 +1129,7 @@ each is folded on its own; an answer uses the one whose proof verifies in
 the host's headers, else the lowest txid.
 
 **Entries.** An entry is `anchored` when the latest consistent token's map
-names its `C`, `replaced` when an earlier consistent token named it and the
-current map does not, `pending` when no token names it and its writer is
+holds its `C`, `replaced` when an earlier consistent token named it (as a put, a removal's delete, or in `consumed`) and the current map does not hold it, `pending` when no token names it and its writer is
 the owner or one of the latest token's writers, `stranger` otherwise, and
 `retracted` when an admitted sweep spends its funding outpoint or the
 outpoint carries a retraction mark (section 12.4). The map is **complete**
@@ -1140,9 +1153,7 @@ How long a host keeps what it no longer answers is its policy, with floors:
 - an outcome record whose `buyer` is a served chain's owner or one of its latest token's writers, naming such a root: at least 31 days after first sight; the first 16 front statements, by the host's first sight, per (root, advertiser), for advertisers of such a root: at least 31 days; any other outcome or front statement 24 hours;
 - for every outpoint of an admitted carrier that a mined sweep the host
   admitted spends, a **retraction mark** (the outpoint alone, 36 bytes):
-  for the host's life when the carrier's owner is a served chain's owner,
-  one of its writers, or the buyer of an outcome naming a served root;
-  otherwise at least 31 days after the sweep's first sight;
+  for the host's life when the carrier is an entry or front statement whose owner is a served chain's owner or one of its latest token's writers, or an outcome whose `buyer` is such a key; otherwise, whatever root an outcome names, at least 31 days after the sweep's first sight;
 - the floors of this section apply to the first carrier the host admits per
   funding outpoint; any later carrier on the same outpoint has no floor
   unless a served chain's map names it;
@@ -1226,7 +1237,7 @@ with a non-final input, so it cannot be mined (BRC-60's device turned the
 other way round). The unlocking-script rule keeps `C` the writer's: without
 it anyone could re-encode the input's script and present the same entry
 under a new txid, and a token would name a commitment nobody can produce.
-A writer makes at most one carrier per funding output.
+A writer makes at most one carrier per funding output, and a retry resubmits the same bytes: a writer that signs deterministically (RFC 6979, as the SDK does) rebuilds the same carrier, while a carrier re-signed or rebuilt differently is a second carrier on the same outpoint, which has no retention floor (section 12.3) and which the gateway that acknowledged the first never names.
 
 A piece carrier is the same with a record of up to 4,194,560 bytes. Its BEEF
 is at most 4,259,840 bytes (4 MiB plus 64 KiB): a writer sizes the trees that fund pieces so that the tree, its path and the carrier's own overhead (about 300 bytes) fit in what the ceiling leaves above the record (the 65,536 bytes above 4 MiB, less the record's 256 bytes of keys), and small trees cost less per piece (section 19.2).
@@ -1382,7 +1393,7 @@ a key S3 would accept but section 2 refuses (a control character) is refused wit
 | `PutObject` | build the CHIRP Profile 1 closure and the proof tree while the body streams; publish the pieces, a hold output if the gateway's policy sets a bounty, and a put entry; answer `200` once the facade accepts the entry. A `Content-MD5` header is checked against the body (`BadDigest` on a mismatch). Conditional writes (`If-None-Match`, `If-Match` on a put or a completion) are refused with `501 NotImplemented`, never ignored: a client that relies on them for locking must not believe it holds a lock. The entry is pending until the owner's next token anchors it. A `200` does not mean held: no provider may have advertised yet. A gateway MAY keep the bytes, and delay the `200`, until `t` advertisements exist, as its policy |
 | `CreateMultipartUpload`, `UploadPart`, `CompleteMultipartUpload`, `AbortMultipartUpload` | the gateway buffers parts and builds one closure over the assembled content: an S3 part (5 MiB minimum) is not a blob (4 MiB), so parts are re-chunked; one entry at completion. An upload is the gateway's own state: every part and the completion go to one gateway, and an upload begun at one gateway cannot be completed at another |
 | `CopyObject` | a new put entry naming the same `root`, `size`, `contentHash` and `proofRoot` as the source's current entry, and, as S3's default `COPY` metadata directive does, its `contentType`, `etag` and `meta`; with `REPLACE` the request's content type and metadata instead, and the same `etag`. Within one bucket no piece is published again, and providers already holding the root may advertise it for a new bounty; across buckets the gateway publishes the closure's pieces again on the destination's blob topic, whose providers have not seen them |
-| `DeleteObject` | a delete entry; `204`. The key leaves the map at the next token, as a removal (section 3.4); a delete of a key the map does not hold is dropped by the anchoring tooling, never anchored |
+| `DeleteObject` | a delete entry; `204`. The key leaves the map at the next token, as a removal (section 3.4); a delete of a key the map does not hold is named in the next token's `consumed`, never a removal, so it is applied once and never again |
 | `HeadObject`, `GetObject` | `object` at the hosts configured, the checks of section 15.2 (steps 1 to 5 for a head, which never asks a provider), blobs from the advertisers of `ads`; a `Range` maps to the blobs it overlaps, each verified before any byte is sent |
 | `ListObjectsV2` | `list` pages, proven complete per page (section 11.3); a key a page names as unheld (role 2) is listed from its entry fetched by `entry` at another host, and if no host produces it the listing answers 503; `Delimiter` is applied by the gateway to the proven page; `ContinuationToken` is the base64 of the last key; `MaxKeys` at most 1000 |
 | `ListBuckets` | the configured buckets |
@@ -1491,7 +1502,7 @@ follows the SDK's validation byte for byte, with the SDK's own vectors.
 
 | Quantity | Bound | Why |
 | --- | --- | --- |
-| Bucket record | 65,536 bytes encoded; 16 writers; 1024 changes | a token and its parent fit the token ceiling; the encoded bound governs |
+| Bucket record | 65,536 bytes encoded; 16 writers; 1024 changes; 1024 consumed | a token and its parent fit the token ceiling; the encoded bound governs |
 | Keys in a bucket's map | 1,048,576 | a path of at most 20 steps; a host refolds at most about two million hashes per token |
 | Object entry | 8,192 bytes; key 1,024; `meta` 2,048 | |
 | Object size | 0 to 2^43 bytes (8 TiB) | S3's 5 TiB fits; a proof path of at most 31 steps |
@@ -1678,7 +1689,7 @@ pin byte for byte the rows of frozen.md marked "vectors".
 | `hex-v1.json` | bucket records, entries of each kind, pieces, outcome records, front statements, requests and response bodies; their encodings |
 | `refusal-v1.json` | every step of every refusal order, case by case |
 | `script-v1.json` | the classifier: claiming, token, funding-shaped, hold-shaped, advertisement and refused scripts |
-| `map-v1.json` | key maps and their roots; folds of change lists, `map-mismatch` cases (a removal of an absent key, a put the key already names) and the tooling's dropping of them before minting; inclusion, absence and page-completeness contexts, with dishonest pages each check of section 11.3 refuses (a role 0 inside or after the range, a role 1 inside or before it, an empty page bracketing nothing, a short page without role 1) |
+| `map-v1.json` | key maps and their roots; folds of change lists with puts `[key, C]` and removals `[key, Z, D]`, `map-mismatch` cases (a removal of an absent key, a put the key already names, a commitment an earlier token named); batches the tooling resolves by commitment: several entries for one key (the last by `created` then commitment wins, the rest consumed), a delete of an absent key consumed, and an applied delete found again after a later put, skipped; inclusion, absence and page-completeness contexts, with dishonest pages each check of section 11.3 refuses (a role 0 inside or after the range, a role 1 inside or before it, an empty page bracketing nothing, a short page without role 1) |
 | `proof-v1.json` | proof roots for 0, 1, 4,095, 4,096, 4,097 bytes, one blob, one blob plus one byte, 25 and 257 blobs (by deterministic content); index derivations for given seeds; audit paths; responses that pass and fail at each step of section 7.4 in sample-major order, including a wrong-length path (invalid at `count`), a fetched segment that fails while its blob verifies (rechecked from the blob: a pass when it then verifies, invalid when not) and a blob that does not verify (unretrievable) |
 | `settle-v1.json` | payouts for `k` 1 to 16 and assorted `R`, the BRC-178 examples among them; derivation prefixes and suffixes; rankings where a renewed advertisement keeps its original first sight and where a cancelled payee is dropped, the ranks below move up and `t` is counted again |
 | `transaction-v1.json` | carriers, tokens, advertisements, hold outputs and sweeps admitted and refused by each rule of section 12.1, and transactions that only spend held outputs, refused |

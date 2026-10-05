@@ -63,12 +63,12 @@ registered names; no basket starts with `bstore`.
 | Item | Value | Status |
 | --- | --- | --- |
 | Bucket identifier | `<name>_<suffix>`, 12 to 36 bytes: `<name>` 1 to 25 bytes of `[a-z]` and single underscores, a letter at each end; `<suffix>` 10 letters drawn at random once | PROVISIONAL |
-| Bucket record keys | 0 `magic`, 1 `bucket`, 2 `owner`, 3 `id`, 4 `seq`, 5 `prev`, 6 `writers`, 7 `changes`, 8 `count`, 9 `mapRoot`, 10 `created`, all required; 11 and above unknown | PROVISIONAL |
-| Bucket record bounds | 65,536 bytes encoded, which governs; 16 writers; 1024 changes; `count` at most 1,048,576 | PROVISIONAL |
+| Bucket record keys | 0 `magic`, 1 `bucket`, 2 `owner`, 3 `id`, 4 `seq`, 5 `prev`, 6 `writers`, 7 `changes`, 8 `count`, 9 `mapRoot`, 10 `created`, 11 `consumed`, all required; 12 and above unknown | PROVISIONAL |
+| Bucket record bounds | 65,536 bytes encoded, which governs; 16 writers; 1024 changes; 1024 consumed; `count` at most 1,048,576 | PROVISIONAL |
 | Refusal order | spec section 3.2, ending in `first` | PROVISIONAL (vectors) |
 | Bucket id | `SHA-256("bstore bucket id v1" \|\| txid \|\| uint32be(vout))` of the outpoint the first token spends | PROVISIONAL (vectors) |
 | Chain identity | a chain is `(owner, id)`; questions, served configuration and reader memory name both; a token of another owner never displaces the owner's in any cap | PROVISIONAL |
-| The map | changes applied in order; a zero `C` removes; every change must change the map, and tooling drops any change that would not before minting; a delete entry anchors as a removal and no token names a delete's `C` | PROVISIONAL (vectors) |
+| The map | changes applied in order: a put `[key, C]` sets, a removal `[key, Z, D]` (`D` the delete entry's commitment) removes; `consumed` lists the commitments applied without a change (superseded in the batch, or no-ops); a token names an entry by its commitment in `changes` or `consumed`; every change must change the map and no commitment is named twice in a chain (`map-mismatch`); tooling never applies an entry any token named, resolves one key's batch by `created` then commitment, and moves no-ops to `consumed` | PROVISIONAL (vectors) |
 | Map root | RFC 6962 Merkle Tree Hash over `uint16be(len(key)) \|\| key \|\| C`, ascending by key bytes; empty map `SHA-256("")` | PROVISIONAL (vectors) |
 | Token statuses | `pending`, `map-mismatch` (sticky), `consistent`; only rooted, consistent tokens answered as latest | PROVISIONAL |
 | Writers | the owner and up to 16 keys a token names; a reader refuses an entry by anyone else, checked against the latest token (`writer`); tooling never removes a writer while the map names its entries | PROVISIONAL |
@@ -83,7 +83,7 @@ registered names; no basket starts with `bstore`.
 | The empty object | `size` 0 with the CHIRP empty root, `contentHash` and `proofRoot` `SHA-256("")`, no hold | PROVISIONAL (vectors) |
 | Refusal order | spec section 4.2, ending in `kind`, `empty` | PROVISIONAL (vectors) |
 | Hold terms | `[txid, vout, satoshis, t, K, retention, deadline, checkC]`, bounds of spec section 4.3 | PROVISIONAL |
-| Anchored and pending | the latest token's map decides; pending entries are claims any reader may ask for (`pending`: only those claiming a `created` after the latest token's), and the writing gateway serves its own at once; anchoring tooling MUST, and pending readers SHOULD, check an entry's funding outpoint unspent by positive evidence | PROVISIONAL |
+| Anchored and pending | the latest token's map decides; pending entries are claims any reader may ask for (`pending`: only those no token names; no clock decides it), and the writing gateway serves its own at once; anchoring tooling MUST, and pending readers SHOULD, check an entry's funding outpoint unspent by positive evidence | PROVISIONAL |
 
 ## 5. Pieces
 
@@ -111,13 +111,13 @@ registered names; no basket starts with `bstore`.
 | Request keys | 0 `magic`, 1 `root`, 2 `proofRoot`, 3 `size`, 4 `provider`, 5 `answerer`, 6 `seedHeight`, 7 `seedHash`, 8 `nonce` (16 bytes), 9 `c`, 10 `range` optional; no other key; at most 512 bytes | PROVISIONAL (vectors) |
 | `c` | 1 to 1024 | PROVISIONAL |
 | Index | `SHA-256(seedHash \|\| proofRoot \|\| provider \|\| nonce \|\| uint32le(k)) mod m`, the digest read little-endian; with `range`, offset by `1024 * first`; with replacement | PROVISIONAL (vectors) |
-| Freshness | `tip - 6 <= seedHeight <= tip`, checked by the provider when it answers and by the buyer when it sends; at verification only the block hash at `seedHeight` | PROVISIONAL |
+| Freshness | `tip - 6 <= seedHeight <= tip`, checked by the provider when it answers and by the buyer when it sends; at verification, `seedHash` held at `seedHeight` on any branch the verifier has seen | PROVISIONAL |
 | Answerer's refusals | 422 `seed`, `request`, `unknown-root` (a `proofRoot` or `size` not its own computation for `root`) | PROVISIONAL |
 | Response body | 0 `magic`, 1 `request` (its hash), 2 `samples` (`c` entries `[segment or null, siblings]`, every segment `null` when the answerer is not the provider), 3 `answerer`; no other key | PROVISIONAL (vectors) |
 | Signed response | CBOR `[body, signature]`; signature over `SHA-256(request) \|\| SHA-256(body)` under `derive(answerer, "challenge")`; at most 8,388,608 bytes | PROVISIONAL (vectors) |
 | Buyer's check order | steps 1 to 3 once (`signature`, `request`, `count` including every path's length), then per sample in `k` order `fetch`, `segment`, `path`; failing `signature` is no-answer; `request`, `count`, or an inline sample's failure invalid; a fetched sample's failure rechecked from the whole blob: blob verifies and segment then passes, pass; blob verifies and segment still fails, invalid; blob fails, unretrievable; outcomes the answerer's; a reorged seed accepted on any branch seen | PROVISIONAL (vectors) |
 | By-reference samples | fetched by the buyer from the tested URL (the provider's live advertisement for the root with the latest expiry, ties to the lower txid), blob route, with `Range`, or the whole blob | PROVISIONAL |
-| The settlement challenge | the writer uses `min(checkC, freeC)` per candidate; not priced for the entry's writer, before `deadline`, when the provider's own bounty checks pass and the bounty meets its minimum, `c` at most `min(checkC, freeC)` with `freeC` at least 30, at most two per hold outpoint and advertiser, the hold output at least the provider's published `minAge` blocks deep (0 to 1008) | PROVISIONAL |
+| The settlement challenge | the writer uses `min(checkC, freeC)` per candidate; not priced for the entry's writer, before `deadline`, when the provider's own bounty checks pass and the bounty meets its minimum, `c` at most `min(checkC, freeC)` with `freeC` at least 30, at most two per hold outpoint and advertiser, the hold output at least the provider's published `minAge` blocks deep (0 to 1008; `tip - h + 1`, so 0 and 1 both mean mined) | PROVISIONAL |
 | Default `c` | 30 for a paid challenge and as the recommended `checkC`; policy, not frozen | (not frozen) |
 
 ## 8. Outcomes and front statements
@@ -149,7 +149,7 @@ registered names; no basket starts with `bstore`.
 | Classes | free `bucket`, `bucket-seq`, `object`, `list`, `pending`, `unanchored`, `entry`, `ads`, `ad`, `fronts`, `front`, `hold`, `outcomes`, `outcomes-of`, `outcomes-by`, `outcomes-of-by`, `sweep`; priceable `history`, `chain`, `export`, `outcome-history`, `outcome-history-of`; chain classes name `(owner, id)`; map classes for served chains only; no priced class a superset of a free class | PROVISIONAL |
 | Query values | every member a string; the value rules of spec section 11.2; an unknown member, a missing member or an unknown bucket refused | PROVISIONAL |
 | Contexts | an entry's `[index, path]`; the leading token's array of at most two leaves `[role, index, key, C, path]` (0 before, 1 after, 2 unheld); pages stop at an unheld leaf and always complete; the reader's page checks of spec section 11.3 (role 0 strictly before the range: at or before `a`, or before `p`; role 1 strictly after it: after `a`, after `p`, not starting with `p`); page maxima 256 (`list`) and 512 (`export`) as the checks use them; 1,024 and 4,096 bytes | PROVISIONAL (vectors) |
-| Order | `list` and `export` by key bytes; `ads`, `unanchored` and `fronts` ascending txid (display order) after a txid cursor; `pending`, `outcomes`, `outcome-history` newest `created` first, never dated after the host's time | PROVISIONAL |
+| Order | `list` and `export` by key bytes; `ads`, `unanchored` and `fronts` ascending txid (display order) after a txid cursor; `pending`, `outcomes`, `outcomes-of`, `outcome-history`, `outcome-history-of` newest `created` first; `history` by token, newest first; never dated after the host's time | PROVISIONAL |
 | Free window | `outcomes` within 31 days of admission | PROVISIONAL |
 | Terms and payment | `<base>/ls_bstore/terms`; the 402 authoritative; payment output 0 of the BRC-105 transaction, P2PKH to the BRC-29 key | PROVISIONAL |
 | Retention floors | spec section 12.3 | PROVISIONAL (floors: a later version may lengthen them, never shorten) |
@@ -171,7 +171,7 @@ registered names; no basket starts with `bstore`.
 
 Readers accept every record within these, and a later version may raise
 them but never lower them: bucket record 65,536 bytes, 16 writers, 1024
-changes, 1,048,576 keys; entry 8,192 bytes, key 1,024 bytes, `meta` 2,048
+changes, 1024 consumed, 1,048,576 keys; entry 8,192 bytes, key 1,024 bytes, `meta` 2,048
 bytes; object 2^43 bytes; piece 4,194,304 bytes; outcome 4,096 and front
 statement 2,048 bytes; request 512 bytes, `c` 1024, signed response
 8,388,608 bytes; contexts 1,024 and 4,096 bytes; `t` and `K` 16, `checkC`
