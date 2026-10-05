@@ -8,7 +8,7 @@
 #
 #	make verify NODE=/path/to/node24
 
-.PHONY: verify test go-test go-oracle ts-test ts-check ts-build node-check vet fmt-check deps-check vectors vectors-check fuzz
+.PHONY: verify test go-test go-oracle ts-test ts-check ts-build module module-test e2e node-check vet fmt-check deps-check vectors vectors-check fuzz
 
 NODE ?= node
 TSC := $(NODE) node_modules/typescript/bin/tsc
@@ -69,11 +69,40 @@ node-check:
 ts-check: node-check
 	cd host && $(TSC) --noEmit
 
+# tsc into host/dist, then the deployable bundle into host/bundle.
 ts-build: node-check
-	cd host && $(NODE) -e "require('node:fs').rmSync('dist', { recursive: true, force: true })" && $(TSC)
+	cd host && $(NODE) -e "require('node:fs').rmSync('dist', { recursive: true, force: true })" && $(TSC) && $(NODE) scripts/bundle.js
 
-ts-test: ts-build
+# The host module a reference overlay host loads: one file,
+# host/bundle/bstore-module.js, with bcommon inlined and nothing imported
+# but @bsv/sdk (the host's own copy) and Node built-ins. It is copied into
+# the host's tree and named by absolute path in OVERLAY_MODULES
+# (docs/host.md). Its tests (make test) mount that file and run golden
+# vectors through it.
+module: ts-build
+
+# The module's own tests: the topic managers on every golden transaction,
+# every lookup class, retention, restore, the terms route and its
+# hardening, on the compiled tree and on the bundle, with the real overlay
+# engine over an in-memory store.
+module-test: ts-build
 	cd host && $(NODE) --test "dist/**/*.test.js"
+
+ts-test: module-test
+
+# The module end to end on a local reference overlay host loading the
+# bundle, staged beside the host's node_modules as a deployment places it,
+# over MySQL: both topics, every lookup class (the priced ones paid through
+# their 402 on the terms route), a restart, a restore and a kill, retention
+# pruning with the host's clock moved, the replay of a dropped and of a
+# retracted object, and the route's hardening. Not part of verify: it needs
+# Docker (for MySQL) and a reference host directory holding its compiled
+# dist/index.js and its node_modules.
+#
+#	make e2e REFERENCE_HOST=/path/to/reference-host
+e2e: ts-build
+	@test -n "$(REFERENCE_HOST)" || { echo "set REFERENCE_HOST=/path/to/reference-host"; exit 1; }
+	cd host && $(NODE) dist/e2e.js $(abspath $(REFERENCE_HOST))
 
 # Write the vectors under testdata/vectors from the Go codec. A change to
 # them is a change to the contract's goldens.

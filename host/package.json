@@ -2,7 +2,7 @@
   "name": "@lightwebinc/bstore-host",
   "version": "0.1.0",
   "private": true,
-  "description": "The bstore record layer in TypeScript: the bucket record, object entry, piece, outcome and front statement codecs, challenge requests and responses, the key map and its contexts, the proof tree, settlement, BRC-26 advertisements, lookup questions, the topic manager's transaction rules and a reader's checks, held to the Go codec's vectors",
+  "description": "The bstore record layer in TypeScript: the bucket record, object entry, piece, outcome and front statement codecs, challenge requests and responses, the key map and its contexts, the proof tree, settlement, BRC-26 advertisements, lookup questions, the topic manager's transaction rules and a reader's checks, held to the Go codec's vectors, and tm_bstore with ls_bstore as a module an overlay host loads by path",
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
@@ -12,15 +12,18 @@
     "prebuild": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "tsc",
     "check": "tsc --noEmit",
-    "pretest": "npm run build",
-    "test": "node --test \"dist/**/*.test.js\""
+    "pretest": "npm run build && npm run bundle",
+    "test": "node --test \"dist/**/*.test.js\"",
+    "bundle": "node scripts/bundle.js"
   },
   "dependencies": {
     "@bsv/sdk": "2.7.1",
     "@lightwebinc/bcommon": "file:vendor/lightwebinc-bcommon-0.9.0.tgz"
   },
   "devDependencies": {
+    "@bsv/overlay": "2.3.1",
     "@types/node": "^24.10.1",
+    "esbuild": "0.28.2",
     "typescript": "^7.0.2"
   }
 }

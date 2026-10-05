@@ -34,22 +34,26 @@ the same bytes and competes to hold them. Readers speak S3.
 | Implement a compatible publisher, provider, host or reader | [docs/spec.md](docs/spec.md) (the specification) |
 | Know what cannot change once published | [docs/frozen.md](docs/frozen.md) |
 | Use or check the codec and its golden vectors | [docs/codec.md](docs/codec.md) |
+| Run an overlay host that carries buckets | [docs/host.md](docs/host.md) |
 
 ## Building
 
 ```sh
 cd host && npm ci && cd ..
 make verify NODE=/path/to/node24
+make module NODE=/path/to/node24   # host/bundle/bstore-module.js
 ```
 
-Go 1.27 and Node 24. [docs/codec.md](docs/codec.md) says what each target
-checks.
+Go 1.27 and Node 24. [docs/codec.md](docs/codec.md) and
+[docs/host.md](docs/host.md) say what each target checks.
 
 ## Status
 
 Contract signed: every row of [docs/frozen.md](docs/frozen.md) is frozen,
-with seven clarifications pending confirmation (section 14). The codec, in Go and TypeScript, and its golden vectors are
-built; the overlay host module comes next.
+with seven clarifications pending confirmation (section 14). The codec, in
+Go and TypeScript, its golden vectors, and the overlay host module
+(`tm_bstore_`, `tm_bstoreblob_` and `ls_bstore`) are built; the provider
+comes next.
 
 ## License
 
