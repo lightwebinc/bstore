@@ -61,8 +61,15 @@ func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		auth104.Write(w, auth104.Error(http.StatusRequestEntityTooLarge, "ERR_TOO_LARGE", "the submission is over this topic's bound"))
 		return
 	}
-	// The body is read under its own deadline, before a slot is taken: a
-	// client that trickles holds its own connection, nothing shared.
+	// The body is read under its own deadline, before a processing slot is
+	// taken; at most maxBodies bodies are read or held at once, so the
+	// memory they take is bounded.
+	select {
+	case p.limits.bodies <- struct{}{}:
+		defer func() { <-p.limits.bodies }()
+	case <-r.Context().Done():
+		return
+	}
 	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(bodyDeadline))
 	beef, err := io.ReadAll(http.MaxBytesReader(w, r.Body, bound))
 	if err == nil {
@@ -148,12 +155,13 @@ func (p *Provider) take(ctx context.Context, topic string, beef []byte) ([]int, 
 		if !writerAllowed(b, pc.Piece.Writer) {
 			return []int{}, "writer: not a writer this provider takes for the bucket"
 		}
-		if !p.claimFunding(pc.Funding, pc.Commitment) {
+		if !p.fundingFree(pc.Funding, pc.Commitment) {
 			return []int{}, "funding: a second carrier on one funding output"
 		}
 		if why := p.keepPiece(pc.Piece.Piece, hex.EncodeToString(pc.Piece.Root[:]), b.Bucket, hex.EncodeToString(pc.Piece.Writer)); why != "" {
 			return []int{}, why
 		}
+		p.claimFunding(pc.Funding, pc.Commitment)
 		return []int{0}, ""
 	}
 	if len(beef) > maxRecordsBEEF {
@@ -173,12 +181,13 @@ func (p *Provider) take(ctx context.Context, topic string, beef []byte) ([]int, 
 	if !writerAllowed(b, e.Writer) {
 		return []int{}, "writer: not a writer this provider takes for the bucket"
 	}
-	if !p.claimFunding(a.Carrier.Funding, a.Carrier.Commitment) {
+	if !p.fundingFree(a.Carrier.Funding, a.Carrier.Commitment) {
 		return []int{}, "funding: a second carrier on one funding output"
 	}
-	if why := p.noteEntry(chainhash.Hash(a.Txid).String(), e); why != "" {
+	if why := p.noteEntry(chainhash.Hash(a.Txid).String(), e, writerAllowList(b)); why != "" {
 		return []int{}, why
 	}
+	p.claimFunding(a.Carrier.Funding, a.Carrier.Commitment)
 	return []int{0}, ""
 }
 
@@ -186,18 +195,32 @@ func (p *Provider) take(ctx context.Context, topic string, beef []byte) ([]int, 
 // makes at most one carrier per funding output (spec section 13.2), so a
 // second, different one on the same outpoint is refused, and one mined
 // output buys one piece or one entry, never a stream of them.
-func (p *Provider) claimFunding(op transaction.Outpoint, c [32]byte) bool {
+// It is checked before the carrier is taken and recorded only once it is,
+// so a refused carrier leaves no record; at most maxFundings are kept.
+func (p *Provider) claimFunding(op transaction.Outpoint, c [32]byte) {
 	k := op.Txid.String() + "." + itoa(uint64(op.Index))
-	ch := hex.EncodeToString(c[:])
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if f, ok := p.st.Fundings[k]; ok {
-		return f.C == ch
+	if _, ok := p.st.Fundings[k]; ok || len(p.st.Fundings) >= maxFundings {
+		return
 	}
-	p.st.Fundings[k] = &Funding{C: ch, At: p.now().Unix()}
+	p.st.Fundings[k] = &Funding{C: hex.EncodeToString(c[:]), At: p.now().Unix()}
 	p.dirty = true
-	return true
 }
+
+// fundingFree reports whether a funding outpoint paid for no other carrier.
+func (p *Provider) fundingFree(op transaction.Outpoint, c [32]byte) bool {
+	k := op.Txid.String() + "." + itoa(uint64(op.Index))
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	f, ok := p.st.Fundings[k]
+	return !ok || f.C == hex.EncodeToString(c[:])
+}
+
+// maxFundings bounds the funding outpoints remembered.
+const maxFundings = 200000
+
+func writerAllowList(b *BucketConfig) bool { return len(b.Writers) > 0 }
 
 // The most undecided entries kept, from one writer and in all.
 const (
@@ -207,7 +230,7 @@ const (
 
 // noteEntry records a put entry, once, and asks for its root to be looked
 // at.
-func (p *Provider) noteEntry(c string, e *storerec.Entry) string {
+func (p *Provider) noteEntry(c string, e *storerec.Entry, listed bool) string {
 	rootHex := hex.EncodeToString(e.Root[:])
 	p.mu.Lock()
 	if _, ok := p.st.Entries[c]; !ok {
@@ -221,7 +244,9 @@ func (p *Provider) noteEntry(c string, e *storerec.Entry) string {
 				}
 			}
 		}
-		if mine >= maxUndecidedPerWriter || all >= maxUndecided {
+		// A writer a bucket's allow-list names is never shut out by the
+		// total that strangers fill.
+		if mine >= maxUndecidedPerWriter || (!listed && all >= maxUndecided) {
 			p.mu.Unlock()
 			return "room: too many entries waiting for their closures"
 		}
@@ -558,6 +583,9 @@ func (p *Provider) uploadCommit(ctx context.Context, id string, body []byte, who
 	staged, done := s.objects[root], s.committed[root]
 	p.uploads.mu.Unlock()
 	if !held && !done {
+		if ok, retry := p.limits.commitsBy.Take(who.Hex); !ok {
+			return auth104.Error(http.StatusTooManyRequests, "ERR_RATE_LIMITED", "too many commits from this identity", "Retry-After", itoa(uint64(retry)))
+		}
 		if !staged {
 			return auth104.Error(http.StatusUnprocessableEntity, "ERR_INCOMPLETE", "the root node was not uploaded in this session")
 		}
@@ -613,8 +641,8 @@ func (p *Provider) commitCheck(ctx context.Context, s *upload, root [32]byte) st
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	select {
-	case p.limits.verifyMu <- struct{}{}:
-		defer func() { <-p.limits.verifyMu }()
+	case p.limits.commits <- struct{}{}:
+		defer func() { <-p.limits.commits }()
 	case <-ctx.Done():
 		return "busy; commit again later"
 	}

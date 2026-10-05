@@ -41,9 +41,10 @@ There are two ways in, and the provider is the same behind both.
   `{"rootIdentifier"}` checks the closure as a complete host does, bounded:
   the root must be staged in this session, its logical length within
   `policy.max_object` before anything is walked, every object staged in
-  the session or held already, and the walk runs under the verification
-  limit with a deadline; a root committed once, or held already, is not
-  walked again. A
+  the session or held already, and the walk runs one at a time, apart from
+  the closures the provider checks for entries, with a deadline, and at
+  most six a minute from one identity; a root committed once, or held
+  already, is not walked again. A
   provider advertises only for an entry (spec section 9.3), so the commit
   answers `202` with the closure staged until an entry for the root reaches
   the provider and it takes it, and `201` with `hostedFileLocation` and
@@ -95,12 +96,15 @@ hold output settles one entry (spec section 9.2): a second entry naming a
 hold output that backs an entry the provider took is declined. An entry
 whose bounty fails is declined, or held without racing when
 `hold_unbountied` is on; a check the node or the header source could not
-answer decides nothing, and the entry is looked at again. An entry the
+answer decides nothing, and the entry is looked at again for
+`unclaimed_seconds`, then declined. An entry the
 provider took is checked against the closure it holds: another size,
 content hash or proof root is declined. A closure is checked once for all
 the entries waiting on it, and the proof root decides every one of them in
 the same pass. An entry whose closure has not arrived within
-`unclaimed_seconds` is declined.
+`unclaimed_seconds` is declined, and one of whose root not even the root
+node came within five minutes. A writer a bucket's `writers` names is never
+shut out by the total of waiting entries strangers fill.
 
 ### Advertising, and the race
 
@@ -153,8 +157,10 @@ and unmined otherwise, a promise until it mines. `until` must be later than
 the current expiry and at most `max_renew_seconds` ahead; one root is
 renewed at most `renewals_per_root_per_hour`, a budget spent only by a
 payment the ledger has not seen; a root whose advertisement is not mined
-yet is answered `409` before any payment. Once a payment is taken it is
-broadcast, and the renewal is recorded as owed before it is made: when it
+yet is answered `409` before any payment, and a payment spending a coin a
+taken payment spent is refused before the root's budget is spent. A
+payment must be taken by the network before it is recorded, and the
+renewal is recorded as owed before it is made: when it
 cannot be made at once the answer is `202` and the provider makes it as
 soon as it can.
 
@@ -302,7 +308,8 @@ how readers reach the bytes.
 | Signed answers | `responses_per_sec`, `response_burst` per session, taken before a request is verified |
 | Challenges | `challenges_per_buyer_per_min` with `challenge_burst` per buyer, `free_per_writer_per_min` free ones per writer, `challenge_workers` answered at once |
 | Renewals | `renewals_per_root_per_hour` per root |
-| Submissions | `submits_per_addr_per_sec`, `submit_burst` per address; 4 in flight from one address, uploads included; 16 processed at once, a slot taken only once the body is read |
+| Submissions | `submits_per_addr_per_sec`, `submit_burst` per address; 4 in flight from one address, uploads included; 64 bodies read or held at once; 16 processed at once, a slot taken only once the body is read |
+| Funding outpoints remembered | 200,000, each for seven days, recorded only for a carrier taken |
 | Reads | `object_readers` objects read at once, the slot released before the answer is written; `object_reads_per_addr_per_sec`, `object_read_burst` per address |
 | Upload sessions | `upload_sessions` open, 4 per identity and 8 per address, 60 opened an hour from one address, `upload_session_seconds` each, 65,536 objects each |
 | Remittances | one a second from one address, burst 16 |

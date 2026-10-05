@@ -128,7 +128,12 @@ func (p *Provider) evaluate(ctx context.Context, rootHex string) error {
 		}
 		until, why := p.policy(ctx, e)
 		if why == decisionRetry {
-			continue // looked at again on the next pass
+			// Looked at again on the next pass, for as long as an
+			// unclaimed piece is kept, and then declined.
+			if p.now().UnixNano()-e.At > int64(time.Duration(p.cfg.UnclaimedSeconds)*time.Second) {
+				p.decide(e.C, "the bounty could not be checked in time")
+			}
+			continue
 		}
 		if why != "" {
 			p.decide(e.C, why)
@@ -151,14 +156,23 @@ func (p *Provider) evaluate(ctx context.Context, rootHex string) error {
 // expireUndecided declines the entries whose closure has not arrived
 // within the time an unclaimed piece is kept: the pieces that came are gone
 // by then too.
-func (p *Provider) expireUndecided(entries []*EntryRec) {
-	cutoff := p.now().Add(-time.Duration(p.cfg.UnclaimedSeconds) * time.Second).UnixNano()
+func (p *Provider) expireUndecided(entries []*EntryRec, rootHere bool) {
+	wait := time.Duration(p.cfg.UnclaimedSeconds) * time.Second
+	if !rootHere {
+		// Not even the root node came: a closure that is coming starts
+		// with its pieces, so such an entry waits a short while only.
+		wait = min(wait, rootWait)
+	}
+	cutoff := p.now().Add(-wait).UnixNano()
 	for _, e := range entries {
 		if e.At < cutoff {
 			p.decide(e.C, "the closure did not arrive in time")
 		}
 	}
 }
+
+// rootWait is how long an entry waits when no piece of its root came.
+const rootWait = 5 * time.Minute
 
 func (p *Provider) decide(c, decision string) {
 	p.mu.Lock()
@@ -207,7 +221,7 @@ func (p *Provider) verifyRoot(ctx context.Context, rootHex string, entries []*En
 	// Every object the closure names must be here before a blob is read:
 	// a closure still arriving costs its node reads, never its blobs.
 	if !p.store.Has(root) || !p.complete(root) {
-		p.expireUndecided(entries)
+		p.expireUndecided(entries, p.store.Has(root))
 		return false, nil
 	}
 	select {

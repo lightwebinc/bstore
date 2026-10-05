@@ -105,6 +105,11 @@ func (p *Provider) checkPayment(ctx context.Context, raw string, who *auth104.Ca
 		return bad(http.StatusBadRequest, "ERR_INVALID_PAYMENT", fmt.Sprintf("output 0 holds %d satoshis, not %d", sats, price))
 	}
 	pl := payment(in, beef, 0, sats, pm.DerivationPrefix, pm.DerivationSuffix, who.Hex, "")
+	// A payment spending a coin a taken payment spent is refused here,
+	// before any budget is spent on it.
+	if c := p.ledger.refusal(pl.Txid, pl.Inputs); c != payee.Accepted {
+		return bad(http.StatusConflict, "ERR_PAYMENT_CONFLICT", "this payment, or a coin it spends, was already used")
+	}
 	return &pl, nil
 }
 

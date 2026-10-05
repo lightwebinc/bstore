@@ -35,25 +35,28 @@ const (
 
 // routeLimits are the budgets the routes take before any work.
 type routeLimits struct {
-	buyers   *auth104.Keyed // challenges per buyer (identity, or address unauthenticated)
-	writers  *auth104.Keyed // free settlement challenges per writer
-	roots    *auth104.Keyed // paid renewals per root
-	submits  *auth104.Keyed // submissions per address
-	settles  *auth104.Keyed // remittances per address
-	objects  *auth104.Keyed // object reads per address
-	uploads  *auth104.Keyed // upload sessions opened per address
-	inflight *perAddr       // submissions and uploads read at once, per address
-	work     chan struct{}  // challenges answered at once
-	readers  chan struct{}  // object reads at once
-	ingest   chan struct{}  // submissions and uploads read at once
-	verifyMu chan struct{}  // closures verified at once
+	buyers    *auth104.Keyed // challenges per buyer (identity, or address unauthenticated)
+	writers   *auth104.Keyed // free settlement challenges per writer
+	roots     *auth104.Keyed // paid renewals per root
+	submits   *auth104.Keyed // submissions per address
+	settles   *auth104.Keyed // remittances per address
+	objects   *auth104.Keyed // object reads per address
+	uploads   *auth104.Keyed // upload sessions opened per address
+	inflight  *perAddr       // submissions and uploads read at once, per address
+	work      chan struct{}  // challenges answered at once
+	readers   chan struct{}  // object reads at once
+	ingest    chan struct{}  // submissions and uploads read at once
+	verifyMu  chan struct{}  // closures verified at once
+	commits   chan struct{}  // upload commits checked at once, apart from the worker
+	bodies    chan struct{}  // submission bodies read or held at once
+	commitsBy *auth104.Keyed // upload commits checked per identity
 }
 
 func newRouteLimits(c *Config, now func() time.Time) (*routeLimits, error) {
 	l := c.Limits
 	var err error
 	r := &routeLimits{inflight: &perAddr{max: 4, n: map[string]int{}}, work: make(chan struct{}, l.ChallengeWorkers), readers: make(chan struct{}, l.ObjectReaders),
-		ingest: make(chan struct{}, 16), verifyMu: make(chan struct{}, 2)}
+		ingest: make(chan struct{}, 16), verifyMu: make(chan struct{}, 2), commits: make(chan struct{}, 1), bodies: make(chan struct{}, maxBodies)}
 	if r.buyers, err = auth104.NewKeyed(auth104.Budget{Rate: l.ChallengesPerBuyerPerMin / 60, Burst: l.ChallengeBurst}, 100000, now); err != nil {
 		return nil, err
 	}
@@ -64,6 +67,9 @@ func newRouteLimits(c *Config, now func() time.Time) (*routeLimits, error) {
 		return nil, err
 	}
 	if r.submits, err = auth104.NewKeyed(auth104.Budget{Rate: l.SubmitsPerAddrPerSec, Burst: l.SubmitBurst}, auth104.MaxAddresses, now); err != nil {
+		return nil, err
+	}
+	if r.commitsBy, err = auth104.NewKeyed(auth104.Budget{Rate: 6.0 / 60, Burst: 4}, 100000, now); err != nil {
 		return nil, err
 	}
 	if r.settles, err = auth104.NewKeyed(auth104.Budget{Rate: 1, Burst: 16}, auth104.MaxAddresses, now); err != nil {
@@ -277,6 +283,10 @@ func (p *Provider) readObject(ctx context.Context, rootHex string, obj [32]byte)
 // bodyDeadline is how long a submission's or an upload's body may take to
 // arrive: 4 MiB at about 70 KB a second.
 const bodyDeadline = time.Minute
+
+// maxBodies bounds the submission bodies in memory at once: about 270 MB of
+// piece carriers.
+const maxBodies = 64
 
 // perAddr bounds the requests one address has in flight.
 type perAddr struct {

@@ -109,6 +109,13 @@ func (l *ledger) take(p payee.Payment) (payee.Claim, error) {
 	return payee.Accepted, nil
 }
 
+// refusal is what take would answer for a payment, without taking it.
+func (l *ledger) refusal(txid string, inputs []string) payee.Claim {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.claims.Refusal(txid, inputs)
+}
+
 func (l *ledger) has(txid string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()

@@ -80,15 +80,18 @@ func (p *Provider) renew(ctx context.Context, r *http.Request, body []byte, who 
 	if ok, retry := p.limits.roots.Take(req.Root); !ok {
 		return auth104.Error(http.StatusTooManyRequests, "ERR_RATE_LIMITED", "this root was renewed often lately; try again later", "Retry-After", itoa(uint64(retry)))
 	}
+	// The payment reaches the network before the renewal is made: a payer
+	// cannot take its coin back once the renewal costs the provider a fee.
+	tx, err := paymentTx(pl)
+	if err != nil {
+		return auth104.Error(http.StatusBadRequest, "ERR_INVALID_PAYMENT", "the payment does not read")
+	}
+	if err := p.send(ctx, tx); err != nil {
+		p.logf("renewal payment %s: %v", short(pl.Txid), err)
+		return auth104.Error(http.StatusBadRequest, "ERR_PAYMENT_REFUSED", "the network did not take the payment; no renewal is made")
+	}
 	if _, rep := p.claimPayment(*pl, "renew"); rep != nil {
 		return *rep
-	}
-	// The payment is broadcast before the renewal is made: the payer
-	// cannot take its coin back once the renewal costs the provider a fee.
-	if tx, err := paymentTx(pl); err == nil {
-		if err := p.send(ctx, tx); err != nil {
-			p.logf("renewal payment %s: %v", short(pl.Txid), err)
-		}
 	}
 	// The renewal is owed from here: recorded before it is made, and made
 	// by the background when it cannot be now.

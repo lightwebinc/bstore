@@ -371,8 +371,12 @@ func (p *Provider) collect() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	held := map[[32]byte]bool{}
-	for r := range p.st.Holdings {
-		objs, _ := p.rootObjects(r)
+	for r, h := range p.st.Holdings {
+		objs, err := p.rootObjects(r)
+		if err != nil && h.Verified {
+			p.logf("root %s: its object list cannot be read (%v); the store is not collected this start", short(r), err)
+			return
+		}
 		for _, o := range objs {
 			held[o] = true
 		}
