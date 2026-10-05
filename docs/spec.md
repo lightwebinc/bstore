@@ -198,8 +198,7 @@ A token **names** an entry when the entry's commitment appears in the
 token's `changes` (as a put's `C` or a removal's `D`) or in its `consumed`.
 Every entry the owner's tooling applies is named exactly once, by the token
 that applies it, and the tooling never applies an entry that any token of
-the chain has named: it keeps the set of commitments its chain has named
-and skips every entry in it, whatever the entry says and whenever it is
+the chain has named: it keeps the set of commitments its chain has named, rebuilt from the chain itself (the rooted tokens it verified, by `chain` or `bucket-seq`), never from a local cache, so that a second instance of the tooling or a reorganisation cannot rename an entry, and skips every entry in it, whatever the entry says and whenever it is
 seen again. Within one batch, when several entries for one key are to be
 applied, the tooling orders them by `created`, then by commitment, and the
 last one decides the key's change; the others go to `consumed`. Before it
@@ -305,7 +304,7 @@ reader's check (section 9.3).
 An entry is **applied** when a token of the bucket's chain names it (section 3.4), and **anchored** while the latest token's map holds its `C` for its key. An entry no token names yet is **pending**. A put through a gateway
 is acknowledged when the facade accepts its entry, before any token anchors
 it: that gateway serves its own pending entries at once (read your writes),
-and every other reader sees the change once a token anchors it. A reader that asks for pending entries (`pending`, section 11.1) receives the unanchored entries of the owner and the latest token's writers for a key that no token of the chain names, newest claim first, and treats them as claims: nothing orders two writers' pending entries but the owner's next token. Entries a token superseded or dropped are named in its `consumed`, and a delete already applied is named by its removal, so none of them is pending; no clock decides it. A reader of pending entries SHOULD check each entry's funding outpoint unspent by positive evidence from a spend source, as the anchoring tooling must. The owner's anchoring tooling walks each writer's unnamed entries with `unanchored`, which pages by txid and always completes; it walks again from the start each time it anchors, so an entry admitted behind its cursor is picked up on the next pass. Before it applies an entry the tooling MUST check the entry carrier's funding outpoint unspent by positive evidence from a spend source: a carrier is never mined, so a spent funding outpoint means the writer swept it, and a host that never saw the sweep (it joined later, or the sweep's outpoints aged out) may still answer the carrier.
+and every other reader sees the change once a token anchors it. A reader that asks for pending entries (`pending`, section 11.1) receives the unanchored entries of the owner and the latest token's writers for a key that no token of the chain names, newest claim first, and treats them as claims: nothing orders two writers' pending entries but the owner's next token. Entries a token superseded or dropped are named in its `consumed`, and a delete already applied is named by its removal, so none of them is pending; no clock decides it. A reader of pending entries SHOULD check each entry's funding outpoint unspent by positive evidence from a spend source, as the anchoring tooling must. The owner's anchoring tooling walks each writer's unnamed entries with `unanchored`, which pages by txid and always completes, and checks that every entry an answer returns has the `writer`, `bucket` and `id` it asked for before it applies it, so that a host cannot slip in a stranger's entry or another chain's; it walks again from the start each time it anchors, so an entry admitted behind its cursor is picked up on the next pass. Before it applies an entry the tooling MUST check the entry carrier's funding outpoint unspent by positive evidence from a spend source: a carrier is never mined, so a spent funding outpoint means the writer swept it, and a host that never saw the sweep (it joined later, or the sweep's outpoints aged out) may still answer the carrier.
 
 ## 5. Pieces (magic `stp` `0x01`)
 
@@ -1343,7 +1342,7 @@ a host does.
 | 2 | `map` | the entry's context does not prove `(key, C)` into the token's `mapRoot` at its index, or an absence context does not prove the key absent |
 | 3 | `entry` | the carrier does not verify (SPV with the reader's headers, the carrier rules of section 12.1), or its `bucket`, `id` or `key` is not what was asked |
 | 4 | `writer` | the entry's writer is neither the token's owner nor one of the token's writers (the token the answer is proven against) |
-| 5 | `kind` | the entry is an unknown kind (unsupported), or a delete, which no token names (a host answering one as anchored has failed step 2) |
+| 5 | `kind` | the entry is an unknown kind (unsupported), or a delete, whose commitment no map holds (a removal names it as `D`, never as a key's value; a host answering one as anchored has failed step 2) |
 | 6 | `root` | the root node's bytes do not hash to `root`, it is not a valid BRC-167 root node, or its `logicalLength` or `contentHash` differs from the entry's |
 | 7 | `closure` | a branch or blob does not hash to what its parent names, at every advertiser asked; or no advertiser served it |
 | 8 | `content` | on a whole read, the content does not hash to `contentHash` (a terminal error after streaming, as BRC-167 says) |
