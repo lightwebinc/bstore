@@ -136,6 +136,7 @@ func entryRefusals() []refusalCase {
 	l.m("hold K below t", hv(func(h *storerec.Hold) { h.T, h.K = 3, 2 }), "hold")
 	l.m("hold K equal to t", hv(func(h *storerec.Hold) { h.T, h.K = 3, 3 }), "ok")
 	l.m("hold retention 0", hv(func(h *storerec.Hold) { h.Retention = 0 }), "hold")
+	l.m("hold retention 2^32 - 1", hv(func(h *storerec.Hold) { h.Retention = storerec.MaxU32 }), "ok")
 	l.m("hold retention 2^32", hv(func(h *storerec.Hold) { h.Retention = storerec.MaxU32 + 1 }), "hold")
 	l.m("hold deadline 0", hv(func(h *storerec.Hold) { h.Deadline = 0 }), "hold")
 	l.m("hold deadline 2^32 - 1", hv(func(h *storerec.Hold) { h.Deadline = storerec.MaxU32 }), "ok")

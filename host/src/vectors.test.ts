@@ -176,6 +176,10 @@ test('script-v1: the classifier and the advertisement check', () => {
     if (label === 'ok') assert.equal(s.decodeAdvertisement(script).url, c.adUrl, c.name)
   }
   assert.ok(narrowedAdmitted >= 0)
+  for (const e of v.eligibility) {
+    const ad = s.decodeAdvertisement(fromHex(e.script))
+    assert.equal(s.eligibility(ad, s.decodeEntry(fromHex(e.entry)), e.rootLength), e.verdict, e.name)
+  }
 })
 
 const mapOf = (v: [string, string][]): s.KeyMap => s.mapFromView(v)
@@ -260,8 +264,11 @@ test('map-v1: roots, folds, batches, objects, contexts, pages', () => {
   }
   // A reader's walk and head checks.
   for (const w of v.reader.walks) {
-    const links: s.Link[] = (w.walk ?? []).map((l: { txid: string; record: string }) => ({ txid: fromHex(l.txid), bucket: s.decodeBucket(fromHex(l.record)) }))
-    assert.equal(labelOf(() => s.checkWalk(w.held, links))[0], w.label, w.name)
+    const links: s.Link[] = w.walk.map((l: { txid: string; record: string; spends?: { txid: string; vout: number } }) => ({
+      txid: fromHex(l.txid), bucket: s.decodeBucket(fromHex(l.record)), ...(l.spends ? { spends: { txid: fromHex(l.spends.txid), vout: l.spends.vout } } : {}),
+    }))
+    const held = w.held === undefined ? undefined : { seq: w.held.seq, txid: fromHex(w.held.txid) }
+    assert.equal(labelOf(() => s.checkWalk(held, links))[0], w.label, w.name)
   }
   for (const h of v.reader.heads) {
     const tok = s.decodeBucket(fromHex(h.token))

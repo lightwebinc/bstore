@@ -563,7 +563,7 @@ func abstractPages() []map[string]any {
 func readerVectors() (map[string]any, error) {
 	b0, b1, b2 := sampleBucket0(), sampleBucket1(), sampleBucket2()
 	t0, t1, t2 := label("walk 0"), label("walk 1"), label("walk 2")
-	l0 := storerec.Link{Txid: t0, Bucket: b0}
+	l0 := storerec.Link{Txid: t0, Bucket: b0, Spends: &storerec.Outpoint{Txid: firstOutpoint, Vout: 0}}
 	b1c := *b1
 	b1c.Prev = t0
 	l1 := storerec.Link{Txid: t1, Bucket: &b1c}
@@ -575,21 +575,34 @@ func readerVectors() (map[string]any, error) {
 	gap := b2c
 	gap.Seq = 3
 	var walks []map[string]any
-	addWalk := func(name string, held int64, ls ...storerec.Link) {
-		var lv []map[string]any
+	h := func(seq uint64, txid [32]byte) *storerec.Held { return &storerec.Held{Seq: seq, Txid: txid} }
+	addWalk := func(name string, held *storerec.Held, ls ...storerec.Link) {
+		lv := []map[string]any{}
 		for _, l := range ls {
-			lv = append(lv, map[string]any{"txid": h32(l.Txid), "record": hx(must(l.Bucket.Encode()))})
+			x := map[string]any{"txid": h32(l.Txid), "record": hx(must(l.Bucket.Encode()))}
+			if l.Spends != nil {
+				x["spends"] = map[string]any{"txid": h32(l.Spends.Txid), "vout": l.Spends.Vout}
+			}
+			lv = append(lv, x)
 		}
-		walks = append(walks, map[string]any{"name": name, "held": held, "walk": lv, "label": reason(storerec.CheckWalk(held, ls))})
+		w := map[string]any{"name": name, "walk": lv, "label": reason(storerec.CheckWalk(held, ls))}
+		if held != nil {
+			w["held"] = map[string]any{"seq": held.Seq, "txid": h32(held.Txid)}
+		}
+		walks = append(walks, w)
 	}
-	addWalk("from seq 2 to seq 0, nothing held", -1, l2, l1, l0)
-	addWalk("from seq 2 to the seq held", 1, l2, l1)
-	addWalk("a token below the seq held", 2, l1, l0)
-	addWalk("prev is not the next token's txid", -1, l2, storerec.Link{Txid: label("not it"), Bucket: &b1c}, l0)
-	addWalk("a seq skipped", -1, storerec.Link{Txid: t2, Bucket: &gap}, l1, l0)
-	addWalk("another owner below", -1, l1, storerec.Link{Txid: t0, Bucket: &other})
-	addWalk("the walk stops above the seq held", 0, l2, l1)
-	addWalk("no token", -1)
+	addWalk("from seq 2 to seq 0, nothing held", nil, l2, l1, l0)
+	addWalk("from seq 2 to the token held", h(1, t1), l2, l1)
+	addWalk("from seq 2 to another token at the seq held", h(1, label("held elsewhere")), l2, l1)
+	addWalk("the token held, answered again", h(2, t2), l2)
+	addWalk("a token below the seq held", h(2, t2), l1, l0)
+	addWalk("prev is not the next token's txid", nil, l2, storerec.Link{Txid: label("not it"), Bucket: &b1c}, l0)
+	addWalk("a seq skipped", nil, storerec.Link{Txid: t2, Bucket: &gap}, l1, l0)
+	addWalk("another owner below", nil, l1, storerec.Link{Txid: t0, Bucket: &other, Spends: l0.Spends})
+	addWalk("the walk stops above the seq held", h(0, t0), l2, l1)
+	addWalk("the first token's id is not its outpoint's", nil, l1, storerec.Link{Txid: t0, Bucket: b0, Spends: &storerec.Outpoint{Txid: firstOutpoint, Vout: 1}})
+	addWalk("the first token without its outpoint", nil, l1, storerec.Link{Txid: t0, Bucket: b0})
+	addWalk("no token", nil)
 
 	// Heads over a token whose map names one put.
 	put := samplePut()

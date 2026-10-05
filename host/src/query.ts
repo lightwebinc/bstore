@@ -119,8 +119,11 @@ export function parseQuery(raw: string, carries?: (bucket: string) => boolean, s
   const values: Record<string, string> = {}
   for (const n of names) {
     const v = (q as Record<string, unknown>)[n]
-    if (typeof v !== 'string' || !checkValue(cls.name, n, v)) throw refuse('query', '', `${n} breaks its rule`)
-    values[n] = v
+    if (typeof v !== 'string') throw refuse('query', '', `${n} is not a string`)
+    // A lone surrogate reads as U+FFFD, as a parser that decodes to UTF-8 holds it.
+    const u = new TextDecoder().decode(utf8(v))
+    if (!checkValue(cls.name, n, u)) throw refuse('query', '', `${n} breaks its rule`)
+    values[n] = u
   }
   if (carries !== undefined && !carries(values.bucket!)) throw refuse('query', '', 'a bucket this host does not carry')
   if (cls.served && serves !== undefined && !serves(values.bucket!, values.owner!, cls.name === 'export' ? values.export! : values.id!)) {

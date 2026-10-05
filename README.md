@@ -16,8 +16,9 @@ the same bytes and competes to hold them. Readers speak S3.
   pays, by rank, to the first providers to advertise and pass a challenge,
   with BRC-178's square-root split.
 - **Anyone can buy time or proof.** A renewal extends a provider's holding;
-  a challenge samples 4 KiB segments from a seed no single party controls
-  and proves each into the object's proof root, about 5 KB per sample.
+  a challenge samples 4 KiB segments chosen from a block hash, the buyer's
+  nonce and the provider's key, and proves each into the object's proof
+  root, about 5 KB per sample.
 - **The bucket proves its own listing.** The owner's chain of mined tokens
   commits to the whole key map, so a reader proves what a key names, that a
   key is absent and that a listing page is complete.
@@ -47,8 +48,7 @@ checks.
 ## Status
 
 Contract signed: every row of [docs/frozen.md](docs/frozen.md) is frozen,
-with five clarifications of the closure checks pending confirmation
-(section 14). The codec, in Go and TypeScript, and its golden vectors are
+with seven clarifications pending confirmation (section 14). The codec, in Go and TypeScript, and its golden vectors are
 built; the overlay host module comes next.
 
 ## License

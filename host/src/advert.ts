@@ -162,7 +162,7 @@ export function eligibility(ad: Advertisement, e: Entry, rootLen: number): strin
   if (equal(ad.host, AnyoneKey)) return 'anyone'
   if (ad.expiry < Math.floor(e.created / 1000) + e.hold.retention) return 'expiry'
   if (ad.fileSize !== rootLen) return 'file-size'
-  if (!ad.url.endsWith(chirpURLSuffix(e.root))) return 'url'
+  if (/[?#]/.test(ad.url) || !ad.url.endsWith(chirpURLSuffix(e.root))) return 'url'
   return ''
 }
 

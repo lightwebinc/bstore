@@ -468,6 +468,70 @@ func (e *txEnv) tokenCases(add func(txCase)) error {
 		}
 		return e.ch.mine(t)
 	}(), e.chainTree, "token-input")
+	// token-input: what a token's inputs spend of its parent.
+	refuse("token-first-two-inputs-on-parent", "a seq 0 spending chain-tree outputs 1 and 2: two inputs spend its parent", func() *transaction.Transaction {
+		b := *e.buckets[0]
+		b.ID = storerec.BucketID([32]byte(*e.chainTree.TxID()), 1)
+		t, err := e.token(must(b.Encode()), e.chainTree, 1)
+		if err != nil {
+			panic(err)
+		}
+		t = cloneTx(t)
+		t.AddInputFromTx(e.chainTree, 2, o.unlocker(storerec.ChainDerivation))
+		return e.ch.mine(signAll(t))
+	}(), e.chainTree, "token-input")
+	// A mined transaction of two seq 0 token outputs of the owner (never
+	// admissible itself), and a seq 1 spending both.
+	twin := transaction.NewTransaction()
+	fee := e.fee(o)
+	twin.AddInputFromTx(fee.Tx, fee.Vout, o.feeUnlocker())
+	rec0 := must(e.buckets[0].Encode())
+	twin.AddOutput(out(1, o.lock(bd, true, storerec.TagToken, rec0)))
+	twin.AddOutput(out(1, o.lock(bd, true, storerec.TagToken, rec0)))
+	twin.AddOutput(out(1000000, o.feeLock))
+	e.ch.mine(signAll(twin))
+	refuse("token-spends-two-parent-tokens", "a seq 1 spending both token outputs of its parent", func() *transaction.Transaction {
+		r := mutate(rec1, storerec.BKPrev, twin.TxID()[:])
+		t, err := e.token(r, twin, 0)
+		if err != nil {
+			panic(err)
+		}
+		t = cloneTx(t)
+		t.AddInputFromTx(twin, 1, o.unlocker(bd))
+		return e.ch.mine(signAll(t))
+	}(), twin, "token-input")
+	refuse("token-spends-wrong-seq", "a seq 2 spending the seq 0 token, its prev that token's txid", func() *transaction.Transaction {
+		r := mutate(mutate(rec1, storerec.BKSeq, uint64(2)), storerec.BKPrev, t0.TxID()[:])
+		t, err := e.token(r, t0, 0)
+		if err != nil {
+			panic(err)
+		}
+		return e.ch.mine(t)
+	}(), t0, "token-input")
+	// A stranger's token at seq 0 copying the bucket's id, and the owner's
+	// seq 1 spending it.
+	dr := *e.buckets[0]
+	dr.Owner = Dave.Pub()
+	daveTok := e.ch.mine(e.adTx(e.d, out(1, e.d.lock(bd, true, storerec.TagToken, must(dr.Encode())))))
+	refuse("token-spends-other-owner", "the owner's seq 1 spending a seq 0 token of another owner with the bucket's id", func() *transaction.Transaction {
+		r := mutate(rec1, storerec.BKPrev, daveTok.TxID()[:])
+		t, err := e.mintRaw(o.lock(bd, true, storerec.TagToken, r), 1, nil, 0)
+		if err != nil {
+			panic(err)
+		}
+		t.AddInputFromTx(daveTok, 0, e.d.unlocker(bd))
+		return e.ch.mine(signAll(t))
+	}(), daveTok, "token-input")
+	or := *e.buckets[0]
+	or.ID = label("another id")
+	otherID := e.ch.mine(e.adTx(o, out(1, o.lock(bd, true, storerec.TagToken, must(or.Encode())))))
+	refuse("token-spends-other-id", "a seq 1 spending a seq 0 token of the owner with another id", func() *transaction.Transaction {
+		t, err := e.token(mutate(rec1, storerec.BKPrev, otherID.TxID()[:]), otherID, 0)
+		if err != nil {
+			panic(err)
+		}
+		return e.ch.mine(t)
+	}(), otherID, "token-input")
 	return nil
 }
 

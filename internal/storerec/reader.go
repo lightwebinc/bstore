@@ -18,24 +18,41 @@ var (
 	ErrProofRoot = errors.New("storerec: the proof root recomputed differs from the entry's")
 )
 
-// Link is one token of a walk: its txid (hash byte order) and its record.
+// Link is one token of a walk: its txid (hash byte order), its record and,
+// for the token at seq 0, the outpoint its chain-tree input spends.
 type Link struct {
 	Txid   [32]byte
 	Bucket *Bucket
+	Spends *Outpoint
+}
+
+// Outpoint is a txid in hash byte order and an output index.
+type Outpoint struct {
+	Txid [32]byte
+	Vout uint32
+}
+
+// Held is the token a reader holds for a chain: the highest seq it
+// verified, and that token's txid.
+type Held struct {
+	Seq  uint64
+	Txid [32]byte
 }
 
 // CheckWalk is a reader's step 1 on tokens it verified against its own
-// headers, latest first, walked back by prev to a token it holds or to seq
-// 0 (spec section 15.1): rollback when the latest is below the seq it holds
-// (held < 0: none), else bucket when two neighbours do not link (prev is
-// the next one's txid, seq one lower, the same bucket, owner and id), or the
-// walk stops above seq 0 and above the seq it holds.
-func CheckWalk(held int64, walk []Link) error {
+// headers, latest first, walked back by prev to the token it holds or to
+// seq 0 (spec section 15.1). held is nil when it holds none. It is rollback
+// when the latest is below the seq held; else bucket when two neighbours do
+// not link (prev is the next one's txid, seq one lower, the same bucket,
+// owner and id), when the walk stops above seq 0 other than on the token
+// held (the same seq and txid), or when it reaches seq 0 and the id is not
+// the bucket id of the outpoint that token spends (bucket-id at admission).
+func CheckWalk(held *Held, walk []Link) error {
 	if len(walk) == 0 {
 		return fmt.Errorf("%w: no token", ErrBucket)
 	}
 	top := walk[0].Bucket
-	if held >= 0 && top.Seq < uint64(held) {
+	if held != nil && top.Seq < held.Seq {
 		return ErrRollback
 	}
 	for i := 0; i+1 < len(walk); i++ {
@@ -44,9 +61,18 @@ func CheckWalk(held int64, walk []Link) error {
 			return fmt.Errorf("%w: token at seq %d does not link", ErrBucket, a.Seq)
 		}
 	}
-	last := walk[len(walk)-1].Bucket
-	if last.Seq != 0 && (held < 0 || last.Seq > uint64(held)) {
-		return fmt.Errorf("%w: the walk stops at seq %d", ErrBucket, last.Seq)
+	last := walk[len(walk)-1]
+	if held != nil && last.Bucket.Seq == held.Seq {
+		if last.Txid != held.Txid {
+			return fmt.Errorf("%w: the walk ends on another token at the seq held", ErrBucket)
+		}
+		return nil
+	}
+	if last.Bucket.Seq != 0 {
+		return fmt.Errorf("%w: the walk stops at seq %d", ErrBucket, last.Bucket.Seq)
+	}
+	if last.Spends == nil || BucketID(last.Spends.Txid, last.Spends.Vout) != last.Bucket.ID {
+		return fmt.Errorf("%w: the first token's id is not its outpoint's", ErrBucket)
 	}
 	return nil
 }

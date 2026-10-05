@@ -131,7 +131,7 @@ func TestEveryLabelHasAVector(t *testing.T) {
 func TestBcommonCHIRPVectors(t *testing.T) {
 	out, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/lightwebinc/bcommon").Output()
 	if err != nil {
-		t.Skipf("go list: %v", err)
+		t.Fatalf("go list: %v", err)
 	}
 	b, err := os.ReadFile(filepath.Join(strings.TrimSpace(string(out)), "testdata", "vectors", "chirp-v1.json"))
 	if err != nil {

@@ -15,7 +15,7 @@ import { decodeBucket, decodeEntry, decodeFront, decodeOutcome, type Bucket, typ
 import { claims, classify, fundingScript, lockingKey, type Claim } from './script.js'
 import {
   DefaultMaxBEEF, DefaultMaxSweepInputs, KeyBucket, KeyChain, KeyEntry, KeyFront, KeyOutcome, MaxAdsPerTx, MaxCarrierBEEF, MaxMinedBEEF,
-  MaxSweepBEEF, MaxTokenBEEF, refuse,
+  MaxSweepBEEF, MaxTokenBEEF, StoreError, refuse,
 } from './storerec.js'
 import { equal, hashOrder } from './util.js'
 
@@ -83,7 +83,16 @@ export function hostBounds(h: Host): { maxBEEF: number; maxSweepInputs: number }
 export async function admit(raw: Uint8Array, held: number[], h: Host): Promise<Admission> {
   if (!isBucket(h.bucket)) throw refuse('host-config', '', 'bucket identifier breaks the grammar')
   const bounds = hostBounds(h)
-  const w = beef(() => readWire(raw, bounds.maxBEEF))
+  // An output of more than 2^53 - 1 satoshis does not parse in the SDK: it
+  // throws, and that is the BEEF's refusal, as the Go codec's explicit check.
+  let w: Wire
+  try {
+    w = beef(() => readWire(raw, bounds.maxBEEF))
+  } catch (e) {
+    if (e instanceof Error && !(e instanceof StoreError)) throw refuse('beef', '', e.message)
+    throw e
+  }
+  for (const en of w.entries) for (const o of en.tx?.outputs ?? []) if (!Number.isSafeInteger(o.satoshis ?? 0)) throw refuse('beef', '', 'an output past 2^53 - 1 satoshis')
   const tx = subjectTx(w)
   const a: Admission = { kind: 'sweep', txid: Uint8Array.from(tx.hash() as number[]), outputs: [], retain: retained(tx, held) }
   let claim = '' as Claim

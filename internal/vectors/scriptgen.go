@@ -188,9 +188,31 @@ func genScript(files map[string][]byte) error {
 		f[2] = []byte(u)
 		add(fmt.Sprintf("advertisement url %q", u), adOf(resign(f)))
 	}
+	// Eligibility of an advertisement for the sample put's bounty.
+	e := samplePut()
+	minExp := e.Created/1000 + e.Hold.Retention
+	rl := uint64(len(contentBuilt.Root))
+	var elig []map[string]any
+	addE := func(name string, p Party, rt [32]byte, url string, expiry, size uint64, entry *storerec.Entry) {
+		s := adScript(p, rt, url, expiry, size)
+		ad := must(storerec.DecodeAdvertisement(s))
+		elig = append(elig, map[string]any{"name": name, "script": hx(s), "entry": hx(must(entry.Encode())), "rootLength": rl,
+			"verdict": storerec.Eligibility(ad, entry, rl)})
+	}
+	addE("eligible", Bob, root, adURL(root), minExp, rl, e)
+	addE("expiry one second short", Bob, root, adURL(root), minExp-1, rl, e)
+	addE("another root", Bob, label("other root"), adURL(root), minExp, rl, e)
+	addE("the anyone key", Party{Name: "anyone", Priv: anyonePriv()}, root, adURL(root), minExp, rl, e)
+	addE("file size not the root node's", Bob, root, adURL(root), minExp, rl+1, e)
+	addE("a url not of the CHIRP form", Bob, root, "https://bob.example/files/x", minExp, rl, e)
+	addE("the CHIRP form in the query", Bob, root, "https://bob.example/?x="+storerec.CHIRPURLSuffix(root), minExp, rl, e)
+	noHold := samplePut()
+	noHold.Hold = nil
+	addE("an entry without hold terms", Bob, root, adURL(root), minExp, rl, noHold)
 	return put(files, "script-v1.json", map[string]any{
-		"note":  "the classifier (claim: bucket-token, entry, outcome, front, piece, funding, hold, or empty for nothing) and the BRC-26 advertisement check as the SDK makes it (advertisement: ok, or refused with the rule that failed); a url rule marked /narrowed is an internationalised host this Go codec refuses and the WHATWG parser may admit",
-		"cases": cases,
+		"eligibility": elig,
+		"note":        "the classifier (claim: bucket-token, entry, outcome, front, piece, funding, hold, or empty for nothing) and the BRC-26 advertisement check as the SDK makes it (advertisement: ok, or refused with the rule that failed); a url rule marked /narrowed is an internationalised host this Go codec refuses and the WHATWG parser may admit",
+		"cases":       cases,
 	})
 }
 

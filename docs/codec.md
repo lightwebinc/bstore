@@ -89,6 +89,13 @@ no capital letter, exactly one `/`, no `;`; an empty type or subtype is not
 refused. `etag`'s printable ASCII is 0x20 to 0x7e. Any failure inside `hold`
 or `meta` is `hold` or `meta`; the value of another type is `type`.
 
+**Type before kind.** In an outcome, keys 6 and 7 are read by type
+where present, whatever the outcome, and then `kind` checks their presence;
+in an entry, a delete's keys 7 to 15 are not read and their presence is
+`kind`. The two follow their sections' wording: 8.1 lists `response` and
+`signature` among the keys read per key, 4.2 says a delete carries keys 0
+to 6 only.
+
 **The piece.** Spec section 5 lists no refusal order; the piece follows the
 others: the record steps, then `bucket`, `identity` (writer), `type` (root),
 `piece` (1 to 4,194,304 bytes).
@@ -132,8 +139,10 @@ another key) or `object-absence`.
 earlier in its own changes and consumed, is `map-mismatch` (reason
 `named-twice`) before its change is applied; so a put of the value a key
 already names, whose commitment the chain has named, is reported
-`named-twice`. The other reasons are `removal-of-absent`, `count`,
-`too-many-keys` and `map-root`.
+`named-twice`. The other reasons are `removal-of-absent`, `count` and
+`map-root`. `put-unchanged` and `too-many-keys` are kept as defensive checks
+and no chain reaches them: a value the map holds was always named before,
+and a record's `count` is at most 1,048,576.
 
 **The owner's batch.** Kinds other than put and delete are never applied;
 an entry named twice in one batch counts once.
@@ -147,15 +156,27 @@ and has no label beginning `xn--`; an internationalised host, which the
 WHATWG parser maps through UTS #46, the Go codec refuses (rule `url`) and the
 TypeScript twin, which runs the WHATWG parser itself, decides. The narrowing
 only ever refuses: the Go codec never admits an advertisement the SDK
-refuses. Hosts are the TypeScript twin's.
+refuses. Hosts are the TypeScript twin's. The port follows the SDK's check
+as ts-stack's `@bsv/sdk` 2.8.10 has it; the SDK release bcommon pins does
+not carry it.
 
 **Transactions.** An output of more than 2^53 - 1 satoshis anywhere in the
-BEEF is refused as `beef` before any rule, as bchat does. A transaction that
+BEEF is refused as `beef` before any rule, as bchat does (the TypeScript
+SDK cannot parse one, and the twin checks it too). A transaction that
 claims nothing and holds an advertisement or a hold-shaped output is a mined
 object, whatever its output 0; otherwise a sweep needs one or two outputs.
 
 **Settlement.** Ties in first sight go to the lower advertisement txid in
-display order, as the contract orders txids in answers.
+display order, as the contract orders txids in answers; the owner's batch
+breaks a tie in `created` by the lower commitment in hash byte order, as a
+record holds it. An advertiser is ranked at its first-seen advertisement,
+before passing and cancellations are applied. An advertisement is eligible
+only when its url holds no query or fragment and ends in the CHIRP form.
+
+**The walk.** A reader holds the seq and the txid of the latest token it
+verified. A walk back by `prev` ends on that token (the same seq and txid)
+or at seq 0, where the id must be the bucket id of the outpoint the first
+token spends.
 
 **Reader labels for a closure.** Step 6 `root` covers the root's rules and
 every refusal of the closure that the bytes cannot mend (a node's checks, a
@@ -165,5 +186,6 @@ name them; step 8 `content` the content hash; step 9 `proof-root`.
 
 **Questions.** A refused question is the label `query`. Each value is
 checked as a JSON parser that decodes to UTF-8 holds it, a lone surrogate
-read as U+FFFD. The member `outcome-history-of` is a provider's key, held to
+read as U+FFFD; the value the codec passes on is that string too (the
+TypeScript twin replaces a lone surrogate before any rule reads it). The member `outcome-history-of` is a provider's key, held to
 the key rule like `outcome-history`.

@@ -297,7 +297,7 @@ func Eligibility(ad *Advertisement, e *Entry, rootLen uint64) string {
 		return "expiry"
 	case ad.FileSize != rootLen:
 		return "file-size"
-	case !strings.HasSuffix(ad.URL, CHIRPURLSuffix(e.Root)):
+	case strings.ContainsAny(ad.URL, "?#") || !strings.HasSuffix(ad.URL, CHIRPURLSuffix(e.Root)):
 		return "url"
 	}
 	return ""
