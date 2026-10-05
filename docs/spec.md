@@ -329,6 +329,13 @@ distinct blob, each branch node and the root node. A blob shared by two
 positions, or by two closures, is published once per closure that needs it.
 Profile 1's rules (exactly 4 MiB non-final blobs, fanout 256, the canonical grouping) are the closure's; a provider validates them before it holds. A bstore root node carries **no extension**: no `mediaType`, whose value the entry's `contentType` already carries, so that equal content has one root whoever writes it, and copying, deduplication and bridging never meet two roots for one content. A provider refuses to hold a root with an extension.
 
+How a closure is checked (clarifications pending owner confirmation, frozen.md section 14, rows C1 to C4):
+
+- **C1.** A root node of CHIRP version 1 with a minor version above 0 is refused (`root`): bstore reads version 1.0 alone, as bcommon's decoder does, and never reads a later minor version as 1.0.
+- **C2.** bstore checks that a root carries no extension itself: a root with any extension (`len(Root.Extensions) != 0`), advisory or not, is refused (`root`), because bcommon's decoder keeps an advisory extension rather than refusing it.
+- **C3.** The depth bound of a closure (16, bcommon `chirp.MaxDepth`) counts the objects on the path from the root to an object, both included: a blob under fourteen branches is sixteen objects deep and within the bound; under fifteen it is seventeen and refused (`root`).
+- **C4.** A closure is checked by bcommon `chirp.Verify` with `Limits{MaxLength: 1<<43}` (the entry's size bound) and the default bound on references, in its refusal order: missing, hash, the node checks and the length bound for the root; then, walking the children depth first in child order, the references bound, depth, cycle and missing for each reference, a branch's hash, node checks and length, a blob's length then hash; then content-hash; then canonical (profile 1's construction). A fetch takes only bytes that hash to the object asked for. An object not served, or served only as other bytes, is `closure`; content-hash is `content`; every other refusal, and every rule of the root above, is `root`.
+
 ## 6. The proof tree
 
 Proof profile 1. An object of `size` bytes has `n = ceil(size / 4096)`
@@ -1694,4 +1701,5 @@ pin byte for byte the rows of frozen.md marked "vectors".
 | `settle-v1.json` | payouts for `k` 1 to 16 and assorted `R`, the BRC-178 examples among them; derivation prefixes and suffixes; rankings where a renewed advertisement keeps its original first sight and where a cancelled payee is dropped, the ranks below move up and `t` is counted again |
 | `transaction-v1.json` | carriers, tokens, advertisements, hold outputs and sweeps admitted and refused by each rule of section 12.1, and transactions that only spend held outputs, refused |
 | `query-v1.json` | every class and every value rule, admitted and refused |
-| `chirp-v1.json` | BRC-167's own vectors, read by the CHIRP codec |
+| `chirp-v1.json` | BRC-167's own vectors: bcommon's file of that name at the tag go.mod pins, read from that module by bstore's tests (clarification pending owner confirmation, frozen.md section 14, row C5) |
+| `closure-v1.json` | bstore's checks of a closure (section 5, rows C1 to C4): the root's rules, the closure's refusals as labels, the 2^43-byte bound, the proof root |

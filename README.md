@@ -32,11 +32,24 @@ the same bytes and competes to hold them. Readers speak S3.
 | --- | --- |
 | Implement a compatible publisher, provider, host or reader | [docs/spec.md](docs/spec.md) (the specification) |
 | Know what cannot change once published | [docs/frozen.md](docs/frozen.md) |
+| Use or check the codec and its golden vectors | [docs/codec.md](docs/codec.md) |
+
+## Building
+
+```sh
+cd host && npm ci && cd ..
+make verify NODE=/path/to/node24
+```
+
+Go 1.27 and Node 24. [docs/codec.md](docs/codec.md) says what each target
+checks.
 
 ## Status
 
-Contract signed: every row of [docs/frozen.md](docs/frozen.md) is frozen.
-The codec and its golden vectors come next.
+Contract signed: every row of [docs/frozen.md](docs/frozen.md) is frozen,
+with five clarifications of the closure checks pending confirmation
+(section 14). The codec, in Go and TypeScript, and its golden vectors are
+built; the overlay host module comes next.
 
 ## License
 

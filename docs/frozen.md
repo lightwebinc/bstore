@@ -6,8 +6,9 @@ already published. Once one record using it is on a public host, readers
 verify against it for as long as anyone reads that record, so changing it
 afterwards is a new identifier or a new record version, never an edit.
 
-**Status: signed.** Every row below is signed with the value it gives, and
-none is provisional. The rows marked "vectors" are pinned byte for byte by
+**Status: signed, with five clarifications pending owner confirmation
+(section 14, rows C1 to C5).** Every other row below is signed with the
+value it gives, and none is provisional. The rows marked "vectors" are pinned byte for byte by
 the golden vectors the codec generates ([spec.md](spec.md) section 22); a
 vector that disagrees with a row is a defect in the codec, not a change to
 the row. The registry rows of section 1 belong in bcommon's registry
@@ -199,3 +200,17 @@ least 1024. As ceilings, not floors: the BEEF ceilings of section 2.
 - The buyer's `c` beyond the default and its timeout.
 - Gateway policy: which buckets and identities it serves, its default
   bounty, part buffering.
+
+## 14. Clarifications
+
+A clarification rewords a signed rule where the signed wording leaves a
+case open. Each below is pending the owner's confirmation; the codec and its
+vectors already follow it.
+
+| Row | Item | Clarification | Status |
+| --- | --- | --- | --- |
+| C1 | Closure, spec section 5 | A root node of CHIRP version 1 with a minor version above 0 is refused (`root`): bstore reads version 1.0 alone, as bcommon's decoder does, and never reads a later minor version as 1.0 | PENDING owner confirmation |
+| C2 | Closure, spec section 5 | bstore checks that a root carries no extension itself: a root with any extension (`len(Root.Extensions) != 0`), advisory or not, is refused (`root`), because bcommon's decoder keeps an advisory extension rather than refusing it | PENDING owner confirmation |
+| C3 | Closure, spec section 5 | The depth bound of a closure (16, bcommon `chirp.MaxDepth`) counts the objects on the path from the root to an object, both included: a blob under fourteen branches is sixteen objects deep and within the bound; under fifteen it is seventeen and refused (`root`) | PENDING owner confirmation |
+| C4 | Closure, spec sections 5, 9.3 and 15.2 | A closure is checked by bcommon `chirp.Verify` with `Limits{MaxLength: 1<<43}` and the default bound on references, in its refusal order: missing, hash, the node checks and the length bound for the root; then, depth first in child order, the references bound, depth, cycle and missing for each reference, a branch's hash, node checks and length, a blob's length then hash; then content-hash; then canonical. A fetch takes only bytes that hash to the object asked for. An object not served, or served only as other bytes, is `closure`; content-hash is `content`; every other refusal, and every rule of rows C1 and C2, is `root` | PENDING owner confirmation |
+| C5 | Vectors, spec section 22 | The `chirp-v1.json` of section 22 is bcommon's file of that name at the tag go.mod pins, read from that module by bstore's tests; bstore's own vectors of its closure checks are `closure-v1.json`, so that no two vector files of one name differ | PENDING owner confirmation |

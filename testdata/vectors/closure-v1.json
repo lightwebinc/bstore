@@ -1,0 +1,495 @@
+{
+  "cases": [
+    {
+      "blobs": [
+        "68656c6c6f2c206273746f7265"
+      ],
+      "chirpOnly": false,
+      "contentHash": "a41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef",
+      "label": "ok",
+      "missing": null,
+      "name": "the sample object",
+      "nodes": [
+        "43484952500100000001000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef0100000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef00"
+      ],
+      "proof": true,
+      "proofRoot": "8f7e1b73eeeda94d4cc4e17215e3228d02b264d95cbd3819d29e8c1189b7dd53",
+      "root": "f8eeddabe51bce08c5afd53188168ae07e76742f1d5d3f2850cee41180527c92",
+      "rule": "",
+      "ruleSize": 0,
+      "serve": {},
+      "size": 13
+    },
+    {
+      "blobs": null,
+      "chirpOnly": false,
+      "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "label": "ok",
+      "missing": null,
+      "name": "the empty object",
+      "nodes": [
+        "434849525001000000010000000000000000e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b8550000"
+      ],
+      "proof": true,
+      "proofRoot": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "root": "0403640d635fd27b6c719d2b81db853483ff8d0fb46f7b90ce9f9d7e9a2729ee",
+      "rule": "",
+      "ruleSize": 0,
+      "serve": {},
+      "size": 0
+    },
+    {
+      "blobs": null,
+      "chirpOnly": false,
+      "contentHash": "dfbf030858841df96d26d50cea1ad637cef1fe11b65e94a0a1f0b82fd98644fc",
+      "label": "ok",
+      "missing": null,
+      "name": "one blob and one byte: two blobs",
+      "nodes": [
+        "434849525001000000010000000000400001dfbf030858841df96d26d50cea1ad637cef1fe11b65e94a0a1f0b82fd98644fc02000000000000400000d67328110b0eae8831fe37308f74a757d487d94d9296c54e1044b4275e5e2208000000000000000001ef6cbd2161eaea7943ce8693b9824d23d1793ffb1c0fca05b600d3899b44c97700"
+      ],
+      "proof": true,
+      "proofRoot": "ad3659994cd525d0ea9ffd75d99f3175aaf21f165f7e5cc3bda864e5ae906886",
+      "root": "5917455efada29dbc537ff1de88ba882072cd6f2e33fc20923ef0e3d7994b3b1",
+      "rule": "",
+      "ruleSize": 4194305,
+      "serve": {},
+      "size": 4194305
+    },
+    {
+      "blobs": [
+        "68656c6c6f2c206273746f7265"
+      ],
+      "chirpOnly": false,
+      "contentHash": "a41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef",
+      "label": "proof-root",
+      "missing": null,
+      "name": "the entry's proof root is not the content's",
+      "nodes": [
+        "43484952500100000001000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef0100000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef00"
+      ],
+      "proof": true,
+      "proofRoot": "8e7e1b73eeeda94d4cc4e17215e3228d02b264d95cbd3819d29e8c1189b7dd53",
+      "root": "f8eeddabe51bce08c5afd53188168ae07e76742f1d5d3f2850cee41180527c92",
+      "rule": "",
+      "ruleSize": 0,
+      "serve": {},
+      "size": 13
+    },
+    {
+      "blobs": [
+        "68656c6c6f2c206273746f7265"
+      ],
+      "chirpOnly": false,
+      "contentHash": "a41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef",
+      "label": "closure",
+      "missing": [
+        "f8eeddabe51bce08c5afd53188168ae07e76742f1d5d3f2850cee41180527c92"
+      ],
+      "name": "the root not served",
+      "nodes": [
+        "43484952500100000001000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef0100000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef00"
+      ],
+      "proof": true,
+      "proofRoot": "8f7e1b73eeeda94d4cc4e17215e3228d02b264d95cbd3819d29e8c1189b7dd53",
+      "root": "f8eeddabe51bce08c5afd53188168ae07e76742f1d5d3f2850cee41180527c92",
+      "rule": "missing",
+      "ruleSize": 0,
+      "serve": {},
+      "size": 13
+    },
+    {
+      "blobs": [
+        "68656c6c6f2c206273746f7265"
+      ],
+      "chirpOnly": false,
+      "contentHash": "a41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef",
+      "label": "closure",
+      "missing": null,
+      "name": "the root served as other bytes",
+      "nodes": [
+        "43484952500100000001000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef0100000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef00"
+      ],
+      "proof": true,
+      "proofRoot": "8f7e1b73eeeda94d4cc4e17215e3228d02b264d95cbd3819d29e8c1189b7dd53",
+      "root": "f8eeddabe51bce08c5afd53188168ae07e76742f1d5d3f2850cee41180527c92",
+      "rule": "hash",
+      "ruleSize": 0,
+      "serve": {
+        "f8eeddabe51bce08c5afd53188168ae07e76742f1d5d3f2850cee41180527c92": "43484952500100000001000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef0100000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef0000"
+      },
+      "size": 13
+    },
+    {
+      "blobs": null,
+      "chirpOnly": false,
+      "contentHash": "dfbf030858841df96d26d50cea1ad637cef1fe11b65e94a0a1f0b82fd98644fc",
+      "label": "closure",
+      "missing": [
+        "ef6cbd2161eaea7943ce8693b9824d23d1793ffb1c0fca05b600d3899b44c977"
+      ],
+      "name": "a blob not served",
+      "nodes": [
+        "434849525001000000010000000000400001dfbf030858841df96d26d50cea1ad637cef1fe11b65e94a0a1f0b82fd98644fc02000000000000400000d67328110b0eae8831fe37308f74a757d487d94d9296c54e1044b4275e5e2208000000000000000001ef6cbd2161eaea7943ce8693b9824d23d1793ffb1c0fca05b600d3899b44c97700"
+      ],
+      "proof": true,
+      "proofRoot": "ad3659994cd525d0ea9ffd75d99f3175aaf21f165f7e5cc3bda864e5ae906886",
+      "root": "5917455efada29dbc537ff1de88ba882072cd6f2e33fc20923ef0e3d7994b3b1",
+      "rule": "missing",
+      "ruleSize": 4194305,
+      "serve": {},
+      "size": 4194305
+    },
+    {
+      "blobs": [
+        "68656c6c6f2c206273746f7265"
+      ],
+      "chirpOnly": false,
+      "contentHash": "a41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef",
+      "label": "closure",
+      "missing": null,
+      "name": "a blob served as other bytes of its length",
+      "nodes": [
+        "43484952500100000001000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef0100000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef00"
+      ],
+      "proof": true,
+      "proofRoot": "8f7e1b73eeeda94d4cc4e17215e3228d02b264d95cbd3819d29e8c1189b7dd53",
+      "root": "f8eeddabe51bce08c5afd53188168ae07e76742f1d5d3f2850cee41180527c92",
+      "rule": "hash",
+      "ruleSize": 0,
+      "serve": {
+        "a41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef": "69656c6c6f2c206273746f7265"
+      },
+      "size": 13
+    },
+    {
+      "blobs": [
+        "68656c6c6f2c206273746f7265"
+      ],
+      "chirpOnly": false,
+      "contentHash": "a41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef",
+      "label": "closure",
+      "missing": null,
+      "name": "a blob served as other bytes of another length",
+      "nodes": [
+        "43484952500100000001000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef0100000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef00"
+      ],
+      "proof": true,
+      "proofRoot": "8f7e1b73eeeda94d4cc4e17215e3228d02b264d95cbd3819d29e8c1189b7dd53",
+      "root": "f8eeddabe51bce08c5afd53188168ae07e76742f1d5d3f2850cee41180527c92",
+      "rule": "hash",
+      "ruleSize": 0,
+      "serve": {
+        "a41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef": "68656c6c6f"
+      },
+      "size": 13
+    },
+    {
+      "blobs": [
+        "68656c6c6f2c206273746f7265"
+      ],
+      "chirpOnly": false,
+      "contentHash": "a41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef",
+      "label": "root",
+      "missing": null,
+      "name": "a root with mediaType",
+      "nodes": [
+        "43484952500100000001000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef0100000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef01010a746578742f706c61696e"
+      ],
+      "proof": true,
+      "proofRoot": "8f7e1b73eeeda94d4cc4e17215e3228d02b264d95cbd3819d29e8c1189b7dd53",
+      "root": "81fce8fe9c2bb91f249c21dfe02dd25de66c5f8e7f2a6ab00d5c76b1af69c9ec",
+      "rule": "extension",
+      "ruleSize": 0,
+      "serve": {},
+      "size": 13
+    },
+    {
+      "blobs": [
+        "68656c6c6f2c206273746f7265"
+      ],
+      "chirpOnly": false,
+      "contentHash": "a41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef",
+      "label": "root",
+      "missing": null,
+      "name": "a root with an unknown advisory extension",
+      "nodes": [
+        "43484952500100000001000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef0100000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef01030101"
+      ],
+      "proof": true,
+      "proofRoot": "8f7e1b73eeeda94d4cc4e17215e3228d02b264d95cbd3819d29e8c1189b7dd53",
+      "root": "f63f89e7929291c7cc318ab9b26d1626345ea0164361f45d628b0c046fe0945f",
+      "rule": "extension",
+      "ruleSize": 0,
+      "serve": {},
+      "size": 13
+    },
+    {
+      "blobs": [
+        "68656c6c6f2c206273746f7265"
+      ],
+      "chirpOnly": false,
+      "contentHash": "a41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef",
+      "label": "root",
+      "missing": null,
+      "name": "a root of version 1.1 (a later minor version is refused)",
+      "nodes": [
+        "43484952500101000001000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef0100000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef00"
+      ],
+      "proof": true,
+      "proofRoot": "8f7e1b73eeeda94d4cc4e17215e3228d02b264d95cbd3819d29e8c1189b7dd53",
+      "root": "705645bc60f702a8336a65db25a3054a0fbce934705c5cb14ca9850e10467b85",
+      "rule": "version",
+      "ruleSize": 0,
+      "serve": {},
+      "size": 13
+    },
+    {
+      "blobs": [
+        "68656c6c6f2c206273746f7265"
+      ],
+      "chirpOnly": false,
+      "contentHash": "a41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef",
+      "label": "root",
+      "missing": null,
+      "name": "a root of chunking profile 2",
+      "nodes": [
+        "43484952500100000002000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef0100000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef00"
+      ],
+      "proof": true,
+      "proofRoot": "8f7e1b73eeeda94d4cc4e17215e3228d02b264d95cbd3819d29e8c1189b7dd53",
+      "root": "62eabf638444929e99a2d876e847d3ab7f9dcb5d03fc7d04e8ebf8f71e334b73",
+      "rule": "profile",
+      "ruleSize": 0,
+      "serve": {},
+      "size": 13
+    },
+    {
+      "blobs": [
+        "68656c6c6f2c206273746f7265"
+      ],
+      "chirpOnly": false,
+      "contentHash": "a41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef",
+      "label": "root",
+      "missing": null,
+      "name": "a root with an unknown critical extension",
+      "nodes": [
+        "43484952500100000001000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef0100000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef01020100"
+      ],
+      "proof": true,
+      "proofRoot": "8f7e1b73eeeda94d4cc4e17215e3228d02b264d95cbd3819d29e8c1189b7dd53",
+      "root": "0274a5878ebf9673aad24553a0fb343f55fed4f558700a3dffbca557246c423e",
+      "rule": "extension",
+      "ruleSize": 0,
+      "serve": {},
+      "size": 13
+    },
+    {
+      "blobs": [
+        "68656c6c6f2c206273746f7265"
+      ],
+      "chirpOnly": false,
+      "contentHash": "a41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef",
+      "label": "root",
+      "missing": null,
+      "name": "the entry's size is not the root's length",
+      "nodes": [
+        "43484952500100000001000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef0100000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef00"
+      ],
+      "proof": true,
+      "proofRoot": "8f7e1b73eeeda94d4cc4e17215e3228d02b264d95cbd3819d29e8c1189b7dd53",
+      "root": "f8eeddabe51bce08c5afd53188168ae07e76742f1d5d3f2850cee41180527c92",
+      "rule": "length",
+      "ruleSize": 0,
+      "serve": {},
+      "size": 14
+    },
+    {
+      "blobs": [
+        "68656c6c6f2c206273746f7265"
+      ],
+      "chirpOnly": false,
+      "contentHash": "a51b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef",
+      "label": "root",
+      "missing": null,
+      "name": "the entry's content hash is not the root's",
+      "nodes": [
+        "43484952500100000001000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef0100000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef00"
+      ],
+      "proof": true,
+      "proofRoot": "8f7e1b73eeeda94d4cc4e17215e3228d02b264d95cbd3819d29e8c1189b7dd53",
+      "root": "f8eeddabe51bce08c5afd53188168ae07e76742f1d5d3f2850cee41180527c92",
+      "rule": "content-hash",
+      "ruleSize": 0,
+      "serve": {},
+      "size": 13
+    },
+    {
+      "blobs": [
+        "68656c6c6f2c206273746f7265"
+      ],
+      "chirpOnly": false,
+      "contentHash": "923b805711041e23a99f07e146591c500261d1c289f62a9d39f8581ceb8a10ca",
+      "label": "content",
+      "missing": null,
+      "name": "the root's content hash (and the entry's) not the content's",
+      "nodes": [
+        "43484952500100000001000000000000000d923b805711041e23a99f07e146591c500261d1c289f62a9d39f8581ceb8a10ca0100000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef00"
+      ],
+      "proof": true,
+      "proofRoot": "8f7e1b73eeeda94d4cc4e17215e3228d02b264d95cbd3819d29e8c1189b7dd53",
+      "root": "b49c369f5c022ca20065281e5c7a7c16545fb09dbf57acaba1534fce000e02a8",
+      "rule": "content-hash",
+      "ruleSize": 0,
+      "serve": {},
+      "size": 13
+    },
+    {
+      "blobs": [
+        "68656c6c6f2c20",
+        "6273746f7265"
+      ],
+      "chirpOnly": false,
+      "contentHash": "a41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef",
+      "label": "root",
+      "missing": null,
+      "name": "two short blobs: not profile 1's construction",
+      "nodes": [
+        "43484952500100000001000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef0200000000000000000740a11d59c648b358ae4cc3a40acb67970c1d23345b1da7e5052f68546c85ed7b000000000000000006fa8f766d3395e2ff706a15a52221b0cdcd661aaf3e40dca649fb8a1d5602e8c500"
+      ],
+      "proof": true,
+      "proofRoot": "8f7e1b73eeeda94d4cc4e17215e3228d02b264d95cbd3819d29e8c1189b7dd53",
+      "root": "2f1b1101ade00740832233328e88f1ce8cf513499ae889dd8c2bfd73e88feeba",
+      "rule": "canonical",
+      "ruleSize": 0,
+      "serve": {},
+      "size": 13
+    },
+    {
+      "blobs": [
+        "68656c6c6f2c206273746f7265"
+      ],
+      "chirpOnly": false,
+      "contentHash": "a41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef",
+      "label": "root",
+      "missing": null,
+      "name": "fourteen branches deep: sixteen objects root to blob, the depth holds, the construction does not",
+      "nodes": [
+        "4348495250010001000000000000000d0100000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef00",
+        "4348495250010001000000000000000d0101000000000000000d4bed7042b7ba505de2a158293e661a575a1de3ef80005df764ccd59d49bc25b500",
+        "4348495250010001000000000000000d0101000000000000000d915fb7f3819964912ff33d97428af990c2ab3bff07336fb4ff6f8eab4698227300",
+        "4348495250010001000000000000000d0101000000000000000d1d835dd4069dc4300eade1fba09555d482522f0633df31c094aa399ded4e608000",
+        "4348495250010001000000000000000d0101000000000000000db02c3d43d46db27b40cc224d62111f343afcc518f5c8d00ab14ad11f167d826900",
+        "4348495250010001000000000000000d0101000000000000000d3ccff9a9dc0d17a5e9ec3c566b1a21e469c6b6629af162307306a901c8c7b15c00",
+        "4348495250010001000000000000000d0101000000000000000d4f57a01896504212f0a2743f574b590fda93e1f4316603bae7b7525b94e0096f00",
+        "4348495250010001000000000000000d0101000000000000000d5b6206d6521d8ca0c1b7d36034e634923be8e142c8ceddc9b93754520d4fd8db00",
+        "4348495250010001000000000000000d0101000000000000000dfed61c326f885b387373554d09ec986874024ace8a6b5a543fde6586b1892bcf00",
+        "4348495250010001000000000000000d0101000000000000000d7fb6a4eaddd2e576a609acf01ac48087261774f564ffba88da168b8aa19f40c600",
+        "4348495250010001000000000000000d0101000000000000000db1e46ebacc3e285f579892a8192e5c7dda578e7df68b76e4c792598a3c4c8e8300",
+        "4348495250010001000000000000000d0101000000000000000dcf960ef33dfb7985199699cdd329a8ab1968c426a42cb52eda77e850f9ef33ad00",
+        "4348495250010001000000000000000d0101000000000000000d5fe9ae3fdfa0fe24b87dd03901f7c4fdbded25053e04b07731a5435d4153397e00",
+        "4348495250010001000000000000000d0101000000000000000d210ca7bf8b0ea34395e7f8483dca6310edd2dde1f4a16c9d28f7a91c14fdb5c400",
+        "43484952500100000001000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef0101000000000000000def621345181252733b8798c140e6691e3eebdfbba626cd95ad622f897c0c77a500"
+      ],
+      "proof": true,
+      "proofRoot": "8f7e1b73eeeda94d4cc4e17215e3228d02b264d95cbd3819d29e8c1189b7dd53",
+      "root": "99b52cb900e1bb20adefad6445aa4e91a6463cd885f24bc8d93403ef38dc4f4d",
+      "rule": "canonical",
+      "ruleSize": 0,
+      "serve": {},
+      "size": 13
+    },
+    {
+      "blobs": [
+        "68656c6c6f2c206273746f7265"
+      ],
+      "chirpOnly": false,
+      "contentHash": "a41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef",
+      "label": "root",
+      "missing": null,
+      "name": "fifteen branches deep: seventeen objects root to blob, past the depth",
+      "nodes": [
+        "4348495250010001000000000000000d0100000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef00",
+        "4348495250010001000000000000000d0101000000000000000d4bed7042b7ba505de2a158293e661a575a1de3ef80005df764ccd59d49bc25b500",
+        "4348495250010001000000000000000d0101000000000000000d915fb7f3819964912ff33d97428af990c2ab3bff07336fb4ff6f8eab4698227300",
+        "4348495250010001000000000000000d0101000000000000000d1d835dd4069dc4300eade1fba09555d482522f0633df31c094aa399ded4e608000",
+        "4348495250010001000000000000000d0101000000000000000db02c3d43d46db27b40cc224d62111f343afcc518f5c8d00ab14ad11f167d826900",
+        "4348495250010001000000000000000d0101000000000000000d3ccff9a9dc0d17a5e9ec3c566b1a21e469c6b6629af162307306a901c8c7b15c00",
+        "4348495250010001000000000000000d0101000000000000000d4f57a01896504212f0a2743f574b590fda93e1f4316603bae7b7525b94e0096f00",
+        "4348495250010001000000000000000d0101000000000000000d5b6206d6521d8ca0c1b7d36034e634923be8e142c8ceddc9b93754520d4fd8db00",
+        "4348495250010001000000000000000d0101000000000000000dfed61c326f885b387373554d09ec986874024ace8a6b5a543fde6586b1892bcf00",
+        "4348495250010001000000000000000d0101000000000000000d7fb6a4eaddd2e576a609acf01ac48087261774f564ffba88da168b8aa19f40c600",
+        "4348495250010001000000000000000d0101000000000000000db1e46ebacc3e285f579892a8192e5c7dda578e7df68b76e4c792598a3c4c8e8300",
+        "4348495250010001000000000000000d0101000000000000000dcf960ef33dfb7985199699cdd329a8ab1968c426a42cb52eda77e850f9ef33ad00",
+        "4348495250010001000000000000000d0101000000000000000d5fe9ae3fdfa0fe24b87dd03901f7c4fdbded25053e04b07731a5435d4153397e00",
+        "4348495250010001000000000000000d0101000000000000000d210ca7bf8b0ea34395e7f8483dca6310edd2dde1f4a16c9d28f7a91c14fdb5c400",
+        "4348495250010001000000000000000d0101000000000000000def621345181252733b8798c140e6691e3eebdfbba626cd95ad622f897c0c77a500",
+        "43484952500100000001000000000000000da41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef0101000000000000000dfadc2cce1668884e512c8f7af556da21d7b411e75805a35d5026e9dcc3f87aea00"
+      ],
+      "proof": true,
+      "proofRoot": "8f7e1b73eeeda94d4cc4e17215e3228d02b264d95cbd3819d29e8c1189b7dd53",
+      "root": "3d79144def725d3a6bec829b8e433df9123bb8e1d491a93dc5464f4fab803ba8",
+      "rule": "depth",
+      "ruleSize": 0,
+      "serve": {},
+      "size": 13
+    },
+    {
+      "blobs": [
+        "68656c6c6f2c206273746f7265"
+      ],
+      "chirpOnly": false,
+      "contentHash": "a41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef",
+      "label": "root",
+      "missing": null,
+      "name": "a blob reference whose length is not the blob's",
+      "nodes": [
+        "43484952500100000001000000000000000ea41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef0100000000000000000ea41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef00"
+      ],
+      "proof": true,
+      "proofRoot": "8f7e1b73eeeda94d4cc4e17215e3228d02b264d95cbd3819d29e8c1189b7dd53",
+      "root": "3bf1e3c39c2c232d9edcb91eb556226d2483b7eca92169ca59bc3c43bb1cfc15",
+      "rule": "length",
+      "ruleSize": 0,
+      "serve": {},
+      "size": 14
+    },
+    {
+      "blobs": null,
+      "chirpOnly": true,
+      "contentHash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "label": "closure",
+      "missing": null,
+      "name": "a root of 8796093022208 bytes, verified alone with the bound 2^43",
+      "nodes": [
+        "434849525001000000010000080000000000a41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef01000000080000000000ff8421f81c197a9a15a64f6b60d404e5d4502a83bf1d96940abfc4e696da657b00"
+      ],
+      "proof": false,
+      "proofRoot": "0000000000000000000000000000000000000000000000000000000000000000",
+      "root": "9ae377307b3ef62cb62fccccae2280af86ff410de7e79f7040bbd5086a936835",
+      "rule": "missing",
+      "ruleSize": 0,
+      "serve": {},
+      "size": 0
+    },
+    {
+      "blobs": null,
+      "chirpOnly": true,
+      "contentHash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "label": "root",
+      "missing": null,
+      "name": "a root of 8796093022209 bytes, verified alone with the bound 2^43",
+      "nodes": [
+        "434849525001000000010000080000000001a41b7d3a1bdb36fd6eab0edd32f8d22fb4c49f7a37248fece89e8fd6e1daa6ef01000000080000000001ff8421f81c197a9a15a64f6b60d404e5d4502a83bf1d96940abfc4e696da657b00"
+      ],
+      "proof": false,
+      "proofRoot": "0000000000000000000000000000000000000000000000000000000000000000",
+      "root": "1fe7ead16a7b50c8e5ac9a8ac8e71078d2670e32a384146202f73bc2ba2b4fbc",
+      "rule": "too-large",
+      "ruleSize": 0,
+      "serve": {},
+      "size": 0
+    }
+  ],
+  "note": "bstore's checks of a CHIRP Profile 1 closure (BRC-167's own vectors are bcommon's chirp-v1.json at the tag go.mod pins): the root's rules (no extension, version 1.0, profile 1, the entry's length and content hash), bcommon's Verify with a 2^43-byte bound and its refusals as labels, a fetch that takes only bytes hashing to the object asked for, and the proof root; blobs given, or by proof-v1.json's content rule (ruleSize)"
+}

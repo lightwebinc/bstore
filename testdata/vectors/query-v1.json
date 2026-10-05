@@ -1,0 +1,1313 @@
+{
+  "cases": [
+    {
+      "name": "bucket: valid",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "bucket",
+      "label": "ok"
+    },
+    {
+      "name": "bucket: bucket missing",
+      "json": "{\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "bucket: owner missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "bucket: id missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "bucket: an extra member",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"extra\":\"x\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "bucket-seq: valid",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"seq\":\"0\"}",
+      "class": "bucket-seq",
+      "label": "ok"
+    },
+    {
+      "name": "bucket-seq: bucket missing",
+      "json": "{\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"seq\":\"0\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "bucket-seq: owner missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"seq\":\"0\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "bucket-seq: id missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"seq\":\"0\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "bucket-seq: seq missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "bucket",
+      "label": "ok"
+    },
+    {
+      "name": "bucket-seq: an extra member",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"extra\":\"x\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"seq\":\"0\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "object: valid",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"key\":\"photos/cat.jpg\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "object",
+      "label": "ok"
+    },
+    {
+      "name": "object: bucket missing",
+      "json": "{\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"key\":\"photos/cat.jpg\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "object: owner missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"key\":\"photos/cat.jpg\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "object: id missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"key\":\"photos/cat.jpg\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "object: key missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "bucket",
+      "label": "ok"
+    },
+    {
+      "name": "object: an extra member",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"extra\":\"x\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"key\":\"photos/cat.jpg\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "list: valid",
+      "json": "{\"after\":\"\",\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"prefix\":\"photos/\"}",
+      "class": "list",
+      "label": "ok"
+    },
+    {
+      "name": "list: bucket missing",
+      "json": "{\"after\":\"\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"prefix\":\"photos/\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "list: owner missing",
+      "json": "{\"after\":\"\",\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"prefix\":\"photos/\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "list: id missing",
+      "json": "{\"after\":\"\",\"bucket\":\"photos_qzvmkwerty\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"prefix\":\"photos/\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "list: prefix missing",
+      "json": "{\"after\":\"\",\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "list: after missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"prefix\":\"photos/\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "list: an extra member",
+      "json": "{\"after\":\"\",\"bucket\":\"photos_qzvmkwerty\",\"extra\":\"x\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"prefix\":\"photos/\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "pending: valid",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"pending\":\"photos/cat.jpg\"}",
+      "class": "pending",
+      "label": "ok"
+    },
+    {
+      "name": "pending: bucket missing",
+      "json": "{\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"pending\":\"photos/cat.jpg\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "pending: owner missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"pending\":\"photos/cat.jpg\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "pending: id missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"pending\":\"photos/cat.jpg\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "pending: pending missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "bucket",
+      "label": "ok"
+    },
+    {
+      "name": "pending: an extra member",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"extra\":\"x\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"pending\":\"photos/cat.jpg\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "unanchored: valid",
+      "json": "{\"after\":\"\",\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"writer\":\"03cb144659ef300200912762786a173663150592d78f4408390c47e9956d9a6c31\"}",
+      "class": "unanchored",
+      "label": "ok"
+    },
+    {
+      "name": "unanchored: bucket missing",
+      "json": "{\"after\":\"\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"writer\":\"03cb144659ef300200912762786a173663150592d78f4408390c47e9956d9a6c31\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "unanchored: owner missing",
+      "json": "{\"after\":\"\",\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"writer\":\"03cb144659ef300200912762786a173663150592d78f4408390c47e9956d9a6c31\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "unanchored: id missing",
+      "json": "{\"after\":\"\",\"bucket\":\"photos_qzvmkwerty\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"writer\":\"03cb144659ef300200912762786a173663150592d78f4408390c47e9956d9a6c31\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "unanchored: writer missing",
+      "json": "{\"after\":\"\",\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "unanchored: after missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"writer\":\"03cb144659ef300200912762786a173663150592d78f4408390c47e9956d9a6c31\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "unanchored: an extra member",
+      "json": "{\"after\":\"\",\"bucket\":\"photos_qzvmkwerty\",\"extra\":\"x\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"writer\":\"03cb144659ef300200912762786a173663150592d78f4408390c47e9956d9a6c31\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "entry: valid",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"entry\":\"a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6\"}",
+      "class": "entry",
+      "label": "ok"
+    },
+    {
+      "name": "entry: bucket missing",
+      "json": "{\"entry\":\"a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "entry: entry missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "entry: an extra member",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"entry\":\"a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6\",\"extra\":\"x\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "ads: valid",
+      "json": "{\"after\":\"\",\"bucket\":\"photos_qzvmkwerty\",\"root\":\"f8eeddabe51bce08c5afd53188168ae07e76742f1d5d3f2850cee41180527c92\"}",
+      "class": "ads",
+      "label": "ok"
+    },
+    {
+      "name": "ads: bucket missing",
+      "json": "{\"after\":\"\",\"root\":\"f8eeddabe51bce08c5afd53188168ae07e76742f1d5d3f2850cee41180527c92\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "ads: root missing",
+      "json": "{\"after\":\"\",\"bucket\":\"photos_qzvmkwerty\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "ads: after missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"root\":\"f8eeddabe51bce08c5afd53188168ae07e76742f1d5d3f2850cee41180527c92\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "ads: an extra member",
+      "json": "{\"after\":\"\",\"bucket\":\"photos_qzvmkwerty\",\"extra\":\"x\",\"root\":\"f8eeddabe51bce08c5afd53188168ae07e76742f1d5d3f2850cee41180527c92\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "ad: valid",
+      "json": "{\"advertiser\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\",\"bucket\":\"photos_qzvmkwerty\",\"root\":\"f8eeddabe51bce08c5afd53188168ae07e76742f1d5d3f2850cee41180527c92\"}",
+      "class": "ad",
+      "label": "ok"
+    },
+    {
+      "name": "ad: bucket missing",
+      "json": "{\"advertiser\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\",\"root\":\"f8eeddabe51bce08c5afd53188168ae07e76742f1d5d3f2850cee41180527c92\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "ad: root missing",
+      "json": "{\"advertiser\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\",\"bucket\":\"photos_qzvmkwerty\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "ad: advertiser missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"root\":\"f8eeddabe51bce08c5afd53188168ae07e76742f1d5d3f2850cee41180527c92\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "ad: an extra member",
+      "json": "{\"advertiser\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\",\"bucket\":\"photos_qzvmkwerty\",\"extra\":\"x\",\"root\":\"f8eeddabe51bce08c5afd53188168ae07e76742f1d5d3f2850cee41180527c92\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "fronts: valid",
+      "json": "{\"advertiser\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\",\"after\":\"a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6\",\"bucket\":\"photos_qzvmkwerty\"}",
+      "class": "fronts",
+      "label": "ok"
+    },
+    {
+      "name": "fronts: bucket missing",
+      "json": "{\"advertiser\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\",\"after\":\"a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "fronts: advertiser missing",
+      "json": "{\"after\":\"a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6\",\"bucket\":\"photos_qzvmkwerty\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "fronts: after missing",
+      "json": "{\"advertiser\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\",\"bucket\":\"photos_qzvmkwerty\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "fronts: an extra member",
+      "json": "{\"advertiser\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\",\"after\":\"a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6\",\"bucket\":\"photos_qzvmkwerty\",\"extra\":\"x\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "front: valid",
+      "json": "{\"advertiser\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\",\"bucket\":\"photos_qzvmkwerty\",\"front\":\"028ab6cae041834cf12edef9eee966bce3ba95135eaead3d32d78bacadf5349d55\"}",
+      "class": "front",
+      "label": "ok"
+    },
+    {
+      "name": "front: bucket missing",
+      "json": "{\"advertiser\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\",\"front\":\"028ab6cae041834cf12edef9eee966bce3ba95135eaead3d32d78bacadf5349d55\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "front: advertiser missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"front\":\"028ab6cae041834cf12edef9eee966bce3ba95135eaead3d32d78bacadf5349d55\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "front: front missing",
+      "json": "{\"advertiser\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\",\"bucket\":\"photos_qzvmkwerty\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "front: an extra member",
+      "json": "{\"advertiser\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\",\"bucket\":\"photos_qzvmkwerty\",\"extra\":\"x\",\"front\":\"028ab6cae041834cf12edef9eee966bce3ba95135eaead3d32d78bacadf5349d55\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "hold: valid",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"hold\":\"a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6.0\"}",
+      "class": "hold",
+      "label": "ok"
+    },
+    {
+      "name": "hold: bucket missing",
+      "json": "{\"hold\":\"a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6.0\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "hold: hold missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "hold: an extra member",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"extra\":\"x\",\"hold\":\"a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6.0\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcomes: valid",
+      "json": "{\"answerer\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\",\"bucket\":\"photos_qzvmkwerty\"}",
+      "class": "outcomes",
+      "label": "ok"
+    },
+    {
+      "name": "outcomes: bucket missing",
+      "json": "{\"answerer\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcomes: answerer missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcomes: an extra member",
+      "json": "{\"answerer\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\",\"bucket\":\"photos_qzvmkwerty\",\"extra\":\"x\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcomes-of: valid",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"provider\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\"}",
+      "class": "outcomes-of",
+      "label": "ok"
+    },
+    {
+      "name": "outcomes-of: bucket missing",
+      "json": "{\"provider\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcomes-of: provider missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcomes-of: an extra member",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"extra\":\"x\",\"provider\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcomes-by: valid",
+      "json": "{\"answerer\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\",\"bucket\":\"photos_qzvmkwerty\",\"buyer\":\"028ab6cae041834cf12edef9eee966bce3ba95135eaead3d32d78bacadf5349d55\"}",
+      "class": "outcomes-by",
+      "label": "ok"
+    },
+    {
+      "name": "outcomes-by: bucket missing",
+      "json": "{\"answerer\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\",\"buyer\":\"028ab6cae041834cf12edef9eee966bce3ba95135eaead3d32d78bacadf5349d55\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcomes-by: answerer missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"buyer\":\"028ab6cae041834cf12edef9eee966bce3ba95135eaead3d32d78bacadf5349d55\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcomes-by: buyer missing",
+      "json": "{\"answerer\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\",\"bucket\":\"photos_qzvmkwerty\"}",
+      "class": "outcomes",
+      "label": "ok"
+    },
+    {
+      "name": "outcomes-by: an extra member",
+      "json": "{\"answerer\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\",\"bucket\":\"photos_qzvmkwerty\",\"buyer\":\"028ab6cae041834cf12edef9eee966bce3ba95135eaead3d32d78bacadf5349d55\",\"extra\":\"x\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcomes-of-by: valid",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"buyer\":\"028ab6cae041834cf12edef9eee966bce3ba95135eaead3d32d78bacadf5349d55\",\"provider\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\"}",
+      "class": "outcomes-of-by",
+      "label": "ok"
+    },
+    {
+      "name": "outcomes-of-by: bucket missing",
+      "json": "{\"buyer\":\"028ab6cae041834cf12edef9eee966bce3ba95135eaead3d32d78bacadf5349d55\",\"provider\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcomes-of-by: provider missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"buyer\":\"028ab6cae041834cf12edef9eee966bce3ba95135eaead3d32d78bacadf5349d55\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcomes-of-by: buyer missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"provider\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\"}",
+      "class": "outcomes-of",
+      "label": "ok"
+    },
+    {
+      "name": "outcomes-of-by: an extra member",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"buyer\":\"028ab6cae041834cf12edef9eee966bce3ba95135eaead3d32d78bacadf5349d55\",\"extra\":\"x\",\"provider\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "sweep: valid",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"spent\":\"a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6.0\"}",
+      "class": "sweep",
+      "label": "ok"
+    },
+    {
+      "name": "sweep: bucket missing",
+      "json": "{\"spent\":\"a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6.0\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "sweep: spent missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "sweep: an extra member",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"extra\":\"x\",\"spent\":\"a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6.0\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "history: valid",
+      "json": "{\"before\":\"9007199254740991\",\"bucket\":\"photos_qzvmkwerty\",\"history\":\"photos/cat.jpg\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "history",
+      "label": "ok"
+    },
+    {
+      "name": "history: bucket missing",
+      "json": "{\"before\":\"9007199254740991\",\"history\":\"photos/cat.jpg\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "history: owner missing",
+      "json": "{\"before\":\"9007199254740991\",\"bucket\":\"photos_qzvmkwerty\",\"history\":\"photos/cat.jpg\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "history: id missing",
+      "json": "{\"before\":\"9007199254740991\",\"bucket\":\"photos_qzvmkwerty\",\"history\":\"photos/cat.jpg\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "history: history missing",
+      "json": "{\"before\":\"9007199254740991\",\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "history: before missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"history\":\"photos/cat.jpg\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "history: an extra member",
+      "json": "{\"before\":\"9007199254740991\",\"bucket\":\"photos_qzvmkwerty\",\"extra\":\"x\",\"history\":\"photos/cat.jpg\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "chain: valid",
+      "json": "{\"after\":\"0\",\"bucket\":\"photos_qzvmkwerty\",\"chain\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "chain",
+      "label": "ok"
+    },
+    {
+      "name": "chain: bucket missing",
+      "json": "{\"after\":\"0\",\"chain\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "chain: owner missing",
+      "json": "{\"after\":\"0\",\"bucket\":\"photos_qzvmkwerty\",\"chain\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "chain: chain missing",
+      "json": "{\"after\":\"0\",\"bucket\":\"photos_qzvmkwerty\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "chain: after missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"chain\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "chain: an extra member",
+      "json": "{\"after\":\"0\",\"bucket\":\"photos_qzvmkwerty\",\"chain\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"extra\":\"x\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "export: valid",
+      "json": "{\"after\":\"\",\"bucket\":\"photos_qzvmkwerty\",\"export\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "export",
+      "label": "ok"
+    },
+    {
+      "name": "export: bucket missing",
+      "json": "{\"after\":\"\",\"export\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "export: owner missing",
+      "json": "{\"after\":\"\",\"bucket\":\"photos_qzvmkwerty\",\"export\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "export: export missing",
+      "json": "{\"after\":\"\",\"bucket\":\"photos_qzvmkwerty\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "export: after missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"export\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "export: an extra member",
+      "json": "{\"after\":\"\",\"bucket\":\"photos_qzvmkwerty\",\"export\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"extra\":\"x\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcome-history: valid",
+      "json": "{\"before\":\"1798761600000:a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6\",\"bucket\":\"photos_qzvmkwerty\",\"outcome-history\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\"}",
+      "class": "outcome-history",
+      "label": "ok"
+    },
+    {
+      "name": "outcome-history: bucket missing",
+      "json": "{\"before\":\"1798761600000:a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6\",\"outcome-history\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcome-history: outcome-history missing",
+      "json": "{\"before\":\"1798761600000:a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6\",\"bucket\":\"photos_qzvmkwerty\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcome-history: before missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"outcome-history\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcome-history: an extra member",
+      "json": "{\"before\":\"1798761600000:a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6\",\"bucket\":\"photos_qzvmkwerty\",\"extra\":\"x\",\"outcome-history\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcome-history-of: valid",
+      "json": "{\"before\":\"1798761600000:a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6\",\"bucket\":\"photos_qzvmkwerty\",\"outcome-history-of\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\"}",
+      "class": "outcome-history-of",
+      "label": "ok"
+    },
+    {
+      "name": "outcome-history-of: bucket missing",
+      "json": "{\"before\":\"1798761600000:a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6\",\"outcome-history-of\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcome-history-of: outcome-history-of missing",
+      "json": "{\"before\":\"1798761600000:a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6\",\"bucket\":\"photos_qzvmkwerty\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcome-history-of: before missing",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"outcome-history-of\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcome-history-of: an extra member",
+      "json": "{\"before\":\"1798761600000:a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6\",\"bucket\":\"photos_qzvmkwerty\",\"extra\":\"x\",\"outcome-history-of\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "bucket: bucket uppercase",
+      "json": "{\"bucket\":\"Photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "bucket: bucket hyphen",
+      "json": "{\"bucket\":\"photos-qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "bucket: id uppercase hex",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"FD353A1EB3FA2F42762F6A5B77032F3BD956166714757A17AAA23FCC57367EB4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "bucket: id 62 hex",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367e\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "bucket: owner 64 hex",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "bucket: owner uppercase hex",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02E5A018B3A2E155316109D9CDC5EAB739759C0E07E0C00BF9FCCB8237FE4D7F02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "bucket: owner the anyone key",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "bucket: owner x at or above the prime",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "bucket: owner off the curve",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"020000000000000000000000000000000000000000000000000000000000000005\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "bucket-seq: seq a leading zero",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"seq\":\"01\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "bucket-seq: seq 2^53 - 1",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"seq\":\"9007199254740991\"}",
+      "class": "bucket-seq",
+      "label": "ok"
+    },
+    {
+      "name": "bucket-seq: seq 2^53",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"seq\":\"9007199254740992\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "bucket-seq: seq negative",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"seq\":\"-1\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "bucket-seq: seq a fraction",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"seq\":\"1.0\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "bucket-seq: seq empty",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"seq\":\"\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "object: key an empty key",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"key\":\"\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "object: key a newline",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"key\":\"a\\nb\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "object: key 1024 bytes",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"key\":\"kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "object",
+      "label": "ok"
+    },
+    {
+      "name": "object: key 1025 bytes",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"key\":\"kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "object: key U+2028",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"key\":\"a\\u2028\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "list: prefix a prefix of 1024 bytes",
+      "json": "{\"after\":\"\",\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"prefix\":\"pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp\"}",
+      "class": "list",
+      "label": "ok"
+    },
+    {
+      "name": "list: prefix a prefix of 1025 bytes",
+      "json": "{\"after\":\"\",\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"prefix\":\"ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "list: after an after with a tab",
+      "json": "{\"after\":\"a\\tb\",\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"prefix\":\"photos/\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "list: after an after",
+      "json": "{\"after\":\"photos/z\",\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"prefix\":\"photos/\"}",
+      "class": "list",
+      "label": "ok"
+    },
+    {
+      "name": "export: after export from the start",
+      "json": "{\"after\":\"\",\"bucket\":\"photos_qzvmkwerty\",\"export\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "export",
+      "label": "ok"
+    },
+    {
+      "name": "export: after export after U+0085",
+      "json": "{\"after\":\"\",\"bucket\":\"photos_qzvmkwerty\",\"export\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "unanchored: after a txid cursor",
+      "json": "{\"after\":\"a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6\",\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"writer\":\"03cb144659ef300200912762786a173663150592d78f4408390c47e9956d9a6c31\"}",
+      "class": "unanchored",
+      "label": "ok"
+    },
+    {
+      "name": "unanchored: after an uppercase txid",
+      "json": "{\"after\":\"A797477F128E4B832400B2DF17CAE1E2828F4DA237560097DEAF1E04CAB32EE6\",\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"writer\":\"03cb144659ef300200912762786a173663150592d78f4408390c47e9956d9a6c31\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "unanchored: writer the anyone key as writer",
+      "json": "{\"after\":\"\",\"bucket\":\"photos_qzvmkwerty\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"writer\":\"0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "entry: entry an empty entry",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"entry\":\"\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "entry: entry 65 hex",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"entry\":\"a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee60\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "ads: root an uppercase root",
+      "json": "{\"after\":\"\",\"bucket\":\"photos_qzvmkwerty\",\"root\":\"F8EEDDABE51BCE08C5AFD53188168AE07E76742F1D5D3F2850CEE41180527C92\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "ads: after a bad cursor",
+      "json": "{\"after\":\"x\",\"bucket\":\"photos_qzvmkwerty\",\"root\":\"f8eeddabe51bce08c5afd53188168ae07e76742f1d5d3f2850cee41180527c92\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "fronts: after fronts from the start",
+      "json": "{\"advertiser\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\",\"after\":\"\",\"bucket\":\"photos_qzvmkwerty\"}",
+      "class": "fronts",
+      "label": "ok"
+    },
+    {
+      "name": "hold: hold vout 2^32 - 1",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"hold\":\"a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6.4294967295\"}",
+      "class": "hold",
+      "label": "ok"
+    },
+    {
+      "name": "hold: hold vout 2^32",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"hold\":\"a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6.4294967296\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "hold: hold vout with a leading zero",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"hold\":\"a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6.01\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "hold: hold no vout",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"hold\":\"a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "hold: hold an empty vout",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"hold\":\"a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6.\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "hold: hold an uppercase txid",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"hold\":\"A797477F128E4B832400B2DF17CAE1E2828F4DA237560097DEAF1E04CAB32EE6.0\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "sweep: spent a negative vout",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"spent\":\"a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6.-1\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "history: before before 0",
+      "json": "{\"before\":\"0\",\"bucket\":\"photos_qzvmkwerty\",\"history\":\"photos/cat.jpg\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "history",
+      "label": "ok"
+    },
+    {
+      "name": "history: before before 2^53",
+      "json": "{\"before\":\"9007199254740992\",\"bucket\":\"photos_qzvmkwerty\",\"history\":\"photos/cat.jpg\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "history: before a time cursor where a seq is wanted",
+      "json": "{\"before\":\"1798761600000:a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6\",\"bucket\":\"photos_qzvmkwerty\",\"history\":\"photos/cat.jpg\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "chain: after an empty after",
+      "json": "{\"after\":\"\",\"bucket\":\"photos_qzvmkwerty\",\"chain\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "chain: chain uppercase",
+      "json": "{\"after\":\"0\",\"bucket\":\"photos_qzvmkwerty\",\"chain\":\"FD353A1EB3FA2F42762F6A5B77032F3BD956166714757A17AAA23FCC57367EB4\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcome-history: before a time cursor at 0",
+      "json": "{\"before\":\"0:a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6\",\"bucket\":\"photos_qzvmkwerty\",\"outcome-history\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\"}",
+      "class": "outcome-history",
+      "label": "ok"
+    },
+    {
+      "name": "outcome-history: before a leading zero",
+      "json": "{\"before\":\"01:a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6\",\"bucket\":\"photos_qzvmkwerty\",\"outcome-history\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcome-history: before an uppercase txid",
+      "json": "{\"before\":\"1798761600000:A797477F128E4B832400B2DF17CAE1E2828F4DA237560097DEAF1E04CAB32EE6\",\"bucket\":\"photos_qzvmkwerty\",\"outcome-history\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcome-history: before no txid",
+      "json": "{\"before\":\"1798761600000\",\"bucket\":\"photos_qzvmkwerty\",\"outcome-history\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcome-history: before past 2^53 - 1",
+      "json": "{\"before\":\"9007199254740992:a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6\",\"bucket\":\"photos_qzvmkwerty\",\"outcome-history\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcome-history-of: outcome-history-of the anyone key",
+      "json": "{\"before\":\"1798761600000:a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6\",\"bucket\":\"photos_qzvmkwerty\",\"outcome-history-of\":\"0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "outcomes-by: buyer prefix 04",
+      "json": "{\"answerer\":\"031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\",\"bucket\":\"photos_qzvmkwerty\",\"buyer\":\"041195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "not an object",
+      "json": "[\"bucket\"]",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "null",
+      "json": "null",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "not JSON",
+      "json": "{",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "a number member",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"entry\":1}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "a member given twice takes its last value (valid last)",
+      "json": "{\"bucket\":\"x\",\"entry\":\"a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6\",\"bucket\":\"photos_qzvmkwerty\"}",
+      "class": "entry",
+      "label": "ok"
+    },
+    {
+      "name": "a member given twice takes its last value (invalid last)",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"entry\":\"a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6\",\"bucket\":\"x\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "__proto__ is a member like any other",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"entry\":\"a797477f128e4b832400b2df17cae1e2828f4da237560097deaf1e04cab32ee6\",\"__proto__\":\"x\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "a lone surrogate in a key",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"key\":\"a\\ud800b\"}",
+      "class": "object",
+      "label": "ok"
+    },
+    {
+      "name": "an escaped newline in a key",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"key\":\"a\\nb\"}",
+      "class": "",
+      "label": "query"
+    },
+    {
+      "name": "an escaped character",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"owner\":\"02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02\",\"id\":\"fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4\",\"key\":\"café\"}",
+      "class": "object",
+      "label": "ok"
+    },
+    {
+      "name": "a nested object",
+      "json": "{\"bucket\":\"photos_qzvmkwerty\",\"entry\":{\"x\":1}}",
+      "class": "",
+      "label": "query"
+    }
+  ],
+  "classes": [
+    {
+      "Name": "bucket",
+      "Members": [
+        "bucket",
+        "owner",
+        "id"
+      ],
+      "Free": true,
+      "Served": false
+    },
+    {
+      "Name": "bucket-seq",
+      "Members": [
+        "bucket",
+        "owner",
+        "id",
+        "seq"
+      ],
+      "Free": true,
+      "Served": false
+    },
+    {
+      "Name": "object",
+      "Members": [
+        "bucket",
+        "owner",
+        "id",
+        "key"
+      ],
+      "Free": true,
+      "Served": true
+    },
+    {
+      "Name": "list",
+      "Members": [
+        "bucket",
+        "owner",
+        "id",
+        "prefix",
+        "after"
+      ],
+      "Free": true,
+      "Served": true
+    },
+    {
+      "Name": "pending",
+      "Members": [
+        "bucket",
+        "owner",
+        "id",
+        "pending"
+      ],
+      "Free": true,
+      "Served": true
+    },
+    {
+      "Name": "unanchored",
+      "Members": [
+        "bucket",
+        "owner",
+        "id",
+        "writer",
+        "after"
+      ],
+      "Free": true,
+      "Served": true
+    },
+    {
+      "Name": "entry",
+      "Members": [
+        "bucket",
+        "entry"
+      ],
+      "Free": true,
+      "Served": false
+    },
+    {
+      "Name": "ads",
+      "Members": [
+        "bucket",
+        "root",
+        "after"
+      ],
+      "Free": true,
+      "Served": false
+    },
+    {
+      "Name": "ad",
+      "Members": [
+        "bucket",
+        "root",
+        "advertiser"
+      ],
+      "Free": true,
+      "Served": false
+    },
+    {
+      "Name": "fronts",
+      "Members": [
+        "bucket",
+        "advertiser",
+        "after"
+      ],
+      "Free": true,
+      "Served": false
+    },
+    {
+      "Name": "front",
+      "Members": [
+        "bucket",
+        "advertiser",
+        "front"
+      ],
+      "Free": true,
+      "Served": false
+    },
+    {
+      "Name": "hold",
+      "Members": [
+        "bucket",
+        "hold"
+      ],
+      "Free": true,
+      "Served": false
+    },
+    {
+      "Name": "outcomes",
+      "Members": [
+        "bucket",
+        "answerer"
+      ],
+      "Free": true,
+      "Served": false
+    },
+    {
+      "Name": "outcomes-of",
+      "Members": [
+        "bucket",
+        "provider"
+      ],
+      "Free": true,
+      "Served": false
+    },
+    {
+      "Name": "outcomes-by",
+      "Members": [
+        "bucket",
+        "answerer",
+        "buyer"
+      ],
+      "Free": true,
+      "Served": false
+    },
+    {
+      "Name": "outcomes-of-by",
+      "Members": [
+        "bucket",
+        "provider",
+        "buyer"
+      ],
+      "Free": true,
+      "Served": false
+    },
+    {
+      "Name": "sweep",
+      "Members": [
+        "bucket",
+        "spent"
+      ],
+      "Free": true,
+      "Served": false
+    },
+    {
+      "Name": "history",
+      "Members": [
+        "bucket",
+        "owner",
+        "id",
+        "history",
+        "before"
+      ],
+      "Free": false,
+      "Served": true
+    },
+    {
+      "Name": "chain",
+      "Members": [
+        "bucket",
+        "owner",
+        "chain",
+        "after"
+      ],
+      "Free": false,
+      "Served": false
+    },
+    {
+      "Name": "export",
+      "Members": [
+        "bucket",
+        "owner",
+        "export",
+        "after"
+      ],
+      "Free": false,
+      "Served": true
+    },
+    {
+      "Name": "outcome-history",
+      "Members": [
+        "bucket",
+        "outcome-history",
+        "before"
+      ],
+      "Free": false,
+      "Served": false
+    },
+    {
+      "Name": "outcome-history-of",
+      "Members": [
+        "bucket",
+        "outcome-history-of",
+        "before"
+      ],
+      "Free": false,
+      "Served": false
+    }
+  ],
+  "note": "every class with its exact members, every member missing or extra, every value rule; a question is refused (query) or names its class; a member given twice takes its last value"
+}

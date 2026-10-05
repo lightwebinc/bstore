@@ -1,0 +1,365 @@
+{
+  "bucketIds": [
+    {
+      "id": "fd353a1eb3fa2f42762f6a5b77032f3bd956166714757a17aaa23fcc57367eb4",
+      "index": 0,
+      "txid": "f93cdae3fe97522e4484cc01e3a6b4c918262c7938624e9c46057f2e8360c498",
+      "vout": 0
+    },
+    {
+      "id": "0abcf41101b12dd0d65fc81d253c64e0d4c3e817eeb47475fdb1398dfadbd7e6",
+      "index": 1,
+      "txid": "f93cdae3fe97522e4484cc01e3a6b4c918262c7938624e9c46057f2e8360c498",
+      "vout": 1
+    },
+    {
+      "id": "5d9c6f516485b780c39057043a3003b320d41b65ede9f413b87c13b166537ed6",
+      "index": 2,
+      "txid": "335d0dc93b42a6a5e2c70016d3e6cc48653c610b19424a1379df271232876632",
+      "vout": 1022
+    },
+    {
+      "id": "ad1e7bd1ef4b0492e98cec4cfe701c281044241672e11b4e35f6e72bd01b3538",
+      "index": 3,
+      "txid": "0000000000000000000000000000000000000000000000000000000000000000",
+      "vout": 4294967295
+    }
+  ],
+  "chirpURLSuffix": {
+    "root": "f8eeddabe51bce08c5afd53188168ae07e76742f1d5d3f2850cee41180527c92",
+    "suffix": "/chirp/v1/XUUnQuaUtJGAX5CTJhzk7eoevHuWubmogrv6JaiQrTyszFD2NmuB/objects/XUUnQuaUtJGAX5CTJhzk7eoevHuWubmogrv6JaiQrTyszFD2NmuB"
+  },
+  "derivedFronts": [
+    {
+      "front": "https://host.example/bstore/v1",
+      "ok": true,
+      "url": "https://host.example/chirp/v1/X/objects/X"
+    },
+    {
+      "front": "https://host.example/prefix/bstore/v1",
+      "ok": true,
+      "url": "https://host.example/prefix/chirp/v1/X/objects/X"
+    },
+    {
+      "front": "https://host.example/chirp/v1/a/bstore/v1",
+      "ok": true,
+      "url": "https://host.example/chirp/v1/a/chirp/v1/X/objects/X"
+    },
+    {
+      "front": "",
+      "ok": false,
+      "url": "https://host.example/no-chirp-here"
+    }
+  ],
+  "identifiers": [
+    {
+      "id": "photos_qzvmkwerty",
+      "ok": true,
+      "records": "tm_bstore_photos_qzvmkwerty",
+      "blob": "tm_bstoreblob_photos_qzvmkwerty",
+      "s3": "photos-qzvmkwerty",
+      "s3ok": true
+    },
+    {
+      "id": "archive_tqpzmwxrvk",
+      "ok": true,
+      "records": "tm_bstore_archive_tqpzmwxrvk",
+      "blob": "tm_bstoreblob_archive_tqpzmwxrvk",
+      "s3": "archive-tqpzmwxrvk",
+      "s3ok": true
+    },
+    {
+      "id": "a_qzvmkwerty",
+      "ok": true,
+      "records": "tm_bstore_a_qzvmkwerty",
+      "blob": "tm_bstoreblob_a_qzvmkwerty",
+      "s3": "a-qzvmkwerty",
+      "s3ok": true
+    },
+    {
+      "id": "zzzzzzzzzzzzzzzzzzzzzzzzz_qzvmkwerty",
+      "ok": true,
+      "records": "tm_bstore_zzzzzzzzzzzzzzzzzzzzzzzzz_qzvmkwerty",
+      "blob": "tm_bstoreblob_zzzzzzzzzzzzzzzzzzzzzzzzz_qzvmkwerty",
+      "s3": "zzzzzzzzzzzzzzzzzzzzzzzzz-qzvmkwerty",
+      "s3ok": true
+    },
+    {
+      "id": "a_b_c_qzvmkwerty",
+      "ok": true,
+      "records": "tm_bstore_a_b_c_qzvmkwerty",
+      "blob": "tm_bstoreblob_a_b_c_qzvmkwerty",
+      "s3": "a-b-c-qzvmkwerty",
+      "s3ok": true
+    },
+    {
+      "id": "sthree_qzvmkwerty",
+      "ok": true,
+      "records": "tm_bstore_sthree_qzvmkwerty",
+      "blob": "tm_bstoreblob_sthree_qzvmkwerty",
+      "s3": "sthree-qzvmkwerty",
+      "s3ok": false
+    },
+    {
+      "id": "sthreex_qzvmkwerty",
+      "ok": true,
+      "records": "tm_bstore_sthreex_qzvmkwerty",
+      "blob": "tm_bstoreblob_sthreex_qzvmkwerty",
+      "s3": "sthreex-qzvmkwerty",
+      "s3ok": true
+    },
+    {
+      "id": "x_sthreeabcd",
+      "ok": true,
+      "records": "tm_bstore_x_sthreeabcd",
+      "blob": "tm_bstoreblob_x_sthreeabcd",
+      "s3": "x-sthreeabcd",
+      "s3ok": true
+    },
+    {
+      "id": "",
+      "ok": false,
+      "s3ok": false
+    },
+    {
+      "id": "a_qzvmkwert",
+      "ok": false,
+      "s3ok": false
+    },
+    {
+      "id": "a_qzvmkwertyy",
+      "ok": false,
+      "s3ok": false
+    },
+    {
+      "id": "zzzzzzzzzzzzzzzzzzzzzzzzzz_qzvmkwerty",
+      "ok": false,
+      "s3ok": false
+    },
+    {
+      "id": "A_qzvmkwerty",
+      "ok": false,
+      "s3ok": false
+    },
+    {
+      "id": "_a_qzvmkwerty",
+      "ok": false,
+      "s3ok": false
+    },
+    {
+      "id": "a__b_qzvmkwerty",
+      "ok": false,
+      "s3ok": false
+    },
+    {
+      "id": "a__qzvmkwerty",
+      "ok": false,
+      "s3ok": false
+    },
+    {
+      "id": "a_b_qzvmkwerTy",
+      "ok": false,
+      "s3ok": false
+    },
+    {
+      "id": "a-b_qzvmkwerty",
+      "ok": false,
+      "s3ok": false
+    },
+    {
+      "id": "a1_qzvmkwerty",
+      "ok": false,
+      "s3ok": false
+    },
+    {
+      "id": "qzvmkwerty",
+      "ok": false,
+      "s3ok": false
+    },
+    {
+      "id": "a_qzvmkwer y",
+      "ok": false,
+      "s3ok": false
+    },
+    {
+      "id": "a_qzvmkwerté",
+      "ok": false,
+      "s3ok": false
+    }
+  ],
+  "identities": [
+    {
+      "advertisementLock": "03d5ed9bd1f21f6c075aa35abdde13c0525aecd4cc56dbc1cb365275577a091f44",
+      "identity": "02e5a018b3a2e155316109d9cdc5eab739759c0e07e0c00bf9fccb8237fe4d7f02",
+      "keys": {
+        "bucket": "0368ec7f86af56ce7273a94a0b90b8454614e16deccd44d043b3428f065c73ac18",
+        "chain": "02ff3cd7c59d5c319180989025a53c533fce9dbed78a78c6c58b790a8224c6f317",
+        "challenge": "038d309b35bba0a31673ae8074565e24dc57674945479ba7356b192cc014a4fba8",
+        "entry": "02f6f5811ff7249732ff5f8e56050052f458d4b468fbeacb7471e86a4636004991",
+        "front": "025ca0f8b9c27ae848f231376817d2295432014e8189e433c6c735a152da9653ba",
+        "hold": "02e746f8dae52ecff3c5241c51b175ae9a763bec03740b4f428e947e8372fba28f",
+        "outcome": "03347195153579a4fb5fb4611d32caba6476a41b12a2349b0658a1d65e8fe6f653",
+        "piece": "02336c7869580a579344d702b483b057b61c81b4dade808ceab67ef59d66328878"
+      },
+      "name": "owner",
+      "priv": "6161616161616161616161616161616161616161616161616161616161616161"
+    },
+    {
+      "advertisementLock": "0385f9383f87c79779a152d06a9cc7a507514d0f2ba2eb0864db2b747a440e131b",
+      "identity": "03cb144659ef300200912762786a173663150592d78f4408390c47e9956d9a6c31",
+      "keys": {
+        "bucket": "02fb382482d6475997bf03e937e721757b11c5e411fb2f4b4db19ec2a3dd8c6202",
+        "chain": "03de597c4495c94971449a4debbf575ccf383741c7e195e144d5f2d90e8bc1d936",
+        "challenge": "029e33855e1dbb6625dd37f1930c7922a5556618b5ac169da4f7cec97a6d85fe71",
+        "entry": "02f4e8721e04653de51c7b71878c7d08458be5cb05f3af787fe40ac27750d7ff35",
+        "front": "026e5e4d3ffe4acf97ef9fc0e8aab934e487954f79b797fe578cd4492acd0198dd",
+        "hold": "0305068b22214ac12ce5bba73b55cbcd49933f28da82ae92d20e9d83ab6d989848",
+        "outcome": "026c33df4dfad9dd6b4aab509c931707ea19452752df98cb91a6e564515cce1af1",
+        "piece": "03e44f519c7623171b8e4ce89493d26c96450c3f446600fa2a99c477f61d9bd4b7"
+      },
+      "name": "alice",
+      "priv": "6262626262626262626262626262626262626262626262626262626262626262"
+    },
+    {
+      "advertisementLock": "02bfa3c93235d7335246c1c5473007397df30c8643785254daa305ea7c256a68bd",
+      "identity": "031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99",
+      "keys": {
+        "bucket": "02230fb5e9a2726be3aae4b5f49cf7da48c625e503434a32fbd7433ca24bbd8657",
+        "chain": "0211bea85f788019d29b27a8cb91dd32560879adb6440bcc1ce2ac70eddd559b26",
+        "challenge": "03173eaa21b4b8a88c83b4a5a9224c5fa7fe9aa902ccf0e5eb773e79e706a47dde",
+        "entry": "0377704617f4f0d423ed9e978b5d3cd16a882c411513e897f4cee06398823f54ee",
+        "front": "03b1b250062bfb799c3c5ca9d2c03991a527992d4380ace32e4a579422e3ccfaec",
+        "hold": "031bb85164fbd72ac276eaf0d0abe3de51fc21156e8ea6955d2d26a7944487f3f2",
+        "outcome": "02f428308896d11ad524c998cf20a80a288795f201a186ac6a516211fe0d3da56b",
+        "piece": "0265e7310c9ee8af2d2dd7622cf3dcbcca9a1409ef3c61790273cabc7c13f28463"
+      },
+      "name": "bob",
+      "priv": "6363636363636363636363636363636363636363636363636363636363636363"
+    },
+    {
+      "advertisementLock": "031d0321b9aa105027a98765b41d6de375a48c62fbcde00b01cf59d6d42cd709d1",
+      "identity": "028ab6cae041834cf12edef9eee966bce3ba95135eaead3d32d78bacadf5349d55",
+      "keys": {
+        "bucket": "0330e765e32dda29c4ef0d1578314baef4edecec0fdbdee9016d4666c9c6030f8f",
+        "chain": "03960174003e832eaf43907d8787fee867214f93b9a50403a6d914a0a3f513ad55",
+        "challenge": "023373e2d7e4694c3d1fea12a9ae965d857f2ef1b0458ace128f42e55b24a9b142",
+        "entry": "03867fc1da538453e22c6e14b6c7c24fa06000a781e48c77fd88dfb9b503adf6b4",
+        "front": "021a39d5de3b91bd964df049a39c7c33f178eb2924869e672faf53f8e4d3c8ba1c",
+        "hold": "02e2942a1085499b175704ca90f254e012e3414d9ba2ce8c653368eeded8144093",
+        "outcome": "02d8a009b7931329f8700160b7a449ac6be00c60a894fd7cafe638dc207bde6158",
+        "piece": "03c1f101fd23fca4060b4d24689ad7ebdbd4a593683cba7453b1319ecc8da5aa04"
+      },
+      "name": "carol",
+      "priv": "6464646464646464646464646464646464646464646464646464646464646464"
+    },
+    {
+      "advertisementLock": "028555ca7f95613ec7ff0076c5a59293761a8d2a3e4284330ad5f688063a0a034d",
+      "identity": "032e5fdd11aac4372915c9960466b8b7b5ac74f3a91180d605f6e51a8798370773",
+      "keys": {
+        "bucket": "0213b2fc92a919e8b1fdd956686b717571dd88a7454e0740e72456f2c476e4dde9",
+        "chain": "020e695b3af8fdefbfee961bf91029ab0459a18ebba822fe1ccd18b29e9332fba2",
+        "challenge": "02dc0c61daa6224964d7e67e3bd0ab613df07a1b6d48e2200bcc6af884c83f4fc7",
+        "entry": "02bd580139c2d97233c9b3a7b14fd7b67d1caa0bfa3b97f2ff41a6b1676f6ef472",
+        "front": "033cc44bcb318f29c1fc0afb375329aa831ae31a2a63f1d1582a6a7ecbfb0a13c0",
+        "hold": "0349ff39efb2ad8d5d8735ba633abce41a7048255cbf85d65fe8a911011986879c",
+        "outcome": "03757975860b42e710d0839957f8f27662afb0ee0f3139222098509bf78eac1275",
+        "piece": "0351381d094a88151366f2f24bcd42d59035d2166d772755761f34c2d99915a168"
+      },
+      "name": "dave",
+      "priv": "6565656565656565656565656565656565656565656565656565656565656565"
+    },
+    {
+      "advertisementLock": "021f890ee5d688cd624a63071129bc4011d6d16783fcc4f87b806aa11bafd59ba9",
+      "identity": "035ab4689e400a4a160cf01cd44730845a54768df8547dcdf073d964f109f18c30",
+      "keys": {
+        "bucket": "03f6847c018a0c1ff14c622677db6d469aa01a109f21e37739661ed1f0434e8335",
+        "chain": "02e29fe3c3a6134781b964940bca8e056a2c05302ab6cb1d50401522ec8d9db3c8",
+        "challenge": "035d797c33b67f1250f0dce9b4044ce76e2c250133425a503a6be346d878944ee2",
+        "entry": "029e379a2adf58583b6aa99494947a36bdc78b51ecf2ca291c280de4dd4fd67c03",
+        "front": "023b88f9a216abffa02924d6036096fb4a5f8a6f6a01e0fecdddcf6d8115b76e5d",
+        "hold": "03ada902681c26ba3fe357df10b600efbf02e7141cb4bd8daeacdad9535dddbf99",
+        "outcome": "039ab14c036e4fc28e1c46398768aa67e55489d904403e2a2ba4660e87a392b093",
+        "piece": "03574872968d0571a35f8fee09fb6e81b28c4e9e83b7485b305ca3dc9507bfb44c"
+      },
+      "name": "erin",
+      "priv": "6666666666666666666666666666666666666666666666666666666666666666"
+    }
+  ],
+  "note": "the registry values; each test identity's derived keys under [1, \"bstore\"] (counterparty anyone) and its BRC-26 advertisement lock; bucket identifiers, topics, S3 names and bucket ids; derived fronts",
+  "registry": {
+    "anyoneKey": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+    "baskets": [
+      "bstore fund",
+      "bstore entry funding",
+      "bstore piece funding",
+      "bstore outcome funding",
+      "bstore front funding",
+      "bstore chain funding",
+      "bstore chain",
+      "bstore hold",
+      "bstore kill tombstone"
+    ],
+    "blobPrefix": "tm_bstoreblob_",
+    "borrowed": [
+      {
+        "keyId": "1",
+        "protocol": "uhrp advertisement",
+        "securityLevel": 2,
+        "use": "BRC-26 advertisement lock, as the SDK has it"
+      },
+      {
+        "protocol": "3241645161d8",
+        "securityLevel": 2,
+        "use": "BRC-29 settlement outputs"
+      }
+    ],
+    "domainBucketId": "bstore bucket id v1",
+    "frontSuffix": "/bstore/v1",
+    "hostTerms": "<base>/ls_bstore/terms",
+    "keyIds": [
+      "bucket",
+      "chain",
+      "entry",
+      "piece",
+      "outcome",
+      "front",
+      "hold",
+      "challenge",
+      "fund"
+    ],
+    "lookupService": "ls_bstore",
+    "magicBucket": "73746201",
+    "magicEntry": "73746501",
+    "magicFront": "73746601",
+    "magicOutcome": "73746f01",
+    "magicPiece": "73747001",
+    "magicRequest": "73747101",
+    "magicResponse": "73747201",
+    "neverAssigned": [
+      "00",
+      "62",
+      "65",
+      "66",
+      "6f",
+      "70",
+      "71",
+      "72"
+    ],
+    "protocol": {
+      "protocol": "bstore",
+      "securityLevel": 1
+    },
+    "providerRoutes": [
+      "<front>/challenge",
+      "<front>/renew",
+      "<front>/settle",
+      "<front>/terms"
+    ],
+    "recordsPrefix": "tm_bstore_",
+    "tagFunding": "737402",
+    "tagHold": "737403",
+    "tagPrefix": "7374",
+    "tagReserved": "737404",
+    "tagToken": "737401"
+  }
+}
