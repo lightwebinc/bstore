@@ -1,0 +1,400 @@
+# Running a bstore provider
+
+`bstore-provider` is a storage provider: the market front of
+[spec.md](spec.md) section 17 over a hold backend. It receives the pieces of
+a bucket's objects, checks each closure, decides by its own policy whether
+to hold it, races for the bounty by advertising at once, answers
+challenges, renewals and settlement remittances on its front, and serves
+the bytes on BRC-167's object routes. This page is in two parts: what the
+provider does, and an operator's guide.
+
+## What it does
+
+### Receiving
+
+A provider subscribes to both topics of each bucket it serves (spec section
+3.1): the blob topic carries pieces, the records topic carries entries.
+There are two ways in, and the provider is the same behind both.
+
+- **The plane, or a writer that submits directly.** `POST /submit`, the
+  overlay engine's own submit shape: the BEEF as the body, `x-topics` naming
+  the topic (one name, or a JSON array of up to four). On
+  `tm_bstoreblob_<bucket>` a piece carrier is held to a carrier's rules
+  (shape, its BEEF and the funding tree's minimal path within 4,259,840
+  bytes, the piece record, the bucket, not mineable, one signature push,
+  the PushDrop under `derive(writer, "piece")`, its field signature, the
+  writer's funding output and its value) and its funding tree must be
+  mined in the provider's headers: what the provider keeps is a writer's
+  signed piece, paid for with a mined output, never anyone's junk. On
+  `tm_bstore_<bucket>` the provider runs the host's admission rules (spec
+  section 12.1) and takes put entries; everything else a records topic
+  carries is a host's business and is passed over. The answer is the
+  engine's, per topic, with a `refused` reason when nothing was taken.
+- **Unicast upload sessions** (spec section 14, BRC-167's baseline
+  profile), over BRC-104: `POST <public>/chirp/v1/uploads` opens a
+  session bound to the caller's identity; `PUT` (and `HEAD`)
+  `<public>/chirp/v1/uploads/<id>/objects/<object>` stages one object, its
+  body hashed and refused on a mismatch; `POST .../<id>/commit` with
+  `{"rootIdentifier"}` checks the closure as a complete host does. A
+  provider advertises only for an entry (spec section 9.3), so the commit
+  answers `202` with the closure staged until an entry for the root reaches
+  the provider and it takes it, and `201` with `hostedFileLocation` and
+  `expiryTime` after (frozen.md section 14, row C9). A writer that
+  unicasts submits its entry to the provider's `/submit` as it does to a
+  host.
+
+Pieces may come before or after their entry, in any order. A piece no held
+closure names is **unclaimed**: it has a share of the store of its own and
+a time of its own (below), and a provider looks at a root again only when
+an entry names it and every object its closure names is in the store, which
+it learns from the root and branch nodes without reading a blob.
+
+### Checking a closure
+
+Once a closure is complete, for the first entry that names the root with
+the root's own size and content hash:
+
+1. the root node, as rows C1 and C2 of frozen.md section 14 have it: CHIRP
+   version 1.0, chunking profile 1, no extension, `logicalLength` and
+   `contentHash` the entry's;
+2. the closure, by bcommon `chirp.Verify` with the 2^43-byte bound, in its
+   refusal order (rows C3 and C4), and profile 1's canonical construction;
+3. the proof root (spec section 6): every blob is read once more and every
+   4 KiB segment hashed, the subtree root of each blob kept, and the proof
+   root over them compared with the entry's.
+
+A closure that fails is the writer's fault: every entry it fails is
+declined, and the reason recorded. One that is not complete yet is waited
+for. Bounded memory throughout: one blob at a time, and the provider keeps
+for each held root, under `roots/<root>/`, the leaf hash of every segment
+(32 bytes per 4 KiB, 1/128 of the data), each blob position's subtree root
+and object hash, and the closure's objects in order and sorted.
+
+### The hold policy and the bounty
+
+An entry is taken when the provider's policy allows it (`policy` below:
+size, retention, and whether it holds without a bounty) and, for a bounty,
+when the provider's own checks of spec section 9.3 pass with its own node
+and headers: the hold output exists, is mined (its proof verifies in the
+provider's headers), is locked to `derive(writer, "hold")`, holds exactly
+`satoshis`, is unspent by positive evidence from the node (a node that does
+not answer is not evidence), is worth at least `min_bounty`, and the
+entry's `deadline` is at least `min_deadline_blocks` ahead of the tip. An
+entry whose bounty fails is declined, or held without racing when
+`hold_unbountied` is on.
+
+### Advertising, and the race
+
+The writer ranks advertisements by when its own client first sees them
+(spec section 9.4), so the provider advertises the instant a closure is
+checked: the lease runs through the expiry it will advertise, then one
+advertisement is minted, exactly as the SDK makes it (BRC-26, `[2, "uhrp
+advertisement"]` key id `1`, the CHIRP URL of the root, `fileSize` the root
+node's length), in a transaction of its own that spends one output of the
+provider's funding tree for its fee. Its expiry is the entry's
+`floor(created / 1000) + retention`, and never less than an hour from now.
+The transaction goes to the settlement leg at once; once it mines it is
+submitted, alone with its own minimal proof, to the records topic of every
+bucket the root is held for at every configured host, to the plane's
+facade when one is set, and to `tm_uhrp` when `uhrp_topic` is on. A host it
+cannot reach is tried again, each time later.
+
+An advertisement that already exists for the root serves a later entry
+when it lasts long enough; when it does not, it is renewed to.
+
+**Funding trees.** Advertisements and renewals are paid from funding trees
+of `tree_count` outputs of `tree_sats` each, locked to the wallet's fund
+key; the next tree is minted before the current one runs out. A tree is
+recorded with its fee coin before it reaches the settlement leg (bcommon
+`producer`'s `Prepare`), so a provider that stops between the leg and the
+adoption finds the record on its next start and settles it (`Recover`):
+the tree adopted when it is on the chain, held behind the current tree,
+its coin taken out of the pool when another transaction spent it, or its
+coin returned when the node does not know the tree, the record then kept
+for one more start and dropped on the second. A tree the library already
+holds is never recovered twice. An advertisement is persisted, with its
+funding output marked used and the lease extended, before it reaches the
+leg; a start finds it and records it once mined, sends the same bytes
+again when the node never saw it, or advertises afresh when its funding
+output went to another transaction.
+
+### Renewals
+
+`POST <front>/renew` with `{"root": <64 hex>, "until": <Unix seconds>}`
+(spec sections 10.1 and 10.3). It is priced (BRC-105): `renew_per_gib_day`
+for each GiB a day from the later of now and the current expiry to
+`until`, rounded up, never below `renew_minimum`. Once paid, the live
+advertisement is spent into its **successor**: the same key and root, the
+later expiry, in the transaction that spends it, so the writer's ranking
+keeps the original's first sight (spec section 9.3). The answer is the
+successor's BEEF (`advertisement`), with its proof when it mined at once
+and unmined otherwise, a promise until it mines. `until` must be later than
+the current expiry and at most `max_renew_seconds` ahead; one root is
+renewed at most `renewals_per_root_per_hour`; a root whose advertisement is
+not mined yet is answered `409` and renewed once it is.
+
+### Challenges
+
+`POST <front>/challenge` with `{"request": <base64>, "entry": <txid>}`
+(spec sections 7 and 10.1), in this order:
+
+1. the buyer's budget (`challenges_per_buyer_per_min`, by identity key, or
+   by address for a request without BRC-104), before any work;
+2. `422 {"error": "request"}` for bytes that are not a request, or a request
+   that names another provider or answerer (row C11); `422 seed` unless the
+   provider's node holds `seedHash` at `seedHeight` and `tip - 6 <=
+   seedHeight <= tip`; `422 unknown-root` unless the root is held verified
+   and `proofRoot` and `size` are the provider's own computation;
+3. the **free settlement challenge**, exactly as frozen (spec section 9.4):
+   owed only to the entry's writer, authenticated by BRC-103, naming in
+   `entry` an entry with hold terms for this root, while the provider
+   advertises the root (an unexpired advertisement), before the entry's
+   `deadline`, when the provider's bounty checks pass at that moment (the
+   hold output exists, is mined, is the writer's, holds `satoshis`, is
+   unspent by positive evidence, and is worth at least `min_bounty`), with
+   `c` at most `min(checkC, free_c)`, the hold output at least `min_age`
+   blocks deep (`tip - h + 1`), and at most two per hold outpoint, whatever
+   entries name it, counted when a signed response is given (row C10). A
+   writer is also held to `free_per_writer_per_min`. Every other challenge
+   is priced: `challenge_base + challenge_per_sample * c`, BRC-105 over
+   BRC-104 (`401` without it, `402` without a payment);
+4. the answer is built: each sample's segment read through the backend and
+   held to the kept leaf hash, its path (inside the blob's subtree, then
+   among the blob roots) held to reproduce the proof root. A segment
+   missing or read back wrong marks the root **damaged** and the answer is
+   `422 unknown-root`, with no payment taken: from then on the root is not
+   served, answered for or renewed, and its advertisement lapses;
+5. the payment is taken into the ledger, or the free answer counted;
+6. `200 application/cbor`, the signed response `[body, signature]`, its
+   signature over `SHA-256(request) || SHA-256(body)` under
+   `derive(provider, "challenge")`, checked as a buyer checks it before it
+   leaves.
+
+Samples are inline by default (spec section 7.5: a native provider SHOULD).
+With `answer_inline` off every sample is by reference and the buyer fetches
+it from the advertised URL with `Range`: that proves what a reader of the
+URL gets. A buyer whose fetched segment fails rechecks it from the whole
+blob, so a URL whose `Range` handling is wrong is never the answerer's
+fault (spec section 7.4).
+
+**What a challenge proves.** A pass shows the provider could produce the
+sampled segments at that moment. A provider may fetch them from elsewhere
+to answer (outsourcing is allowed, spec section 20, item 5): what the
+market buys is that the bytes are retrievable. Several provider keys over
+one disk pass alike (spec section 9.7).
+
+### Serving
+
+`GET` and `HEAD <public>/chirp/v1/<root>/objects/<object>` (BRC-167's
+complete-host route), for a root held verified and not damaged and an
+object its closure names, with HTTP `Range`, `ETag` and cross-origin `GET`.
+Each object is read whole and hashed before a byte is sent, so bytes that
+went bad on disk are never served; such a root is marked damaged. Nodes are
+`application/vnd.bsv.chirp-node`, blobs `application/octet-stream`.
+
+### Settlement
+
+`POST <front>/settle` with a BRC-29 remittance (spec sections 9.5 and
+10.1), unicast, never on the plane. It is taken only when everything in it
+follows from an entry the provider holds for: the prefix is base64 of the
+entry's commitment, the suffix base64 of the two-byte rank (1 to the
+entry's `K`), the sender is the entry's writer, the transaction spends the
+entry's hold output, and the named output pays the key BRC-29 derives for
+this provider, verifying against the provider's headers. It answers `200`
+once the payment is in the ledger (the same payment again is `200` and
+recorded once) and `400` otherwise. A provider that never got its
+remittance finds its payout from public data: for each entry it holds
+with a bounty, it asks the node who spent the hold output, derives its key
+for ranks 1 to `K`, and takes the output that pays it.
+
+Every payment the provider takes (settlements, paid challenges, renewals)
+goes to `payments.jsonl` in the data directory, the shared payee ledger's
+format (bcommon `payee`), synced before the request is answered; a txid is
+taken once, and so is every coin a payment spends. A background run
+broadcasts each and takes it into the wallet's pool once it mines.
+
+### Terms
+
+`GET <front>/terms` (spec section 10.1):
+
+```json
+{"service": "bstore", "terms": 1,
+ "challenge": {"base": 10, "perSample": 1, "freeC": 30, "minBounty": 1000, "minAge": 2},
+ "renew": {"perGiBDay": 100, "minimum": 50}}
+```
+
+The `402` is authoritative.
+
+## The backend
+
+The hold-backend interface (spec section 17) is `internal/backend`:
+
+| Call | The native backend |
+| --- | --- |
+| `Put(hash, bytes)` | refuses bytes that do not hash to `hash` or are over 4 MiB; writes `store/objects/<2 hex>/<64 hex>` to a temporary file, syncs it and renames it into place; idempotent |
+| `Has(hash)` | the file is there |
+| `Get(hash, offset, length)` | a range of the file; the front checks what it reads |
+| `ServeURL(root)` | `<public_url>/chirp/v1/<root>/objects/<root>` |
+| `Advertise(root, until)` | the front leases the closure and mints the advertisement (above) |
+
+Every path in the store is made from a hash's hex digits alone, so nothing
+a request carries names a file.
+
+**A read-only export.** With `export` set, the provider keeps
+`<export>/<root hex>/<index>` for each held closure, index 0 the root node
+and the rest in the closure's order, each a hard link to the object's file
+(so the export must be on the store's file system), the directories mode
+0555 and the files 0444. The provider is its only writer; it adds a root's
+directory once the closure is checked and removes it when the root is
+evicted. Export the directory read-only with the system's NFS server, for
+example `/srv/bstore-export 192.0.2.0/24(ro,no_subtree_check)` in
+`/etc/exports`. It is an operator's convenience for local pipelines, not
+how readers reach the bytes.
+
+## Limits
+
+| What | Bound |
+| --- | --- |
+| The store | `quota_bytes` across held closures and unclaimed pieces |
+| Unclaimed pieces | `unclaimed_bytes` in all, a quarter of that from one writer (which must hold `policy.max_object`), each kept `unclaimed_seconds`; past a share a piece is refused, never makes room by pushing out another's |
+| Eviction | a holding goes only when no advertisement of it is pending, its advertisement has expired and its lease has run out, or when it was never advertised and no entry for it is undecided; an object another held closure names stays |
+| An object | `policy.max_object` |
+| A submission | 262,144 bytes on a records topic, 4,259,840 on a blob topic |
+| Request bodies | a handshake 16 KiB, a challenge 2 KiB, a renewal 1 KiB, a remittance 1 MiB, an uploaded object 4 MiB, a commit 1 KiB; headers 256 KiB (a payment rides in one) |
+| Timeouts | headers 10 s, a request 2 min, an answer 5 min, idle 2 min |
+| Handshakes | `handshakes_per_sec`, `handshake_burst` for the route and `handshakes_per_addr_per_sec`, `handshake_addr_burst` for one address (an IPv6 address by its /64), before any signature work; `429` with `Retry-After` |
+| Sessions | `sessions` kept, `session_ttl_seconds` idle; every request identifier a session was answered for is remembered while the session is, so a signed request sent again is refused (`401`); past the bound on remembered requests the least recently used session is forgotten whole, which makes its requests unverifiable too |
+| Signed answers | `responses_per_sec`, `response_burst` per session, taken before a request is verified |
+| Challenges | `challenges_per_buyer_per_min` with `challenge_burst` per buyer, `free_per_writer_per_min` free ones per writer, `challenge_workers` answered at once |
+| Renewals | `renewals_per_root_per_hour` per root |
+| Submissions | `submits_per_addr_per_sec`, `submit_burst` per address; 16 read at once |
+| Reads | `object_readers` objects served at once |
+| Upload sessions | `upload_sessions` open, 4 per identity, `upload_session_seconds` each, 65,536 objects each |
+
+## Operating
+
+### Build and initialise
+
+```console
+$ make verify
+$ go build -o bstore-provider ./cmd/bstore-provider
+$ ./bstore-provider init -data /var/lib/bstore-provider
+identity 02...
+```
+
+`init` creates the provider's identity and its wallet under
+`<data>/wallet`. The identity key is what advertisements, challenge
+responses and payouts are bound to: back the directory up.
+
+### Configure
+
+A JSON file; an unknown key is refused. The required keys:
+
+```json
+{
+  "data": "/var/lib/bstore-provider",
+  "listen": "127.0.0.1:8095",
+  "public_url": "https://provider.example.com/store",
+  "node": "https://node.example.com",
+  "settle": "arcade:https://arcade.example.com",
+  "headers": "https://headers.example.com",
+  "hosts": ["https://overlay.example.com"],
+  "buckets": [{"bucket": "example_photos_hmqzvtkwrx"}]
+}
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `data` | required | the data directory, absolute: `wallet/`, `state.json`, `store/`, `roots/`, `payments.jsonl` |
+| `listen` | `127.0.0.1:8095` | the address the routes are served on |
+| `tls_cert`, `tls_key` | none | serve TLS directly; otherwise a TLS proxy in front terminates it |
+| `public_url` | required | the `https` URL the routes are reached at: objects under `<public_url>/chirp/v1/`, the front at `<public_url>/bstore/v1`; no trailing slash, query, fragment or user |
+| `node` | required | a Teranode asset API: proofs, spends, block hashes |
+| `settle` | required | the settlement leg: `tcp:<host:port>`, `rpc:<url>` (with `rpc_user`, `rpc_pass`) or `arcade:<url>` (with `arcade_key`) |
+| `headers` | required | a header source, as bcommon `headers` reads it: `woc:main`, `chaintracks:<url>`, or a bridge URL |
+| `hosts` | none | overlay hosts advertisements are submitted to, each directly |
+| `facade` | none | a plane facade advertisements are also submitted to |
+| `uhrp_topic` | false | also submit each advertisement to `tm_uhrp` |
+| `buckets` | required | `{"bucket": <identifier>, "writers": [<66 hex>, ...]}`; with `writers`, only those writers' pieces and entries are taken |
+| `backend` | `native` | the hold backend |
+| `export` | none | the read-only export directory |
+| `quota_bytes` | 64 GiB | the store's bound |
+| `unclaimed_bytes` | an eighth of the quota | unclaimed pieces' share |
+| `unclaimed_seconds` | 3600 | how long an unclaimed piece is kept |
+| `policy.max_object` | 1 GiB | the largest object taken |
+| `policy.min_deadline_blocks` | 6 | how far ahead a deadline must be to race |
+| `policy.max_retention_seconds` | 31 days | the longest retention taken |
+| `policy.hold_unbountied`, `policy.unbountied_seconds` | off, 1 day | hold without a bounty, for this long |
+| `policy.answer_inline` | true | samples inline; off, by reference |
+| `terms.challenge_base`, `terms.challenge_per_sample` | 0 | a challenge's price |
+| `terms.free_c` | 30 | 30 to 1024 |
+| `terms.min_bounty` | 0 | the least bounty raced for and owed a free challenge |
+| `terms.min_age` | 0 | 0 to 1008 blocks |
+| `terms.renew_per_gib_day`, `terms.renew_minimum` | 0 | a renewal's price |
+| `terms.max_renew_seconds` | 366 days | the furthest a renewal runs |
+| `limits.*` | as the table above | `handshakes_per_sec` 4, `handshake_burst` 8, `handshakes_per_addr_per_sec` 1, `handshake_addr_burst` 4, `responses_per_sec` 5, `response_burst` 20, `sessions` 10000, `session_ttl_seconds` 600, `challenges_per_buyer_per_min` 6, `challenge_burst` 6, `free_per_writer_per_min` 12, `challenge_workers` 4, `renewals_per_root_per_hour` 4, `submits_per_addr_per_sec` 64, `submit_burst` 256, `object_readers` 32, `upload_sessions` 64, `upload_session_seconds` 3600 |
+| `tree_count`, `tree_sats` | 16, 1000 | the funding trees |
+| `fee_sat_per_byte`, `fee_floor` | 1, 250 | the fee policy |
+| `mainnet` | false | mainnet addresses |
+
+### Fund
+
+```console
+$ ./bstore-provider address -config provider.json
+identity 02...
+fund address 1...
+pool 0 output(s), 0 satoshis
+$ ./bstore-provider rescan -config provider.json -from <height>
+```
+
+Pay the fund address, then `rescan` from the block that holds the payment
+to take it into the pool. On a test network whose node mines on request,
+`fund -blocks N` mines to the fund address and pools the coinbase.
+
+### Run
+
+```console
+$ ./bstore-provider run -config provider.json
+```
+
+Behind a TLS proxy, route to the provider:
+
+- `<public_url>/chirp/v1/` and `<public_url>/bstore/v1/`;
+- `/.well-known/auth` at the origin, where the SDK's clients send the
+  BRC-104 handshake whatever the path of the route they call;
+- `/submit`, for the plane's listener or writers that submit directly.
+
+`/healthz` answers `ok`. `/metrics` (Prometheus text) answers a loopback
+address only: `bstore_provider_handshake_total`,
+`bstore_provider_request_total`, `bstore_provider_session_evicted_total`,
+`bstore_provider_submits_total`, `bstore_provider_challenges_total`,
+`bstore_provider_payments_total`, `bstore_provider_advertisements_total`,
+`bstore_provider_renewals_total`, `bstore_provider_payouts_total`,
+`bstore_provider_objects_served_total`, `bstore_provider_damaged_total`,
+`bstore_provider_evicted_total`, `bstore_provider_refused_total`, and the
+gauges `bstore_provider_holdings`, `bstore_provider_store_bytes`,
+`bstore_provider_sessions`, `bstore_provider_pool_satoshis`.
+
+A stop (`SIGINT`, `SIGTERM`) saves the state; a crash loses nothing that
+was answered, and the next start finishes what was in flight.
+
+### Test it end to end
+
+```console
+$ make provider-e2e REFERENCE_HOST=/path/to/reference-host NODE=/path/to/node24
+```
+
+Two provider processes and a test-only writer (`internal/testwriter`) on a
+reference overlay host loading the bstore module, over MySQL (Docker), on
+a local test chain: a 100 MiB object put with a bounty of `t = 2`,
+`K = 2`; both providers receive, check and advertise it; the second is
+killed the instant its funding tree reaches the settlement leg and
+restarted, and recovers the tree and advertises; the race is ranked by
+first sight at the host; both pass a free settlement challenge, the second
+answering by reference behind a server whose `Range` answers are wrong and
+is not blamed; a third free challenge is priced; a renewal is bought and
+its successor spends the advertisement; the bounty is settled to both by
+rank, one by remittance and one found from the hold output's spend; and a
+blob dropped from the first provider's store is caught by a paid challenge
+of `c = 113` (about 99 % of nonces catch one blob of 25; the run picks one
+that does), after which the root is no longer served.

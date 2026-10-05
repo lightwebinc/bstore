@@ -35,6 +35,7 @@ the same bytes and competes to hold them. Readers speak S3.
 | Know what cannot change once published | [docs/frozen.md](docs/frozen.md) |
 | Use or check the codec and its golden vectors | [docs/codec.md](docs/codec.md) |
 | Run an overlay host that carries buckets | [docs/host.md](docs/host.md) |
+| Run a storage provider | [docs/provider.md](docs/provider.md) |
 
 ## Building
 
@@ -42,6 +43,7 @@ the same bytes and competes to hold them. Readers speak S3.
 cd host && npm ci && cd ..
 make verify NODE=/path/to/node24
 make module NODE=/path/to/node24   # host/bundle/bstore-module.js
+go build ./cmd/bstore-provider     # the provider
 ```
 
 Go 1.27 and Node 24. [docs/codec.md](docs/codec.md) and
@@ -50,10 +52,10 @@ Go 1.27 and Node 24. [docs/codec.md](docs/codec.md) and
 ## Status
 
 Contract signed: every row of [docs/frozen.md](docs/frozen.md) is frozen,
-with eight clarifications pending confirmation (section 14). The codec, in
-Go and TypeScript, its golden vectors, and the overlay host module
-(`tm_bstore_`, `tm_bstoreblob_` and `ls_bstore`) are built; the provider
-comes next.
+with eleven clarifications pending confirmation (section 14). The codec, in
+Go and TypeScript, its golden vectors, the overlay host module
+(`tm_bstore_`, `tm_bstoreblob_` and `ls_bstore`) and the storage provider
+(`bstore-provider`) are built; the S3 gateway comes next.
 
 ## License
 

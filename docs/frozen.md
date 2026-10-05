@@ -6,8 +6,8 @@ already published. Once one record using it is on a public host, readers
 verify against it for as long as anyone reads that record, so changing it
 afterwards is a new identifier or a new record version, never an edit.
 
-**Status: signed, with eight clarifications pending owner confirmation
-(section 14, rows C1 to C8).** Every other row below is signed with the
+**Status: signed, with eleven clarifications pending owner confirmation
+(section 14, rows C1 to C11).** Every other row below is signed with the
 value it gives, and none is provisional. The rows marked "vectors" are pinned byte for byte by
 the golden vectors the codec generates ([spec.md](spec.md) section 22); a
 vector that disagrees with a row is a defect in the codec, not a change to
@@ -205,7 +205,8 @@ least 1024. As ceilings, not floors: the BEEF ceilings of section 2.
 
 A clarification rewords a signed rule where the signed wording leaves a
 case open. Each below is pending the owner's confirmation; the codec and its
-vectors (C1 to C7) and the host module (C8) already follow it.
+vectors (C1 to C7), the host module (C8) and the provider (C9 to C11)
+already follow it.
 
 | Row | Item | Clarification | Status |
 | --- | --- | --- | --- |
@@ -217,3 +218,6 @@ vectors (C1 to C7) and the host module (C8) already follow it.
 | C6 | Challenge request, spec section 7.1 | `seedHeight` is at most 2^32 - 1, the range of a block height in a BUMP (BRC-74); a request with a larger one is refused (`request`) | PENDING owner confirmation |
 | C7 | Front statement, spec section 8.2 | The url's authority, from after `https://` to the first `/`, is not empty; `https:///x` is refused (`url`) | PENDING owner confirmation |
 | C8 | The index, spec section 12.2 | The latest tokens of a chain are those of the branch on the current chain: walking down from the highest `seq` that holds a rooted (and, for a served chain, consistent) token, the tokens at the first `seq` where any token's own proof verifies in the host's headers, and among them the lowest txid where one answer needs one token. A longer branch that a reorganisation orphaned is not answered as latest, and retention follows the branch on the chain. When no token verifies within 64 `seq`s of the highest (the header source does not answer), the tokens at the highest `seq` | PENDING owner confirmation |
+| C9 | Unicast delivery, spec sections 9.3 and 14 | A provider advertises only for an entry it takes, so a BRC-167 upload-session commit checks the closure and stages it, answering `202` until an entry naming the root reaches the provider and it takes it, and `201` with the advertised location after; a writer that unicasts submits its entry to each provider's submit route as it does to a host | PENDING owner confirmation |
+| C10 | The settlement challenge, spec section 9.4 | "At most two per hold outpoint and advertiser" counts the free answers given: a signed response to a request answered free. A request refused (`422`) or not answered counts nothing, and a challenge paid for is not one of the two | PENDING owner confirmation |
+| C11 | Answerer's refusals, spec sections 7.2 and 10.1 | An answerer refuses with `422` `request` a request whose `answerer` is another key, or, answering for itself, whose `provider` is another key: it signs only as itself, and only for advertisers it answers for | PENDING owner confirmation |
