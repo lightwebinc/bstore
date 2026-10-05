@@ -33,7 +33,11 @@ type Delivery struct {
 	Facade    string
 	Hosts     []string
 	Providers []string
-	HTTP      *http.Client
+	// Uploads are providers' public URLs (the base their /chirp/v1 routes
+	// hang from). Without a facade, when any is set, a closure goes to each
+	// of them by BRC-167 upload session instead of as piece carriers.
+	Uploads []string
+	HTTP    *http.Client
 	// Quorum is how many hosts must take an entry for a put without a
 	// facade to count as sent; zero is one.
 	Quorum int
@@ -49,6 +53,9 @@ type Target struct {
 }
 
 func trim(b string) string { return strings.TrimRight(b, "/") }
+
+// uploading reports whether closures go by upload session.
+func (d *Delivery) uploading() bool { return d.Facade == "" && len(d.Uploads) > 0 }
 
 // pieceTargets are where a bucket's pieces go.
 func (d *Delivery) pieceTargets(bucket string) []Target {
@@ -278,7 +285,12 @@ func (o *Outbox) Pending() int {
 
 // Retry sends every item that is due, oldest first; one a week old is
 // given up, and said so.
-func (o *Outbox) Retry(ctx context.Context) {
+func (o *Outbox) Retry(ctx context.Context) { o.retry(ctx, false) }
+
+// RetryAll sends every item now, due or not.
+func (o *Outbox) RetryAll(ctx context.Context) { o.retry(ctx, true) }
+
+func (o *Outbox) retry(ctx context.Context, all bool) {
 	ents, err := os.ReadDir(o.dir)
 	if err != nil {
 		return
@@ -306,7 +318,7 @@ func (o *Outbox) Retry(ctx context.Context) {
 		o.mu.Lock()
 		busy := o.sending[it.ID]
 		o.mu.Unlock()
-		if busy || o.now().Before(it.Next) {
+		if busy || (!all && o.now().Before(it.Next)) {
 			continue
 		}
 		if o.now().Sub(it.Created) > outboxKeep {

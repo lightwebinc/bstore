@@ -1,10 +1,12 @@
-// Package publish is the least of a bstore publisher that an S3 gateway
-// needs to write (spec sections 5, 9.2, 13 and 14), shaped so that the
-// publisher client grows from it: it builds an object's CHIRP closure and
-// proof root while the content streams (Store.Stage), mints a hold output
-// when a bounty is asked for, makes the piece carriers and the entry, and
-// delivers them over the plane or by unicast to the hosts and providers
-// configured.
+// Package publish is bstore's publisher (spec sections 5, 9, 13 and 14): it
+// builds an object's CHIRP closure and proof root while the content streams
+// (Store.Stage), mints a hold output when a bounty is asked for, makes the
+// piece carriers and the entry, and delivers them over the plane, by
+// unicast to the hosts and providers configured, or by BRC-167 upload
+// session; it judges each bounty's race (race.go), settles it by rank or
+// reclaims it after its deadline (settle.go), challenges providers
+// (challenge.go), publishes outcome records, and sweeps its funding trees
+// (sweep.go). The S3 gateway and the command line both write through it.
 //
 // Save before send. Every carrier spends one output of a mined funding
 // tree, and a carrier rebuilt differently on the same output would be a
@@ -15,13 +17,10 @@
 // outbox and is sent again, the same bytes, by the background run and on
 // the next start. Funding trees are recorded with their fee coin before
 // they reach the settlement leg (bcommon producer Prepare) and settled on
-// the next start (Recover), as the provider does.
-//
-// What a publisher client adds beyond this package: judging the hold race
-// (ranking advertisements by first sight, settlement challenges), settling
-// a bounty by rank with BRC-29 outputs and remittances, and reclaiming a
-// bounty after its deadline. The hold outputs minted here are kept in the
-// state for that.
+// the next start (Recover), as the provider does. A settlement, a reclaim
+// and a sweep are signed and recorded before they are sent, and a run
+// that stops part way sends the same bytes again. An identity's directory
+// is locked while a Publisher has it open.
 package publish
 
 import (
@@ -49,6 +48,7 @@ import (
 	bpub "github.com/lightwebinc/bcommon/publish"
 	"github.com/lightwebinc/bcommon/pushdrop"
 
+	"github.com/lightwebinc/bstore/internal/reader"
 	"github.com/lightwebinc/bstore/internal/storerec"
 )
 
@@ -100,8 +100,11 @@ type Config struct {
 	Store *Store
 	// Delivery reaches the plane, the hosts and the providers.
 	Delivery *Delivery
-	Logf     func(format string, args ...any)
-	Now      func() time.Time
+	// Reader, when set, asks the hosts and verifies what they answer: the
+	// race's advertisements and fronts, and closures the store lacks.
+	Reader *reader.Reader
+	Logf   func(format string, args ...any)
+	Now    func() time.Time
 }
 
 // Publisher is one identity's writer.
@@ -119,15 +122,27 @@ type Publisher struct {
 	payer  *producer.Payer
 	pieces *producer.Trees
 	ents   *producer.Trees
+	outs   *producer.Trees
 	outbox *Outbox
+	lock   *dirLock
+	auth   *authClient
 }
 
 type state struct {
 	Identity string        `json:"identity"`
 	Piece    treeSet       `json:"piece"`
 	Entry    treeSet       `json:"entry"`
+	Outcome  treeSet       `json:"outcome"`
 	Pending  []pendingTree `json:"pendingTrees,omitempty"`
 	Holds    []HoldRecord  `json:"holds,omitempty"`
+	// Buckets are the buckets this identity published carriers in: where
+	// a sweep of its trees is published (spec section 13.5).
+	Buckets []string `json:"buckets,omitempty"`
+	// Sweeps are the kill switch's sweeps, each recorded before it is
+	// sent.
+	Sweeps []SweepRecord `json:"sweeps,omitempty"`
+	// Uploads are the unicast upload sessions owed a closure.
+	Uploads []UploadRecord `json:"uploads,omitempty"`
 }
 
 type treeSet struct {
@@ -163,8 +178,9 @@ type HoldRecord struct {
 }
 
 const (
-	kindPiece = "piece"
-	kindEntry = "entry"
+	kindPiece   = "piece"
+	kindEntry   = "entry"
+	kindOutcome = "outcome"
 )
 
 // Open opens an identity, settles the funding trees a previous run left
@@ -194,13 +210,24 @@ func Open(ctx context.Context, cfg Config) (*Publisher, error) {
 	if cfg.Store == nil || cfg.Delivery == nil || cfg.Asset == nil || cfg.Settler == nil {
 		return nil, errors.New("publish: a store, a delivery, a node and a settlement leg are required")
 	}
+	lk, err := lockDir(cfg.Dir)
+	if err != nil {
+		return nil, err
+	}
 	w, err := bwallet.Open(WalletDir(cfg.Dir), Profile)
 	if err != nil {
+		lk.release()
 		return nil, fmt.Errorf("wallet: %w", err)
 	}
 	w.Mainnet = cfg.Mainnet
 	w.Originator = "bstore-publisher"
-	p := &Publisher{cfg: cfg, wallet: w, signer: w.Signer()}
+	p := &Publisher{cfg: cfg, wallet: w, signer: w.Signer(), lock: lk}
+	ok := false
+	defer func() {
+		if !ok {
+			lk.release()
+		}
+	}()
 	if p.st, err = loadState(cfg.Dir); err != nil {
 		return nil, err
 	}
@@ -214,16 +241,59 @@ func Open(ctx context.Context, cfg Config) (*Publisher, error) {
 		Kept: p.kept, Settler: cfg.Settler, Asset: cfg.Asset, Fees: cfg.Fees, Note: p.note}
 	p.pieces = p.newTrees(kindPiece, storerec.PieceDerivation, cfg.PieceTree)
 	p.ents = p.newTrees(kindEntry, storerec.EntryDerivation, cfg.EntryTree)
+	p.outs = p.newTrees(kindOutcome, storerec.OutcomeDerivation, cfg.EntryTree)
 	if p.outbox, err = openOutbox(filepath.Join(cfg.Dir, "outbox"), cfg.Delivery, cfg.Logf, cfg.Now); err != nil {
 		return nil, err
 	}
+	p.auth = newAuthClient(p, cfg.Delivery.HTTP)
 	if err := p.save(); err != nil {
 		return nil, err
 	}
 	if err := p.recoverTrees(ctx); err != nil {
 		return nil, err
 	}
+	ok = true
 	return p, nil
+}
+
+// Close releases the identity's directory for another process.
+func (p *Publisher) Close() {
+	if p.lock != nil {
+		p.lock.release()
+		p.lock = nil
+	}
+}
+
+// Dir is the identity's directory.
+func (p *Publisher) Dir() string { return p.cfg.Dir }
+
+// Asset is the node the identity asks.
+func (p *Publisher) Asset() *nodeapi.Asset { return p.cfg.Asset }
+
+// Delivery is how the identity reaches hosts and providers.
+func (p *Publisher) Delivery() *Delivery { return p.cfg.Delivery }
+
+// Store is the local closure store.
+func (p *Publisher) Store() *Store { return p.cfg.Store }
+
+// treesOf is the funding trees of kind.
+func (p *Publisher) treesOf(kind string) *producer.Trees {
+	switch kind {
+	case kindPiece:
+		return p.pieces
+	case kindOutcome:
+		return p.outs
+	}
+	return p.ents
+}
+
+// noteBucket records a bucket this identity publishes carriers in; the
+// caller holds p.mu and saves.
+func (p *Publisher) noteBucketLocked(bucket string) {
+	if !slices.Contains(p.st.Buckets, bucket) {
+		p.st.Buckets = append(p.st.Buckets, bucket)
+		slices.Sort(p.st.Buckets)
+	}
 }
 
 // Identity is the identity key, 33 bytes.
@@ -269,8 +339,11 @@ func (p *Publisher) newTrees(kind string, d pushdrop.Derivation, count int) *pro
 
 // set is the tree set of kind; the caller holds p.mu.
 func (p *Publisher) set(kind string) *treeSet {
-	if kind == kindPiece {
+	switch kind {
+	case kindPiece:
 		return &p.st.Piece
+	case kindOutcome:
+		return &p.st.Outcome
 	}
 	return &p.st.Entry
 }
@@ -326,10 +399,7 @@ func (p *Publisher) recoverTrees(ctx context.Context) error {
 	pending := slices.Clone(p.st.Pending)
 	p.mu.Unlock()
 	for _, pt := range pending {
-		trees := p.ents
-		if pt.Kind == kindPiece {
-			trees = p.pieces
-		}
+		trees := p.treesOf(pt.Kind)
 		id := pt.Tree.Txid
 		if slices.ContainsFunc(trees.Held(), func(h funding.Tree) bool { return h.Txid == id }) {
 			continue
@@ -394,10 +464,7 @@ func (p *Publisher) recoverTrees(ctx context.Context) error {
 // before it returns: no carrier is signed on an output the state does not
 // already hold spent.
 func (p *Publisher) spend(ctx context.Context, kind string, need uint32) (*transaction.Transaction, uint32, error) {
-	trees := p.ents
-	if kind == kindPiece {
-		trees = p.pieces
-	}
+	trees := p.treesOf(kind)
 	if h, err := p.cfg.Asset.BestHeader(ctx); err == nil {
 		p.payer.Tip = h.Height
 	}
@@ -431,10 +498,7 @@ func (p *Publisher) spend(ctx context.Context, kind string, need uint32) (*trans
 // promoteAhead makes a tree a previous run left held the current one when
 // the current one is used up.
 func (p *Publisher) promoteAhead(kind string) error {
-	trees := p.ents
-	if kind == kindPiece {
-		trees = p.pieces
-	}
+	trees := p.treesOf(kind)
 	p.mu.Lock()
 	s := p.set(kind)
 	cur := s.Tree
@@ -459,7 +523,7 @@ func (p *Publisher) promoteAhead(kind string) error {
 func (p *Publisher) loadKept(txid string) (*transaction.Transaction, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	for _, s := range []*treeSet{&p.st.Piece, &p.st.Entry} {
+	for _, s := range []*treeSet{&p.st.Piece, &p.st.Entry, &p.st.Outcome} {
 		for _, list := range [][]funding.Tree{s.Trees, s.Ahead} {
 			for _, t := range list {
 				if t.Txid == txid {

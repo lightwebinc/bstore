@@ -45,6 +45,27 @@ func (c Change) value() cbor.Value {
 // Encode writes the record canonically. It refuses what DecodeBucket
 // refuses, so a record this package writes is one it reads.
 func (r *Bucket) Encode() ([]byte, error) {
+	out, err := encodeRecord(r.fields(), r.Extra, BKLast, MaxBucketRecord)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := DecodeBucket(out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// EncodedSize is the length the record encodes to, whatever its bounds:
+// what the owner's tooling measures when it splits changes over tokens.
+func (r *Bucket) EncodedSize() (int, error) {
+	out, err := encodeRecord(r.fields(), r.Extra, BKLast, 1<<30)
+	if err != nil {
+		return 0, err
+	}
+	return len(out), nil
+}
+
+func (r *Bucket) fields() cbor.Map {
 	writers := make([]cbor.Value, len(r.Writers))
 	for i, w := range r.Writers {
 		writers[i] = append([]byte(nil), w...)
@@ -57,7 +78,7 @@ func (r *Bucket) Encode() ([]byte, error) {
 	for i, c := range r.Consumed {
 		consumed[i] = b(c)
 	}
-	out, err := encodeRecord(cbor.Map{
+	return cbor.Map{
 		{Key: BKMagic, Val: MagicBucket},
 		{Key: BKBucket, Val: r.Bucket},
 		{Key: BKOwner, Val: r.Owner},
@@ -70,14 +91,7 @@ func (r *Bucket) Encode() ([]byte, error) {
 		{Key: BKMapRoot, Val: b(r.MapRoot)},
 		{Key: BKCreated, Val: r.Created},
 		{Key: BKConsumed, Val: consumed},
-	}, r.Extra, BKLast, MaxBucketRecord)
-	if err != nil {
-		return nil, err
 	}
-	if _, err := DecodeBucket(out); err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 // DecodeBucket reads a bucket record, refusing it for the first rule it

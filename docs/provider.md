@@ -50,7 +50,8 @@ There are two ways in, and the provider is the same behind both.
   the provider and it takes it, and `201` with `hostedFileLocation` and
   `expiryTime` after (frozen.md section 14, row C9). A writer that
   unicasts submits its entry to the provider's `/submit` as it does to a
-  host.
+  host. `bstore put` uses upload sessions when its configuration names the
+  provider's public URL under `uploads` ([usage.md](usage.md)).
 
 Pieces may come before or after their entry, in any order. A piece no held
 closure names is **unclaimed**: it has a share of the store of its own and
@@ -314,6 +315,13 @@ how readers reach the bytes.
 | Upload sessions | `upload_sessions` open, 4 per identity and 8 per address, 60 opened an hour from one address, `upload_session_seconds` each, 65,536 objects each |
 | Remittances | one a second from one address, burst 16 |
 | Payments | a payment's BEEF at most 192 KiB; one the ledger holds is refused before its proof is checked |
+
+A command-line writer ([usage.md](usage.md)) is a process per command: each
+opens a BRC-103 session with each provider it calls, so the handshake bounds
+per address are how many of its commands one address runs a second (it
+waits out a `429` twice, up to 10 s each), and each put by upload session
+opens one session here, so the 60 sessions an hour from one address are 60
+such puts an hour.
 
 ## Operating
 

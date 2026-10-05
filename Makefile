@@ -8,7 +8,7 @@
 #
 #	make verify NODE=/path/to/node24
 
-.PHONY: verify test go-test go-oracle ts-test ts-check ts-build module module-test e2e provider-e2e s3-e2e node-check vet fmt-check deps-check vectors vectors-check fuzz
+.PHONY: verify test go-test go-oracle ts-test ts-check ts-build module module-test e2e provider-e2e s3-e2e publisher-e2e node-check vet fmt-check deps-check vectors vectors-check fuzz
 
 NODE ?= node
 TSC := $(NODE) node_modules/typescript/bin/tsc
@@ -144,3 +144,19 @@ s3-e2e: module
 	@test -n "$(REFERENCE_HOST)" || { echo "set REFERENCE_HOST=/path/to/reference-host"; exit 1; }
 	BSTORE_E2E_REFHOST=$(abspath $(REFERENCE_HOST)) BSTORE_E2E_NODE=$(abspath $(shell command -v $(NODE))) \
 		GOWORK=off go test -count=1 -timeout 45m -run '^TestS3E2E$$' -v ./cmd/bstore/
+
+# The publisher client end to end (docs/usage.md): the bstore command line
+# alone, as a bucket owner and a writer, with two bstore-provider processes
+# on a local reference overlay host loading the bundle, over MySQL, on a
+# local test chain: a 100 MiB put by upload session, the race and its
+# settlement challenges, settlement by rank killed and resumed, anchoring,
+# a verified read, a dropped blob caught by a paid challenge, rm and
+# NoSuchKey, a reclaim after the deadline and the kill switch. Not part of
+# verify: it needs Docker and a reference host directory, and NODE must
+# name a Node 24 binary by absolute path.
+#
+#	make publisher-e2e REFERENCE_HOST=/path/to/reference-host NODE=/path/to/node24
+publisher-e2e: module
+	@test -n "$(REFERENCE_HOST)" || { echo "set REFERENCE_HOST=/path/to/reference-host"; exit 1; }
+	BSTORE_E2E_REFHOST=$(abspath $(REFERENCE_HOST)) BSTORE_E2E_NODE=$(abspath $(shell command -v $(NODE))) \
+		GOWORK=off go test -count=1 -timeout 45m -run '^TestPublisherE2E$$' -v ./cmd/bstore/

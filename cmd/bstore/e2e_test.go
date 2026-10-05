@@ -789,6 +789,11 @@ func (e *rig) run(bin string, args ...string) string {
 }
 
 func (e *rig) startHost(refhost, node string, buckets, served []string) string {
+	return e.startHostAt(refhost, node, buckets, served, freePort(e.t))
+}
+
+// startHostAt starts the reference host on port.
+func (e *rig) startHostAt(refhost, node string, buckets, served []string, port int) string {
 	t := e.t
 	pw := "bstore-e2e"
 	id := strings.TrimSpace(runOut(t, "docker", "run", "-d", "--rm", "-e", "MYSQL_ROOT_PASSWORD="+pw, "-e", "MYSQL_DATABASE=overlay",
@@ -824,7 +829,6 @@ func (e *rig) startHost(refhost, node string, buckets, served []string) string {
 	for _, b := range buckets {
 		topics = append(topics, storerec.RecordsTopic(b))
 	}
-	port := freePort(t)
 	cmd := exec.Command(node, filepath.Join(refhost, "dist", "index.js"))
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"),
 		"OVERLAY_TOPICS=" + strings.Join(topics, ","), "OVERLAY_MODULES=" + mod,

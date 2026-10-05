@@ -147,6 +147,7 @@ func TestPutDeliversAndRetries(t *testing.T) {
 	}
 	host.down.Store(false)
 	// Reopen, as after a restart: the outbox and the trees are kept.
+	p.Close()
 	p2 := open(t, ctx, filepath.Join(dir, "id"), cs, store, d)
 	time.Sleep(10 * time.Millisecond)
 	p2.Outbox().now = func() time.Time { return time.Now().Add(time.Hour) }

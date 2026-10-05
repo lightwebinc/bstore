@@ -323,6 +323,9 @@ func (s *Server) Close() error {
 		_ = s.msrv.Shutdown(sctx)
 	}
 	s.wg.Wait()
+	for _, p := range s.pubs {
+		p.Close()
+	}
 	return nil
 }
 

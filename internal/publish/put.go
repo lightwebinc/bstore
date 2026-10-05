@@ -2,8 +2,10 @@ package publish
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/bsv-blockchain/go-sdk/transaction"
@@ -60,7 +62,15 @@ type Receipt struct {
 	Sent bool
 	// Pieces is how many piece carriers were minted.
 	Pieces int
+	// Uploads are the providers' answers when the closure went by upload
+	// sessions instead of piece carriers.
+	Uploads []UploadResult
+	// Hold is the hold output the entry names, when it asked for a bounty.
+	Hold *HoldRecord
 }
+
+// ErrKilled is a write after the kill switch swept this identity's trees.
+var ErrKilled = errors.New("publish: the kill switch swept this identity's trees; it publishes nothing more")
 
 // ErrNotSent is a put whose entry no facade or host quorum took while the
 // request waited; the outbox keeps sending it.
@@ -79,6 +89,9 @@ func (p *Publisher) Put(ctx context.Context, f Fields, obj Object, b *Bounty) (*
 	// The entry's own rules before anything is spent.
 	if _, err := e.Encode(); err != nil {
 		return nil, err
+	}
+	if p.Killed() {
+		return nil, ErrKilled
 	}
 	p.mintMu.Lock()
 	defer p.mintMu.Unlock()
@@ -101,8 +114,29 @@ func (p *Publisher) Put(ctx context.Context, f Fields, obj Object, b *Bounty) (*
 	if err != nil {
 		return nil, err
 	}
+	if err := p.noteBucket(f.Bucket); err != nil {
+		return nil, err
+	}
 	n := 0
-	if obj.Closure != nil {
+	var ups []UploadResult
+	if obj.Closure != nil && obj.Size > 0 && p.cfg.Delivery.uploading() {
+		retention := uint64(7 * 24 * 3600)
+		if b != nil {
+			retention = b.Retention
+		}
+		ups = p.uploadClosure(ctx, obj.Root, obj.Closure, retention)
+		taken := 0
+		for _, u := range ups {
+			if u.Err == nil {
+				taken++
+			} else {
+				p.cfg.Logf("closure %s: not taken by %s (%v); it is sent again later", short(hex.EncodeToString(obj.Root[:])), u.Provider, u.Err)
+			}
+		}
+		if taken == 0 {
+			return nil, fmt.Errorf("pieces: no provider took the closure by upload session")
+		}
+	} else if obj.Closure != nil {
 		if n, err = p.publishPieces(ctx, f.Bucket, obj.Root, obj.Closure); err != nil {
 			return nil, fmt.Errorf("pieces: %w", err)
 		}
@@ -110,8 +144,21 @@ func (p *Publisher) Put(ctx context.Context, f Fields, obj Object, b *Bounty) (*
 	r, err := p.publishEntry(ctx, e, rec, hold)
 	if r != nil {
 		r.Pieces = n
+		r.Uploads = ups
+		r.Hold = hold
 	}
 	return r, err
+}
+
+// noteBucket records a bucket this identity publishes carriers in.
+func (p *Publisher) noteBucket(bucket string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if slices.Contains(p.st.Buckets, bucket) {
+		return nil
+	}
+	p.noteBucketLocked(bucket)
+	return p.saveLocked()
 }
 
 // Delete publishes a delete entry for key (spec section 16.2).
@@ -125,8 +172,14 @@ func (p *Publisher) Delete(ctx context.Context, bucket string, id [32]byte, key 
 	if err != nil {
 		return nil, err
 	}
+	if p.Killed() {
+		return nil, ErrKilled
+	}
 	p.mintMu.Lock()
 	defer p.mintMu.Unlock()
+	if err := p.noteBucket(bucket); err != nil {
+		return nil, err
+	}
 	return p.publishEntry(ctx, e, rec, nil)
 }
 
@@ -202,6 +255,9 @@ func (p *Publisher) publishEntry(ctx context.Context, e *storerec.Entry, rec []b
 		return nil, err
 	}
 	r := &Receipt{Entry: e, Record: rec, C: carrier.Commitment(tx), Txid: tx.TxID().String()}
+	if err := p.logEntry(e, rec, r.Txid, beef); err != nil {
+		return nil, err
+	}
 	if hold != nil {
 		p.mu.Lock()
 		for i := range p.st.Holds {
@@ -212,6 +268,9 @@ func (p *Publisher) publishEntry(ctx context.Context, e *storerec.Entry, rec []b
 		err := p.saveLocked()
 		p.mu.Unlock()
 		if err != nil {
+			return nil, err
+		}
+		if err := p.registerRace(e, rec, r.Txid, hold); err != nil {
 			return nil, err
 		}
 	}

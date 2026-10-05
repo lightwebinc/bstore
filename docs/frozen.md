@@ -6,8 +6,8 @@ already published. Once one record using it is on a public host, readers
 verify against it for as long as anyone reads that record, so changing it
 afterwards is a new identifier or a new record version, never an edit.
 
-**Status: signed, with sixteen clarifications pending owner confirmation
-(section 14, rows C1 to C16).** Every other row below is signed with the
+**Status: signed, with twenty-two clarifications pending owner confirmation
+(section 14, rows C1 to C22).** Every other row below is signed with the
 value it gives, and none is provisional. The rows marked "vectors" are pinned byte for byte by
 the golden vectors the codec generates ([spec.md](spec.md) section 22); a
 vector that disagrees with a row is a defect in the codec, not a change to
@@ -205,9 +205,10 @@ least 1024. As ceilings, not floors: the BEEF ceilings of section 2.
 
 A clarification rewords a signed rule where the signed wording leaves a
 case open. Each below is pending the owner's confirmation; the codec and its
-vectors (C1 to C7), the host module (C8), the provider (C9 to C11) and the
-S3 gateway (C13 to C16) already follow it. C12 rewords how the contract
-describes the challenge seed, and binds a later on-chain form.
+vectors (C1 to C7), the host module (C8), the provider (C9 to C11), the S3
+gateway (C13 to C16) and the command line (C17 to C22) already follow it.
+C12 rewords how the contract describes the challenge seed, and binds a later
+on-chain form.
 
 | Row | Item | Clarification | Status |
 | --- | --- | --- | --- |
@@ -227,3 +228,9 @@ describes the challenge seed, and binds a later on-chain form.
 | C14 | Listing cursor, spec section 16.2 | With a `Delimiter`, a page may end on a common prefix. Its `ContinuationToken` is then the base64 of the greatest object key under that prefix (a version 1 listing's `NextMarker` is that key itself): the prefix padded to 1,024 bytes with the greatest code points that fit (U+10FFFF, then U+FFFF, U+07FF or `~` for the last one to three bytes), so the next page resumes after every key the prefix folded. Without a common prefix it is the base64 of the last key, as written | PENDING owner confirmation |
 | C15 | A reader's walk, spec sections 15.1 and 15.2 step 1 | A host answers a token stored alone with its proof, without its parent, so a reader checks `bucket-id` at `seq` 0 by finding the first token's input whose outpoint's bucket id (section 3.3) is the token's `id`; a first token with no such input fails step 1 (`bucket`). Whether the output that input spends is locked to `derive(owner, "chain")` is admission's `token-input`, which a reader without the parent does not repeat; the outpoint is unique, so the id still names one first token | PENDING owner confirmation |
 | C16 | Not found, spec section 16.3 | When no host answers anything that verifies, the writing gateway's own newest pending entry for a key still answers a read if it is a put (its own write, read at once); if it is a delete, the answer is `503 SlowDown`, not `NoSuchKey`, because `NoSuchKey` needs a proven absence or an anchored entry the delete is newer than | PENDING owner confirmation |
+| C17 | Deadline, spec sections 4.3, 9.5 and 9.6 | A writer settles only while its tip is below `deadline`, so the settlement mines at or before `deadline`; it reclaims only once its tip has reached `deadline`, so the reclaim mines after it. At a tip equal to `deadline` the bounty has lapsed. A hold output with a settlement recorded is never reclaimed, and a reclaimed one is never settled | PENDING owner confirmation |
+| C18 | First sight, spec sections 9.3 and 9.4 | The writer's client takes first sight per look at the hosts: the eligible advertisements first seen in one look share that look's time and tie, the lower advertisement txid (display order) ranking first. A renewal successor keeps its original's sight, and the advertisement checked unspent before settlement is the one first seen, followed through its renewal successors | PENDING owner confirmation |
+| C19 | The settlement challenge, spec section 9.4 | When a candidate's terms cannot be read, the writer challenges it with `min(checkC, 30)` samples, 30 being the least `freeC` a provider may publish. A candidate that would price its answer (its `minBounty` above the bounty, the hold output not yet `minAge` deep, its two free answers given) is neither passed nor failed: the writer waits, or pays as its own policy allows | PENDING owner confirmation |
+| C20 | Exit codes, spec section 15.4 | A key the map proves absent, asked for by name, exits 1 (`NoSuchKey`): what was asked for is proven not to be there. A key whose entry no host produces stays 3 | PENDING owner confirmation |
+| C21 | Anchoring, spec sections 3.4, 3.5 and 4.4 | The tooling walks the unanchored entries of the owner and of the writers the token it mints names (a writer it adds included, against which a reader then checks that token's entries). It splits a batch over tokens so that one token carries each key's change, the key's superseded entries going to that token's `consumed` or to tokens of `consumed` alone before it. It mints only on a latest token whose output the spend source shows unspent | PENDING owner confirmation |
+| C22 | Remittance, spec sections 9.5 and 10.1 | The `settle` remittance carries the settlement as Atomic BEEF with its proof: the writer sends it once the settlement has mined, and a payee takes it only once it verifies against the payee's headers | PENDING owner confirmation |
