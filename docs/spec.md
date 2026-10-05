@@ -12,8 +12,10 @@ it, as an expiring mined token, and the publisher may attach a **hold
 bounty** that it pays, by rank, to the first providers to advertise and pass
 a challenge. Anyone may buy more time from a provider (a renewal) or a proof
 that a provider still holds an object (a **challenge**): a sample of 4 KiB
-segments chosen by a seed no single party controls, each proven into the
-object's **proof root**, which the object entry commits to. The bucket's
+segments chosen by a seed made of a recent block's hash, the buyer's nonce
+and the provider's key, which the provider does not control (clarification
+pending owner confirmation, frozen.md section 14, row C12), each proven into
+the object's **proof root**, which the object entry commits to. The bucket's
 owner orders the bucket by a chain of mined **bucket tokens**; each token
 commits to the bucket's whole key map, so that a reader proves what a key
 names, what a listing holds and that a key is absent against a token it
@@ -421,7 +423,9 @@ The seed is the block at `seedHeight`. A provider answers a request only if its 
 An answerer MUST answer 422 `unknown-root` unless `root` is a root it holds (or fronts) and `proofRoot` and `size` equal its own computation for that root: a buyer cannot obtain a signed response to a request about a proof root the content does not have, and so cannot manufacture an apparently provable failure.
 Neither party picks the seed alone: the miners make the block, the buyer
 draws the nonce after it, and `provider` gives two advertisers of one root
-different samples, so that one cannot answer from another's response.
+different samples, so that one cannot answer from another's response. What the buyer's choice of nonce lets it do, and what a later on-chain use
+must keep from the prover, is clarification C12 (pending owner
+confirmation, frozen.md section 14).
 
 `range` lets a later partial-hosting profile challenge only the blobs a
 host claims. A complete host answers a request with `range` like any other.
@@ -1337,7 +1341,7 @@ verify is not used, the host is named, and the reader says so (exit 3).
 A reader holds, per bucket chain, the highest `seq` it has verified. It
 asks `bucket`, verifies every token answered against its own headers, walks
 back by `prev` to a token it already holds or to `seq` 0 (by `bucket-seq`,
-or `chain` when it pays), and checks `bucket-id` at `seq` 0. A token answered
+or `chain` when it pays), and checks `bucket-id` at `seq` 0 (how without the token's parent: clarification pending owner confirmation, frozen.md section 14, row C15). A token answered
 with a `seq` below the one it holds is a `rollback`. With a spend source
 (bcommon `chainview` or `nodeapi`), the reader checks that the latest
 token's output is unspent; without one it says the bucket may be stale.
@@ -1406,7 +1410,7 @@ a key S3 would accept but section 2 refuses (a control character) is refused wit
 | `CopyObject` | a new put entry naming the same `root`, `size`, `contentHash` and `proofRoot` as the source's current entry, and, as S3's default `COPY` metadata directive does, its `contentType`, `etag` and `meta`; with `REPLACE` the request's content type and metadata instead, and the same `etag`. Within one bucket no piece is published again, and providers already holding the root may advertise it for a new bounty; across buckets the gateway publishes the closure's pieces again on the destination's blob topic, whose providers have not seen them |
 | `DeleteObject` | a delete entry; `204`. The key leaves the map at the next token, as a removal (section 3.4); a delete of a key the map does not hold is named in the next token's `consumed`, never a removal, so it is applied once and never again |
 | `HeadObject`, `GetObject` | `object` at the hosts configured, the checks of section 15.2 (steps 1 to 5 for a head, which never asks a provider), blobs from the advertisers of `ads`; a `Range` maps to the blobs it overlaps, each verified before any byte is sent |
-| `ListObjectsV2` | `list` pages, proven complete per page (section 11.3); a key a page names as unheld (role 2) is listed from its entry fetched by `entry` at another host, and if no host produces it the listing answers 503; `Delimiter` is applied by the gateway to the proven page; `ContinuationToken` is the base64 of the last key; `MaxKeys` at most 1000 |
+| `ListObjectsV2` | `list` pages, proven complete per page (section 11.3); a key a page names as unheld (role 2) is listed from its entry fetched by `entry` at another host, and if no host produces it the listing answers 503; `Delimiter` is applied by the gateway to the proven page; `ContinuationToken` is the base64 of the last key (after a common prefix: clarification pending owner confirmation, frozen.md section 14, row C14); `MaxKeys` at most 1000 |
 | `ListBuckets` | the configured buckets |
 | everything else (versioning, ACLs, policies, lifecycle, tagging, object lock, encryption headers, presigned POST) | `NotImplemented` |
 
@@ -1419,7 +1423,7 @@ a key S3 would accept but section 2 refuses (a control character) is refused wit
   is informative; integrity is the CHIRP root and the content hash. An
   entry without `etag` is answered with `"<64 hex of root>-1"`, which such
   clients read as a multipart ETag and do not compare.
-- **`x-amz-checksum-sha256`** is the base64 of `contentHash`, with `x-amz-checksum-type: FULL_OBJECT`, for multipart objects too; S3 itself gives SHA-256 multipart objects only a composite checksum, so this is a deviation, and clients that check the value still pass.
+- **`x-amz-checksum-sha256`** is the base64 of `contentHash`, with `x-amz-checksum-type: FULL_OBJECT`, for multipart objects too; S3 itself gives SHA-256 multipart objects only a composite checksum, so this is a deviation, and clients that check the value still pass A ranged answer carries neither (clarification pending owner confirmation, frozen.md section 14, row C13).
 - **`x-amz-meta-bstore-root`** is the hex of `root`; `x-amz-meta-*` the entry's `meta`. User metadata keys starting `bstore-` are reserved and refused on a put.
 - **`Content-Type`** is the entry's `contentType`. On a put the gateway lowercases the client's value and strips its parameters; with none, or one that breaks section 4.1's rule, it records `application/octet-stream`.
 - **`Last-Modified`** is the entry's `created`: the writer's claim. The
@@ -1427,7 +1431,7 @@ a key S3 would accept but section 2 refuses (a control character) is refused wit
 - **Consistency.** A gateway reads its own pending entries at once; other
   gateways see a write when a token anchors it. S3's strong read-after-write
   consistency holds only at the writing gateway.
-- **Not found.** `NoSuchKey` when the host's answer proves the key absent (section 11.3), or, at the writing gateway, when its own pending delete is newer than the anchored entry; `503 SlowDown` when no host answers at all, because an empty answer proves nothing, or when the map names the key's entry and no host produces it.
+- **Not found.** `NoSuchKey` when the host's answer proves the key absent (section 11.3), or, at the writing gateway, when its own pending delete is newer than the anchored entry; `503 SlowDown` when no host answers at all, because an empty answer proves nothing, or when the map names the key's entry and no host produces it. When no host answers, the writing gateway's own pending put still answers and its pending delete does not (clarification pending owner confirmation, frozen.md section 14, row C16).
 - **Errors in flight.** A blob that fails its hash at every advertiser after
   headers were sent ends the response early; the declared
   `Content-Length` makes the truncation visible to the client.

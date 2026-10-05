@@ -1,0 +1,515 @@
+// Package publish is the least of a bstore publisher that an S3 gateway
+// needs to write (spec sections 5, 9.2, 13 and 14), shaped so that the
+// publisher client grows from it: it builds an object's CHIRP closure and
+// proof root while the content streams (Store.Stage), mints a hold output
+// when a bounty is asked for, makes the piece carriers and the entry, and
+// delivers them over the plane or by unicast to the hosts and providers
+// configured.
+//
+// Save before send. Every carrier spends one output of a mined funding
+// tree, and a carrier rebuilt differently on the same output would be a
+// second carrier the first's acknowledgement never names (spec section
+// 13.2). So the outputs a put will spend are recorded used, and saved,
+// before any carrier is signed; each carrier is written to the outbox,
+// synced, before it is sent; and what a target did not take stays in the
+// outbox and is sent again, the same bytes, by the background run and on
+// the next start. Funding trees are recorded with their fee coin before
+// they reach the settlement leg (bcommon producer Prepare) and settled on
+// the next start (Recover), as the provider does.
+//
+// What a publisher client adds beyond this package: judging the hold race
+// (ranking advertisements by first sight, settlement challenges), settling
+// a bounty by rank with BRC-29 outputs and remittances, and reclaiming a
+// bounty after its deadline. The hold outputs minted here are kept in the
+// state for that.
+package publish
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/bsv-blockchain/go-sdk/script"
+	"github.com/bsv-blockchain/go-sdk/transaction"
+
+	"github.com/lightwebinc/bcommon/bwallet"
+	"github.com/lightwebinc/bcommon/carrier"
+	"github.com/lightwebinc/bcommon/funding"
+	"github.com/lightwebinc/bcommon/mint"
+	"github.com/lightwebinc/bcommon/nodeapi"
+	"github.com/lightwebinc/bcommon/producer"
+	bpub "github.com/lightwebinc/bcommon/publish"
+	"github.com/lightwebinc/bcommon/pushdrop"
+
+	"github.com/lightwebinc/bstore/internal/storerec"
+)
+
+// Profile is a publisher identity's embedded wallet: the fund key under
+// [1, "bstore"] key id fund, counterparty self, and the registered basket.
+var Profile = bwallet.Profile{
+	FundProtocol:   storerec.Protocol,
+	FundKeyID:      storerec.KeyFund,
+	FundBasket:     "bstore fund",
+	Version:        "bstore-publisher-1",
+	LegacyPoolFile: "bstore-publisher-pool.json",
+}
+
+// WalletDir is an identity's wallet under its directory.
+func WalletDir(dir string) string { return filepath.Join(dir, "wallet") }
+
+// Init creates an identity's wallet under dir and returns its key.
+func Init(dir string) (string, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	w, err := bwallet.Create(WalletDir(dir), Profile)
+	if err != nil {
+		return "", err
+	}
+	return w.Signer().IdentityHex(), nil
+}
+
+// Config is one publisher identity.
+type Config struct {
+	// Dir is the identity's directory: wallet/, publisher.json, outbox/.
+	Dir string
+	// Asset is the node proofs and spends are asked of; Settler the
+	// settlement leg mined transactions are handed to.
+	Asset   *nodeapi.Asset
+	Settler bpub.Settler
+	Fees    mint.Fees
+	Mainnet bool
+	// PieceTree and EntryTree are the outputs of a new piece or entry
+	// funding tree (spec section 19.2: small trees cost less per piece).
+	PieceTree int
+	EntryTree int
+	// Store is the local closure store, shared by every identity.
+	Store *Store
+	// Delivery reaches the plane, the hosts and the providers.
+	Delivery *Delivery
+	Logf     func(format string, args ...any)
+	Now      func() time.Time
+}
+
+// Publisher is one identity's writer.
+type Publisher struct {
+	cfg    Config
+	wallet *bwallet.Embedded
+	signer *bwallet.Signer
+
+	mu sync.Mutex // st and every save
+	st *state
+
+	mintMu sync.Mutex // one put mints at a time: the trees are not shared
+	kept   *producer.Kept
+	payer  *producer.Payer
+	pieces *producer.Trees
+	ents   *producer.Trees
+	outbox *Outbox
+}
+
+type state struct {
+	Identity string        `json:"identity"`
+	Piece    treeSet       `json:"piece"`
+	Entry    treeSet       `json:"entry"`
+	Pending  []pendingTree `json:"pendingTrees,omitempty"`
+	Holds    []HoldRecord  `json:"holds,omitempty"`
+}
+
+type treeSet struct {
+	Tree  *funding.Tree  `json:"tree,omitempty"`
+	Trees []funding.Tree `json:"trees,omitempty"`
+	Ahead []funding.Tree `json:"ahead,omitempty"`
+}
+
+type pendingTree struct {
+	Kind         string         `json:"kind"`
+	Tree         funding.Tree   `json:"tree"`
+	Coin         bwallet.Output `json:"coin"`
+	ReturnedOnce bool           `json:"returnedOnce,omitempty"`
+}
+
+// HoldRecord is a hold output this identity minted (spec section 9.2): what
+// a publisher client settles by rank or reclaims after the deadline.
+type HoldRecord struct {
+	Txid    string `json:"txid"`
+	Vout    uint32 `json:"vout"`
+	Sats    uint64 `json:"sats"`
+	RawHex  string `json:"rawHex"`
+	BumpHex string `json:"bumpHex,omitempty"`
+	Height  uint32 `json:"height,omitempty"`
+	// Entry is the commitment of the entry that names it (display order),
+	// once that entry is minted.
+	Entry string `json:"entry,omitempty"`
+}
+
+const (
+	kindPiece = "piece"
+	kindEntry = "entry"
+)
+
+// Open opens an identity, settles the funding trees a previous run left
+// signed and unadopted, and resumes its outbox.
+func Open(ctx context.Context, cfg Config) (*Publisher, error) {
+	if cfg.Logf == nil {
+		cfg.Logf = log.Printf
+	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
+	if cfg.PieceTree <= 0 {
+		cfg.PieceTree = 64
+	}
+	if cfg.EntryTree <= 0 {
+		cfg.EntryTree = 16
+	}
+	if cfg.Fees == (mint.Fees{}) {
+		cfg.Fees = mint.DefaultFees
+	}
+	if cfg.Store == nil || cfg.Delivery == nil || cfg.Asset == nil || cfg.Settler == nil {
+		return nil, errors.New("publish: a store, a delivery, a node and a settlement leg are required")
+	}
+	w, err := bwallet.Open(WalletDir(cfg.Dir), Profile)
+	if err != nil {
+		return nil, fmt.Errorf("wallet: %w", err)
+	}
+	w.Mainnet = cfg.Mainnet
+	w.Originator = "bstore-publisher"
+	p := &Publisher{cfg: cfg, wallet: w, signer: w.Signer()}
+	if p.st, err = loadState(cfg.Dir); err != nil {
+		return nil, err
+	}
+	if p.st.Identity == "" {
+		p.st.Identity = p.signer.IdentityHex()
+	} else if p.st.Identity != p.signer.IdentityHex() {
+		return nil, fmt.Errorf("publish: the state in %s belongs to %s, not this wallet's %s", cfg.Dir, p.st.Identity, p.signer.IdentityHex())
+	}
+	p.kept = &producer.Kept{Load: p.loadKept}
+	p.payer = &producer.Payer{Pool: w.Pool, Keys: map[string]*bwallet.Signer{p.signer.IdentityHex(): p.signer},
+		Kept: p.kept, Settler: cfg.Settler, Asset: cfg.Asset, Fees: cfg.Fees, Note: p.note}
+	p.pieces = p.newTrees(kindPiece, storerec.PieceDerivation, cfg.PieceTree)
+	p.ents = p.newTrees(kindEntry, storerec.EntryDerivation, cfg.EntryTree)
+	if p.outbox, err = openOutbox(filepath.Join(cfg.Dir, "outbox"), cfg.Delivery, cfg.Logf, cfg.Now); err != nil {
+		return nil, err
+	}
+	if err := p.save(); err != nil {
+		return nil, err
+	}
+	if err := p.recoverTrees(ctx); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// Identity is the identity key, 33 bytes.
+func (p *Publisher) Identity() []byte { return p.signer.Identity.Compressed() }
+
+// IdentityHex is the identity key, 66 hex digits.
+func (p *Publisher) IdentityHex() string { return p.signer.IdentityHex() }
+
+// Wallet is the identity's wallet.
+func (p *Publisher) Wallet() *bwallet.Embedded { return p.wallet }
+
+// Outbox is what the identity has not delivered yet.
+func (p *Publisher) Outbox() *Outbox { return p.outbox }
+
+// Holds are the hold outputs this identity minted.
+func (p *Publisher) Holds() []HoldRecord {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return slices.Clone(p.st.Holds)
+}
+
+func (p *Publisher) note(format string, args ...any) {
+	if strings.HasPrefix(format, "funding tree published") {
+		return
+	}
+	p.cfg.Logf(format, args...)
+}
+
+func carrierParams(d pushdrop.Derivation) carrier.Params {
+	return carrier.Params{Derivation: d, FundingTag: storerec.TagFunding, ValidatePayload: func([]byte) error { return nil },
+		ErrIdentity: storerec.ErrIdentity}
+}
+
+func (p *Publisher) newTrees(kind string, d pushdrop.Derivation, count int) *producer.Trees {
+	return &producer.Trees{Payer: p.payer, State: treeState{p, kind}, Identity: p.signer.IdentityHex(),
+		Count: count, Sats: 1, Funder: "pool",
+		Lock: func(ctx context.Context) (*script.Script, error) {
+			return carrier.FundingLock(ctx, p.wallet, p.wallet.Originator, carrierParams(d))
+		},
+		Change: p.signer.FundScript, Facade: keptFacade(), Topic: "tm_bstore_kept",
+		Prepare: func(tree funding.Tree, coin bwallet.Output) error { return p.prepareTree(kind, tree, coin) }}
+}
+
+// set is the tree set of kind; the caller holds p.mu.
+func (p *Publisher) set(kind string) *treeSet {
+	if kind == kindPiece {
+		return &p.st.Piece
+	}
+	return &p.st.Entry
+}
+
+type treeState struct {
+	p    *Publisher
+	kind string
+}
+
+func (t treeState) Current() *funding.Tree {
+	t.p.mu.Lock()
+	defer t.p.mu.Unlock()
+	s := t.p.set(t.kind)
+	if s.Tree == nil {
+		return nil
+	}
+	c := *s.Tree
+	return &c
+}
+
+func (t treeState) Adopt(tr funding.Tree) error {
+	p := t.p
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s := p.set(t.kind)
+	s.Tree = &tr
+	s.Trees = producer.Index(s.Trees, &tr)
+	s.Ahead = slices.DeleteFunc(s.Ahead, func(a funding.Tree) bool { return a.Txid == tr.Txid })
+	p.dropPending(tr.Txid)
+	return p.saveLocked()
+}
+
+func (p *Publisher) dropPending(txid string) {
+	p.st.Pending = slices.DeleteFunc(p.st.Pending, func(pt pendingTree) bool { return pt.Tree.Txid == txid })
+}
+
+func (p *Publisher) prepareTree(kind string, tree funding.Tree, coin bwallet.Output) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.dropPending(tree.Txid)
+	p.st.Pending = append(p.st.Pending, pendingTree{Kind: kind, Tree: tree, Coin: coin})
+	if err := p.saveLocked(); err != nil {
+		p.dropPending(tree.Txid)
+		return err
+	}
+	return nil
+}
+
+// recoverTrees settles every tree a run signed and did not adopt, before
+// anything is spent (bcommon producer Recover).
+func (p *Publisher) recoverTrees(ctx context.Context) error {
+	p.mu.Lock()
+	pending := slices.Clone(p.st.Pending)
+	p.mu.Unlock()
+	for _, pt := range pending {
+		trees := p.ents
+		if pt.Kind == kindPiece {
+			trees = p.pieces
+		}
+		id := pt.Tree.Txid
+		if slices.ContainsFunc(trees.Held(), func(h funding.Tree) bool { return h.Txid == id }) {
+			continue
+		}
+		p.mu.Lock()
+		s := p.set(pt.Kind)
+		adopted := slices.ContainsFunc(s.Trees, func(t funding.Tree) bool { return t.Txid == id })
+		if adopted {
+			p.dropPending(id)
+			err := p.saveLocked()
+			p.mu.Unlock()
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		p.mu.Unlock()
+		r, err := trees.Recover(ctx, pt.Tree, pt.Coin)
+		if errors.Is(err, producer.ErrPublish) {
+			err = nil // adopted; its publish sends nothing
+		}
+		if err != nil {
+			p.cfg.Logf("funding tree %s was signed by a run that stopped before recording it, and what became of it could not be settled now (%v): its record is kept", short(id), err)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			continue
+		}
+		p.mu.Lock()
+		switch r.Outcome {
+		case producer.TreeAdopted, producer.CoinSpent:
+			p.dropPending(id)
+		case producer.TreeHeld:
+			s := p.set(pt.Kind)
+			s.Ahead = producer.Index(s.Ahead, &r.Tree)
+		case producer.CoinReturned:
+			for i := range p.st.Pending {
+				if p.st.Pending[i].Tree.Txid != id {
+					continue
+				}
+				if p.st.Pending[i].ReturnedOnce {
+					p.dropPending(id)
+					p.cfg.Logf("funding tree %s: the node still does not know it, so its record is dropped", short(id))
+				} else {
+					p.st.Pending[i].ReturnedOnce = true
+					p.cfg.Logf("funding tree %s: its coin is back in the pool and its record kept for one more start", short(id))
+				}
+				break
+			}
+		}
+		err = p.saveLocked()
+		p.mu.Unlock()
+		if err != nil {
+			return err
+		}
+		p.cfg.Logf("funding tree %s: %s", short(id), r.Outcome)
+	}
+	return nil
+}
+
+// spend reserves need outputs of a mined tree of kind and records them used
+// before it returns: no carrier is signed on an output the state does not
+// already hold spent.
+func (p *Publisher) spend(ctx context.Context, kind string, need uint32) (*transaction.Transaction, uint32, error) {
+	trees := p.ents
+	if kind == kindPiece {
+		trees = p.pieces
+	}
+	if h, err := p.cfg.Asset.BestHeader(ctx); err == nil {
+		p.payer.Tip = h.Height
+	}
+	if err := p.promoteAhead(kind); err != nil {
+		return nil, 0, err
+	}
+	tree, vout, err := trees.Spend(ctx, need)
+	if errors.Is(err, producer.ErrPublish) {
+		tree, vout, err = trees.Spend(ctx, need)
+	}
+	if err != nil {
+		return nil, 0, feeError(fmt.Errorf("%s funding tree: %w", kind, err))
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s := p.set(kind)
+	id := tree.TxID().String()
+	if s.Tree == nil || s.Tree.Txid != id {
+		return nil, 0, fmt.Errorf("publish: the %s tree spent is not the current one", kind)
+	}
+	if s.Tree.Next < vout+need {
+		s.Tree.Next = vout + need
+		s.Trees = producer.Index(s.Trees, s.Tree)
+	}
+	if err := p.saveLocked(); err != nil {
+		return nil, 0, err
+	}
+	return tree, vout, nil
+}
+
+// promoteAhead makes a tree a previous run left held the current one when
+// the current one is used up.
+func (p *Publisher) promoteAhead(kind string) error {
+	trees := p.ents
+	if kind == kindPiece {
+		trees = p.pieces
+	}
+	p.mu.Lock()
+	s := p.set(kind)
+	cur := s.Tree
+	if cur != nil && cur.Remaining() > 0 {
+		p.mu.Unlock()
+		return nil
+	}
+	ahead := slices.Clone(s.Ahead)
+	p.mu.Unlock()
+	held := trees.Held()
+	for _, t := range ahead {
+		if slices.ContainsFunc(held, func(h funding.Tree) bool { return h.Txid == t.Txid }) {
+			continue
+		}
+		if t.IdentityKeyHex == p.signer.IdentityHex() && t.Remaining() > 0 {
+			return treeState{p, kind}.Adopt(t)
+		}
+	}
+	return nil
+}
+
+func (p *Publisher) loadKept(txid string) (*transaction.Transaction, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, s := range []*treeSet{&p.st.Piece, &p.st.Entry} {
+		for _, list := range [][]funding.Tree{s.Trees, s.Ahead} {
+			for _, t := range list {
+				if t.Txid == txid {
+					return funding.Rebuild(t.RawHex, t.BumpHex, t.BeefHex)
+				}
+			}
+		}
+		if s.Tree != nil && s.Tree.Txid == txid {
+			return funding.Rebuild(s.Tree.RawHex, s.Tree.BumpHex, s.Tree.BeefHex)
+		}
+	}
+	for _, pt := range p.st.Pending {
+		if pt.Tree.Txid == txid {
+			return funding.Rebuild(pt.Tree.RawHex, pt.Tree.BumpHex, pt.Tree.BeefHex)
+		}
+	}
+	return nil, fmt.Errorf("publish: %s is not a transaction this identity keeps", txid)
+}
+
+func (p *Publisher) save() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.saveLocked()
+}
+
+func (p *Publisher) saveLocked() error {
+	raw, err := json.MarshalIndent(p.st, "", " ")
+	if err != nil {
+		return err
+	}
+	tmp := filepath.Join(p.cfg.Dir, "tmp")
+	if err := os.MkdirAll(tmp, 0o700); err != nil {
+		return err
+	}
+	return writeFileSync(tmp, filepath.Join(p.cfg.Dir, "publisher.json"), raw)
+}
+
+func loadState(dir string) (*state, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, "publisher.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return &state{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var st state
+	if err := json.Unmarshal(raw, &st); err != nil {
+		return nil, fmt.Errorf("publisher.json: %w", err)
+	}
+	return &st, nil
+}
+
+// feeError words the library's refusals to find a fee input.
+func feeError(err error) error {
+	var nc *producer.NoCoinError
+	if errors.As(err, &nc) {
+		if nc.Held > 0 || nc.Minting > 0 {
+			return fmt.Errorf("fee input: %w: change from %d unproven transaction(s) and %d tree(s) minting; it becomes spendable once mined", nc.Err, nc.Held, nc.Minting)
+		}
+		return fmt.Errorf("fee input: %w (fund the identity)", nc.Err)
+	}
+	return err
+}
+
+func short(txid string) string {
+	if len(txid) > 12 {
+		return txid[:12]
+	}
+	return txid
+}

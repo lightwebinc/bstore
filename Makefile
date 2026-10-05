@@ -8,7 +8,7 @@
 #
 #	make verify NODE=/path/to/node24
 
-.PHONY: verify test go-test go-oracle ts-test ts-check ts-build module module-test e2e provider-e2e node-check vet fmt-check deps-check vectors vectors-check fuzz
+.PHONY: verify test go-test go-oracle ts-test ts-check ts-build module module-test e2e provider-e2e s3-e2e node-check vet fmt-check deps-check vectors vectors-check fuzz
 
 NODE ?= node
 TSC := $(NODE) node_modules/typescript/bin/tsc
@@ -131,3 +131,16 @@ provider-e2e: module
 	@test -n "$(REFERENCE_HOST)" || { echo "set REFERENCE_HOST=/path/to/reference-host"; exit 1; }
 	BSTORE_E2E_REFHOST=$(abspath $(REFERENCE_HOST)) BSTORE_E2E_NODE=$(abspath $(shell command -v $(NODE))) \
 		GOWORK=off go test -count=1 -timeout 30m -run '^TestProviderE2E$$' -v ./cmd/bstore-provider/
+
+# The S3 gateway end to end (docs/s3.md): bstore s3d, two bstore-provider
+# processes and a test-only bucket owner on a local reference overlay host
+# loading the bundle, over MySQL, on a local test chain, driven by the AWS
+# CLI and by Terraform's S3 backend when terraform or tofu is installed.
+# Not part of verify: it needs Docker, the aws command and a reference host
+# directory, and NODE must name a Node 24 binary by absolute path.
+#
+#	make s3-e2e REFERENCE_HOST=/path/to/reference-host NODE=/path/to/node24
+s3-e2e: module
+	@test -n "$(REFERENCE_HOST)" || { echo "set REFERENCE_HOST=/path/to/reference-host"; exit 1; }
+	BSTORE_E2E_REFHOST=$(abspath $(REFERENCE_HOST)) BSTORE_E2E_NODE=$(abspath $(shell command -v $(NODE))) \
+		GOWORK=off go test -count=1 -timeout 45m -run '^TestS3E2E$$' -v ./cmd/bstore/
