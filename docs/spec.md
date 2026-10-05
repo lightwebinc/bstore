@@ -22,7 +22,7 @@ verified itself. Readers see S3 through a gateway.
 This document is normative. MUST, MUST NOT, SHOULD and MAY are used as in
 RFC 2119. Every byte-level and name-level choice that cannot change once a
 record is on a public host is listed in [frozen.md](frozen.md). The golden
-vectors (section 22) are part of the contract once they exist.
+vectors (section 22) are part of the contract.
 
 bstore adopts BRC-26 advertisements and BRC-167 CHIRP Profile 1 unchanged:
 "advertisement", "root", "branch", "blob", "closure", "complete host" and
@@ -1628,7 +1628,8 @@ providers subscribe per bucket, never to an aggregate.
 
 ## 21. Registry entries
 
-Proposed for bcommon's registry (`docs/registry.md`), checked against it:
+Registered in bcommon's registry (`docs/registry.md`) before anything is
+published under them, and checked against it:
 its prefixes `bf`, `gw`, `bl`, `bb`, `bo`, `se`, `bc` and `vx` (tests), and `bs`, unassigned and never to be assigned; its protocols, topic namespaces, lookup services, routes and
 baskets. The registry already says a storage application takes `st`; `st`
 is none of the registered prefixes, `[1, "bstore"]` is no registered

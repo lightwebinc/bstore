@@ -35,8 +35,8 @@ the same bytes and competes to hold them. Readers speak S3.
 
 ## Status
 
-Contract draft. Nothing is frozen until every row of
-[docs/frozen.md](docs/frozen.md) is signed.
+Contract signed: every row of [docs/frozen.md](docs/frozen.md) is frozen.
+The codec and its golden vectors come next.
 
 ## License
 
