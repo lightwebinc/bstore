@@ -376,6 +376,7 @@ type proc struct {
 	data     string
 	config   string
 	direct   string // its own listener
+	metrics  string
 	identity string
 	cmd      *exec.Cmd
 	out      *lockedBuf
@@ -415,6 +416,7 @@ func (e *e2e) provider(name string, publicPort *int, settle string) *proc {
 	}
 	id := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(out)), "identity"))
 	port := freePort(e.t)
+	mport := freePort(e.t)
 	pub := port
 	if publicPort != nil {
 		pub = *publicPort
@@ -426,9 +428,10 @@ func (e *e2e) provider(name string, publicPort *int, settle string) *proc {
 		"data": data, "listen": fmt.Sprintf("127.0.0.1:%d", port), "tls_cert": e.cert, "tls_key": e.key,
 		"public_url": fmt.Sprintf("https://127.0.0.1:%d/store", pub), "node": e.cs.URL, "settle": settle, "headers": e.cs.URL,
 		"hosts": []string{e.host}, "buckets": []map[string]any{{"bucket": e2eBucket}}, "tree_count": 4,
-		"terms":  map[string]any{"challenge_base": 10, "challenge_per_sample": 1, "free_c": 30, "min_bounty": 1000, "min_age": 2, "renew_per_gib_day": 100, "renew_minimum": 50},
-		"limits": map[string]any{"challenge_burst": 20},
-		"policy": map[string]any{"answer_inline": publicPort == nil},
+		"terms":          map[string]any{"challenge_base": 10, "challenge_per_sample": 1, "free_c": 30, "min_bounty": 1000, "min_age": 2, "renew_per_gib_day": 100, "renew_minimum": 300},
+		"limits":         map[string]any{"challenge_burst": 20},
+		"policy":         map[string]any{"answer_inline": publicPort == nil},
+		"metrics_listen": fmt.Sprintf("127.0.0.1:%d", mport),
 	}
 	raw, _ := json.MarshalIndent(cfg, "", "  ")
 	path := filepath.Join(e.dir, "provider-"+name+".json")
@@ -436,7 +439,7 @@ func (e *e2e) provider(name string, publicPort *int, settle string) *proc {
 		e.t.Fatal(err)
 	}
 	f, _ := os.Create(filepath.Join(e.dir, "provider-"+name+".log"))
-	return &proc{name: name, data: data, config: path, direct: fmt.Sprintf("https://127.0.0.1:%d", port), identity: id, out: &lockedBuf{f: f}}
+	return &proc{name: name, data: data, config: path, direct: fmt.Sprintf("https://127.0.0.1:%d", port), metrics: fmt.Sprintf("http://127.0.0.1:%d/metrics", mport), identity: id, out: &lockedBuf{f: f}}
 }
 
 func (e *e2e) fund(p *proc) {
@@ -487,9 +490,7 @@ func (p *proc) stop() {
 
 // metric reads a counter of the provider's /metrics with a label value.
 func (p *proc) metric(name, label string) float64 {
-	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}} //nolint:gosec // the test's own loopback server
-	c := &http.Client{Transport: tr, Timeout: 5 * time.Second}
-	res, err := c.Get(p.direct + "/metrics")
+	res, err := http.Get(p.metrics)
 	if err != nil {
 		return 0
 	}

@@ -25,7 +25,10 @@ There are two ways in, and the provider is the same behind both.
   the PushDrop under `derive(writer, "piece")`, its field signature, the
   writer's funding output and its value) and its funding tree must be
   mined in the provider's headers: what the provider keeps is a writer's
-  signed piece, paid for with a mined output, never anyone's junk. On
+  signed piece, paid for with a mined output, never anyone's junk. One
+  funding output pays for one carrier (spec section 13.2): a second,
+  different carrier on an outpoint already seen, piece or entry, is
+  refused, so a mined output buys one piece or one entry. On
   `tm_bstore_<bucket>` the provider runs the host's admission rules (spec
   section 12.1) and takes put entries; everything else a records topic
   carries is a host's business and is passed over. The answer is the
@@ -35,7 +38,12 @@ There are two ways in, and the provider is the same behind both.
   session bound to the caller's identity; `PUT` (and `HEAD`)
   `<public>/chirp/v1/uploads/<id>/objects/<object>` stages one object, its
   body hashed and refused on a mismatch; `POST .../<id>/commit` with
-  `{"rootIdentifier"}` checks the closure as a complete host does. A
+  `{"rootIdentifier"}` checks the closure as a complete host does, bounded:
+  the root must be staged in this session, its logical length within
+  `policy.max_object` before anything is walked, every object staged in
+  the session or held already, and the walk runs under the verification
+  limit with a deadline; a root committed once, or held already, is not
+  walked again. A
   provider advertises only for an entry (spec section 9.3), so the commit
   answers `202` with the closure staged until an entry for the root reaches
   the provider and it takes it, and `201` with `hostedFileLocation` and
@@ -73,15 +81,26 @@ and object hash, and the closure's objects in order and sorted.
 ### The hold policy and the bounty
 
 An entry is taken when the provider's policy allows it (`policy` below:
-size, retention, and whether it holds without a bounty) and, for a bounty,
+size, retention, and whether it holds without a bounty; an entry dated
+more than ten minutes ahead of the provider's clock is declined, and the
+advertisement it asks for must end within `max_retention_seconds` of now)
+and, for a bounty,
 when the provider's own checks of spec section 9.3 pass with its own node
 and headers: the hold output exists, is mined (its proof verifies in the
 provider's headers), is locked to `derive(writer, "hold")`, holds exactly
 `satoshis`, is unspent by positive evidence from the node (a node that does
 not answer is not evidence), is worth at least `min_bounty`, and the
-entry's `deadline` is at least `min_deadline_blocks` ahead of the tip. An
-entry whose bounty fails is declined, or held without racing when
-`hold_unbountied` is on.
+entry's `deadline` is at least `min_deadline_blocks` ahead of the tip. One
+hold output settles one entry (spec section 9.2): a second entry naming a
+hold output that backs an entry the provider took is declined. An entry
+whose bounty fails is declined, or held without racing when
+`hold_unbountied` is on; a check the node or the header source could not
+answer decides nothing, and the entry is looked at again. An entry the
+provider took is checked against the closure it holds: another size,
+content hash or proof root is declined. A closure is checked once for all
+the entries waiting on it, and the proof root decides every one of them in
+the same pass. An entry whose closure has not arrived within
+`unclaimed_seconds` is declined.
 
 ### Advertising, and the race
 
@@ -121,7 +140,9 @@ output went to another transaction.
 ### Renewals
 
 `POST <front>/renew` with `{"root": <64 hex>, "until": <Unix seconds>}`
-(spec sections 10.1 and 10.3). It is priced (BRC-105): `renew_per_gib_day`
+(spec sections 10.1 and 10.3), over BRC-104. It is always priced (BRC-105;
+`renew_minimum` at least `fee_floor`, so a renewal pays its own fee):
+`renew_per_gib_day`
 for each GiB a day from the later of now and the current expiry to
 `until`, rounded up, never below `renew_minimum`. Once paid, the live
 advertisement is spent into its **successor**: the same key and root, the
@@ -130,8 +151,12 @@ keeps the original's first sight (spec section 9.3). The answer is the
 successor's BEEF (`advertisement`), with its proof when it mined at once
 and unmined otherwise, a promise until it mines. `until` must be later than
 the current expiry and at most `max_renew_seconds` ahead; one root is
-renewed at most `renewals_per_root_per_hour`; a root whose advertisement is
-not mined yet is answered `409` and renewed once it is.
+renewed at most `renewals_per_root_per_hour`, a budget spent only by a
+payment the ledger has not seen; a root whose advertisement is not mined
+yet is answered `409` before any payment. Once a payment is taken it is
+broadcast, and the renewal is recorded as owed before it is made: when it
+cannot be made at once the answer is `202` and the provider makes it as
+soon as it can.
 
 ### Challenges
 
@@ -147,8 +172,10 @@ not mined yet is answered `409` and renewed once it is.
    and `proofRoot` and `size` are the provider's own computation;
 3. the **free settlement challenge**, exactly as frozen (spec section 9.4):
    owed only to the entry's writer, authenticated by BRC-103, naming in
-   `entry` an entry with hold terms for this root, while the provider
-   advertises the root (an unexpired advertisement), before the entry's
+   `entry` an entry with hold terms for this root that the provider took,
+   while the provider advertises the root with an advertisement eligible for
+   that entry (unexpired, and lasting the entry's retention), before the
+   entry's
    `deadline`, when the provider's bounty checks pass at that moment (the
    hold output exists, is mined, is the writer's, holds `satoshis`, is
    unspent by positive evidence, and is worth at least `min_bounty`), with
@@ -163,7 +190,9 @@ not mined yet is answered `409` and renewed once it is.
    among the blob roots) held to reproduce the proof root. A segment
    missing or read back wrong marks the root **damaged** and the answer is
    `422 unknown-root`, with no payment taken: from then on the root is not
-   served, answered for or renewed, and its advertisement lapses;
+   served, answered for or renewed, and its advertisement lapses. A read
+   the system could not make now (a file it could not open) is `503` and
+   marks nothing;
 5. the payment is taken into the ledger, or the free answer counted;
 6. `200 application/cbor`, the signed response `[body, signature]`, its
    signature over `SHA-256(request) || SHA-256(body)` under
@@ -202,10 +231,15 @@ entry's `K`), the sender is the entry's writer, the transaction spends the
 entry's hold output, and the named output pays the key BRC-29 derives for
 this provider, verifying against the provider's headers. It answers `200`
 once the payment is in the ledger (the same payment again is `200` and
-recorded once) and `400` otherwise. A provider that never got its
+recorded once) and `400` otherwise; one address sends at most one a second
+(burst 16). A provider that never got its
 remittance finds its payout from public data: for each entry it holds
 with a bounty, it asks the node who spent the hold output, derives its key
-for ranks 1 to `K`, and takes the output that pays it.
+for ranks 1 to `K`, and takes the output that pays it, looking at each
+entry at most once a minute. A remittance whose transaction the network
+refuses for good (a settlement never broadcast, beaten by the one that
+spent the hold output) frees the coins it claimed, and the payout is looked
+for again.
 
 Every payment the provider takes (settlements, paid challenges, renewals)
 goes to `payments.jsonl` in the data directory, the shared payee ledger's
@@ -256,20 +290,23 @@ how readers reach the bytes.
 | What | Bound |
 | --- | --- |
 | The store | `quota_bytes` across held closures and unclaimed pieces |
-| Unclaimed pieces | `unclaimed_bytes` in all, a quarter of that from one writer (which must hold `policy.max_object`), each kept `unclaimed_seconds`; past a share a piece is refused, never makes room by pushing out another's |
+| Unclaimed pieces | `unclaimed_bytes` in all, a quarter of that from one writer (which must hold `policy.max_object`) and half of it from uploads, each piece counted at least 4 KiB and at most 200,000 pieces, each kept `unclaimed_seconds`; past a share a piece is refused, never makes room by pushing out another's |
+| Entries waiting for their closures | 256 from one writer, 10,000 in all |
 | Eviction | a holding goes only when no advertisement of it is pending, its advertisement has expired and its lease has run out, or when it was never advertised and no entry for it is undecided; an object another held closure names stays |
 | An object | `policy.max_object` |
 | A submission | 262,144 bytes on a records topic, 4,259,840 on a blob topic |
 | Request bodies | a handshake 16 KiB, a challenge 2 KiB, a renewal 1 KiB, a remittance 1 MiB, an uploaded object 4 MiB, a commit 1 KiB; headers 256 KiB (a payment rides in one) |
-| Timeouts | headers 10 s, a request 2 min, an answer 5 min, idle 2 min |
-| Handshakes | `handshakes_per_sec`, `handshake_burst` for the route and `handshakes_per_addr_per_sec`, `handshake_addr_burst` for one address (an IPv6 address by its /64), before any signature work; `429` with `Retry-After` |
+| Timeouts | headers 10 s, a request 2 min (a submission's or an upload's body 1 min), an answer 5 min, idle 2 min |
+| Handshakes | `handshakes_per_sec`, `handshake_burst` for the route and `handshakes_per_addr_per_sec`, `handshake_addr_burst` for one address (an IPv6 address by its /64; behind a proxy named in `trusted_proxies`, the client's address), before any signature work; `429` with `Retry-After` |
 | Sessions | `sessions` kept, `session_ttl_seconds` idle; every request identifier a session was answered for is remembered while the session is, so a signed request sent again is refused (`401`); past the bound on remembered requests the least recently used session is forgotten whole, which makes its requests unverifiable too |
 | Signed answers | `responses_per_sec`, `response_burst` per session, taken before a request is verified |
 | Challenges | `challenges_per_buyer_per_min` with `challenge_burst` per buyer, `free_per_writer_per_min` free ones per writer, `challenge_workers` answered at once |
 | Renewals | `renewals_per_root_per_hour` per root |
-| Submissions | `submits_per_addr_per_sec`, `submit_burst` per address; 16 read at once |
-| Reads | `object_readers` objects served at once |
-| Upload sessions | `upload_sessions` open, 4 per identity, `upload_session_seconds` each, 65,536 objects each |
+| Submissions | `submits_per_addr_per_sec`, `submit_burst` per address; 4 in flight from one address, uploads included; 16 processed at once, a slot taken only once the body is read |
+| Reads | `object_readers` objects read at once, the slot released before the answer is written; `object_reads_per_addr_per_sec`, `object_read_burst` per address |
+| Upload sessions | `upload_sessions` open, 4 per identity and 8 per address, 60 opened an hour from one address, `upload_session_seconds` each, 65,536 objects each |
+| Remittances | one a second from one address, burst 16 |
+| Payments | a payment's BEEF at most 192 KiB; one the ledger holds is refused before its proof is checked |
 
 ## Operating
 
@@ -326,16 +363,18 @@ A JSON file; an unknown key is refused. The required keys:
 | `policy.max_retention_seconds` | 31 days | the longest retention taken |
 | `policy.hold_unbountied`, `policy.unbountied_seconds` | off, 1 day | hold without a bounty, for this long |
 | `policy.answer_inline` | true | samples inline; off, by reference |
-| `terms.challenge_base`, `terms.challenge_per_sample` | 0 | a challenge's price |
+| `terms.challenge_base`, `terms.challenge_per_sample` | 10, 1 | a challenge's price |
 | `terms.free_c` | 30 | 30 to 1024 |
-| `terms.min_bounty` | 0 | the least bounty raced for and owed a free challenge |
+| `terms.min_bounty` | 1000 | the least bounty raced for and owed a free challenge; at least `fee_floor` |
 | `terms.min_age` | 0 | 0 to 1008 blocks |
-| `terms.renew_per_gib_day`, `terms.renew_minimum` | 0 | a renewal's price |
+| `terms.renew_per_gib_day`, `terms.renew_minimum` | 100, 500 | a renewal's price; the minimum at least `fee_floor` |
 | `terms.max_renew_seconds` | 366 days | the furthest a renewal runs |
-| `limits.*` | as the table above | `handshakes_per_sec` 4, `handshake_burst` 8, `handshakes_per_addr_per_sec` 1, `handshake_addr_burst` 4, `responses_per_sec` 5, `response_burst` 20, `sessions` 10000, `session_ttl_seconds` 600, `challenges_per_buyer_per_min` 6, `challenge_burst` 6, `free_per_writer_per_min` 12, `challenge_workers` 4, `renewals_per_root_per_hour` 4, `submits_per_addr_per_sec` 64, `submit_burst` 256, `object_readers` 32, `upload_sessions` 64, `upload_session_seconds` 3600 |
+| `limits.*` | as the table above | `handshakes_per_sec` 32, `handshake_burst` 64, `handshakes_per_addr_per_sec` 1, `handshake_addr_burst` 4, `responses_per_sec` 5, `response_burst` 20, `sessions` 10000, `session_ttl_seconds` 600, `challenges_per_buyer_per_min` 6, `challenge_burst` 6, `free_per_writer_per_min` 12, `challenge_workers` 4, `renewals_per_root_per_hour` 4, `submits_per_addr_per_sec` 64, `submit_burst` 256, `object_readers` 32, `object_reads_per_addr_per_sec` 50, `object_read_burst` 200, `upload_sessions` 64, `upload_session_seconds` 3600 |
 | `tree_count`, `tree_sats` | 16, 1000 | the funding trees |
 | `fee_sat_per_byte`, `fee_floor` | 1, 250 | the fee policy |
 | `mainnet` | false | mainnet addresses |
+| `trusted_proxies` | none | CIDRs of proxies whose `X-Forwarded-For` names the client, for every per-address budget |
+| `metrics_listen` | none | where `/metrics` is served; it is served nowhere else |
 
 ### Fund
 
@@ -364,8 +403,9 @@ Behind a TLS proxy, route to the provider:
   BRC-104 handshake whatever the path of the route they call;
 - `/submit`, for the plane's listener or writers that submit directly.
 
-`/healthz` answers `ok`. `/metrics` (Prometheus text) answers a loopback
-address only: `bstore_provider_handshake_total`,
+Behind a proxy, name it in `trusted_proxies`: otherwise every client is
+the proxy's address to every per-address budget. `/healthz` answers `ok`.
+`/metrics` (Prometheus text) is served on `metrics_listen` only: `bstore_provider_handshake_total`,
 `bstore_provider_request_total`, `bstore_provider_session_evicted_total`,
 `bstore_provider_submits_total`, `bstore_provider_challenges_total`,
 `bstore_provider_payments_total`, `bstore_provider_advertisements_total`,
@@ -376,7 +416,10 @@ gauges `bstore_provider_holdings`, `bstore_provider_store_bytes`,
 `bstore_provider_sessions`, `bstore_provider_pool_satoshis`.
 
 A stop (`SIGINT`, `SIGTERM`) saves the state; a crash loses nothing that
-was answered, and the next start finishes what was in flight.
+was answered, and the next start finishes what was in flight. Pieces are
+recorded with the next background pass: an object in the store that no held
+closure names and no record keeps is removed at the start, and its writer
+sends it again.
 
 ### Test it end to end
 

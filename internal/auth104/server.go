@@ -55,6 +55,9 @@ type Config struct {
 	// MaxHandshake bounds a handshake's body.
 	MaxHandshake int64
 	Now          func() time.Time
+	// ClientAddr, when set, is the remote address a request is budgeted
+	// under (a client behind a trusted proxy); RemoteAddr otherwise.
+	ClientAddr func(*http.Request) string
 	// Count, when set, is told each outcome: "handshake" with accepted,
 	// failed, limited_address or limited_global; "request" with replayed,
 	// limited, failed or accepted; "session_evicted" with cap, idle or
@@ -113,6 +116,9 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
+	}
+	if cfg.ClientAddr == nil {
+		cfg.ClientAddr = func(r *http.Request) string { return r.RemoteAddr }
 	}
 	if cfg.Count == nil {
 		cfg.Count = func(string, string) {}
@@ -199,7 +205,7 @@ func (s *Server) Handshake(w http.ResponseWriter, r *http.Request) {
 		Write(w, Error(http.StatusMethodNotAllowed, "ERR_METHOD", "a handshake is a POST"))
 		return
 	}
-	if ok, limit, retry := s.shakes.Take(r.RemoteAddr); !ok {
+	if ok, limit, retry := s.shakes.Take(s.c.ClientAddr(r)); !ok {
 		s.c.Count("handshake", "limited_"+limit)
 		Write(w, Error(http.StatusTooManyRequests, "ERR_RATE_LIMITED", "too many handshakes; try again later", "Retry-After", fmt.Sprint(retry)))
 		return

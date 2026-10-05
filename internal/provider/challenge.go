@@ -8,7 +8,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -19,6 +22,7 @@ import (
 	"github.com/lightwebinc/bcommon/pushdrop"
 
 	"github.com/lightwebinc/bstore/internal/auth104"
+	"github.com/lightwebinc/bstore/internal/backend"
 	"github.com/lightwebinc/bstore/internal/storerec"
 )
 
@@ -48,7 +52,7 @@ func (p *Provider) challenge(ctx context.Context, r *http.Request, body []byte, 
 	if err := json.Unmarshal(body, &req); err != nil {
 		return refuse422("request")
 	}
-	buyer := "addr:" + auth104.AddressKey(r.RemoteAddr)
+	buyer := "addr:" + auth104.AddressKey(p.clientAddr(r))
 	if who != nil {
 		buyer = who.Hex
 	}
@@ -113,9 +117,14 @@ func (p *Provider) challenge(ctx context.Context, r *http.Request, body []byte, 
 		return auth104.Error(http.StatusServiceUnavailable, "ERR_BUSY", "try again later")
 	}
 	rb, err := p.answer(ctx, rootHex, q, raw)
-	if err != nil {
+	var lost *lostError
+	switch {
+	case errors.As(err, &lost):
 		p.damaged(rootHex, err.Error())
 		return refuse422("unknown-root")
+	case err != nil:
+		p.logf("root %s: a challenge could not be answered now: %v", short(rootHex), err)
+		return auth104.Error(http.StatusServiceUnavailable, "ERR_BUSY", "the answer could not be read now; try again later", "Retry-After", "10")
 	}
 	signed, err := p.signResponse(ctx, raw, rb)
 	if err != nil {
@@ -129,9 +138,13 @@ func (p *Provider) challenge(ctx context.Context, r *http.Request, body []byte, 
 		p.metrics.inc("bstore_provider_payments_total", "result=accepted")
 	}
 	if free {
+		// The reservation stands, saved before the answer leaves: it counts.
 		p.mu.Lock()
-		_ = p.save() // the reservation stands: it counts
+		err := p.save()
 		p.mu.Unlock()
+		if err != nil {
+			return auth104.Error(http.StatusInternalServerError, "ERR_INTERNAL", "the answer could not be recorded")
+		}
 		outpoint = ""
 		p.metrics.inc("bstore_provider_challenges_total", "result=free")
 	} else {
@@ -170,7 +183,7 @@ func (p *Provider) headerAt(ctx context.Context) func(uint64) ([32]byte, bool) {
 		if p.hcache == nil {
 			p.hcache = map[uint64]headerEntry{}
 		}
-		if e, ok := p.hcache[height]; ok && p.now().Sub(e.at) < 30*time.Second {
+		if e, ok := p.hcache[height]; ok && p.now().Sub(e.at) < 10*time.Second {
 			p.hmu.Unlock()
 			return e.hash, true
 		}
@@ -223,7 +236,11 @@ func (p *Provider) freeChallenge(ctx context.Context, q *storerec.Request, entry
 		}
 	}
 	h := p.st.Holdings[hex.EncodeToString(q.Root[:])]
-	advertised := h != nil && h.Ad != nil && h.Ad.Expiry >= uint64(p.now().Unix()) && !h.Damaged
+	// The provider competes for this entry's bounty only when it took the
+	// entry and its live advertisement is eligible for it (spec section
+	// 9.3: it lasts the entry's retention); otherwise it owes nothing.
+	advertised := e != nil && e.Hold != nil && e.Decision == decisionHeld && h != nil && h.Ad != nil && !h.Damaged &&
+		h.Ad.Expiry >= uint64(p.now().Unix()) && h.Ad.Expiry >= e.Created/1000+e.Hold.Retention
 	p.mu.Unlock()
 	if e == nil || ec.Hold == nil || !advertised || ec.Writer != who.Hex || ec.Root != hex.EncodeToString(q.Root[:]) {
 		return "", false
@@ -275,12 +292,27 @@ func (p *Provider) unreserveFree(op string) {
 // root, before anything is signed. Samples are inline, or by reference
 // when the provider answers so (the buyer fetches each from the advertised
 // URL). It returns the body's encoding.
+// lostError is a held closure found to be missing bytes or to read back
+// wrong: the root is no longer held.
+type lostError struct{ why string }
+
+func (e *lostError) Error() string { return e.why }
+
+// readErr is a read failure as answer reports it: lost when the file is
+// gone or short, else an error that marks nothing.
+func readErr(what string, err error) error {
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, backend.ErrMissing) || errors.Is(err, backend.ErrRange) || errors.Is(err, io.EOF) || errors.Is(err, errShort) {
+		return &lostError{what + ": " + err.Error()}
+	}
+	return fmt.Errorf("%s: %w", what, err)
+}
+
 func (p *Provider) answer(_ context.Context, rootHex string, q *storerec.Request, raw []byte) ([]byte, error) {
 	n := storerec.Segments(q.Size)
 	nb := storerec.Blobs(q.Size)
 	roots, err := p.readAt32(rootHex, "blobroots", 0, nb)
 	if err != nil {
-		return nil, errors.New("the proof tree's blob roots are unreadable")
+		return nil, readErr("the proof tree's blob roots", err)
 	}
 	upper := buildLevels(roots)
 	inline := p.cfg.answerInline()
@@ -299,11 +331,11 @@ func (p *Provider) answer(_ context.Context, rootHex string, q *storerec.Request
 			count := min(uint64(storerec.SegmentsPerBlob), n-first)
 			leaves, err := p.readAt32(rootHex, "leaves", first, count)
 			if err != nil {
-				return nil, errors.New("the proof tree's leaves are unreadable")
+				return nil, readErr("the proof tree's leaves", err)
 			}
 			hs, err := p.readAt32(rootHex, "blobs", b, 1)
 			if err != nil {
-				return nil, errors.New("the closure's blob list is unreadable")
+				return nil, readErr("the closure's blob list", err)
 			}
 			bd = &blobData{leaves: leaves, hash: hs[0]}
 			cache[b] = bd
@@ -312,11 +344,11 @@ func (p *Provider) answer(_ context.Context, rootHex string, q *storerec.Request
 		seglen := storerec.SegmentLen(i, q.Size)
 		seg, err := p.be.Get(bd.hash, off, seglen)
 		if err != nil {
-			return nil, errors.New("a sampled segment is missing: " + err.Error())
+			return nil, readErr("a sampled segment", err)
 		}
 		leaf := commit.HashLeaf(seg)
 		if leaf != bd.leaves[within] {
-			return nil, errors.New("a sampled segment read back wrong")
+			return nil, &lostError{"a sampled segment read back wrong"}
 		}
 		inner, err := commit.ProveLeafHashes(bd.leaves, int(within))
 		if err != nil {
@@ -324,7 +356,7 @@ func (p *Provider) answer(_ context.Context, rootHex string, q *storerec.Request
 		}
 		sib := append(inner.Siblings(), upper.path(b)...)
 		if !commit.VerifyAt(leaf, i, n, sib, q.ProofRoot) {
-			return nil, errors.New("a sampled segment's path does not reproduce the proof root")
+			return nil, &lostError{"a sampled segment's path does not reproduce the proof root"}
 		}
 		s := storerec.Sample{Siblings: sib}
 		if inline {

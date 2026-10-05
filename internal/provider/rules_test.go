@@ -177,19 +177,23 @@ func TestFreeChallengeRules(t *testing.T) {
 	if _, err := r.writer.Submit(ctx, "https://"+p.Addr(), storerec.RecordsTopic(testBucket), put2.BEEF); err != nil {
 		t.Fatal(err)
 	}
-	r.eventually("the second entry held", 10*time.Second, func() bool {
+	r.eventually("the second entry declined", 10*time.Second, func() bool {
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		e := p.st.Entries[put2.C]
-		return e != nil && e.Decision == decisionHeld
+		return e != nil && strings.Contains(e.Decision, "already backs")
 	})
 	if err := ask(r.writer, 30, put.C); err != nil {
 		t.Fatalf("first free: %v", err)
 	}
-	if err := ask(r.writer, 30, put2.C); err != nil {
-		t.Fatalf("second free, by the other entry: %v", err)
-	}
+	// An entry this provider declined is owed nothing, whatever hold it names.
 	if err := ask(r.writer, 30, put2.C); !priced(err) {
+		t.Fatalf("by the declined entry: %v", err)
+	}
+	if err := ask(r.writer, 30, put.C); err != nil {
+		t.Fatalf("second free: %v", err)
+	}
+	if err := ask(r.writer, 30, put.C); !priced(err) {
 		t.Fatalf("third free: %v", err)
 	}
 	p.mu.Lock()
@@ -303,7 +307,24 @@ func objectsOf(o *testwriter.Object) chirp.Fetch {
 // URL with Range, and the provider's own Range answers are right.
 func TestByReferenceAndRange(t *testing.T) {
 	inline := false
-	r, p, cfg, put := held(t, func(c *Config) { c.Policy.AnswerInline = &inline }, 2*storerec.BlobSize+5000, bounty)
+	export := filepath.Join(t.TempDir(), "export")
+	t.Cleanup(func() {
+		_ = filepath.Walk(export, func(p string, fi os.FileInfo, err error) error {
+			if err == nil && fi.IsDir() {
+				_ = os.Chmod(p, 0o755)
+			}
+			return nil
+		})
+	})
+	r, p, cfg, put := held(t, func(c *Config) { c.Policy.AnswerInline = &inline; c.Export = export }, 2*storerec.BlobSize+5000, bounty)
+	// The read-only export holds the closure, the root first.
+	rootHex := hex.EncodeToString(put.Object.Built.RootHash[:])
+	if b, err := os.ReadFile(filepath.Join(export, rootHex, "0")); err != nil || sha256.Sum256(b) != put.Object.Built.RootHash {
+		t.Fatalf("export: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(export, rootHex, "new"), nil, 0o644); err == nil && os.Getuid() != 0 {
+		t.Fatal("the export is writable")
+	}
 	ctx := context.Background()
 	me := p.signer.Identity.Compressed()
 	ad, _ := advOf(p.liveAd(put.Object.Built.RootHash))
@@ -674,4 +695,48 @@ func TestSettleRefusals(t *testing.T) {
 		t.Fatalf("%d ledger lines", n)
 	}
 	_ = payee.LedgerFile
+}
+
+// What is not a writer's signed piece, on a blob topic, is not stored.
+func TestPieceRefusals(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	cfg := r.config(filepath.Join(t.TempDir(), "p"))
+	cfg.Buckets = append(cfg.Buckets, BucketConfig{Bucket: "other_qzvmkwertz", Writers: []string{"02" + strings.Repeat("11", 32)}})
+	cfg.Buckets[1].Writers = nil
+	p := r.start(cfg, true)
+	base := "https://" + p.Addr()
+	o, err := r.writer.Build(ctx, content(100, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	put, err := r.writer.Entry(ctx, o, "x", testwriter.Terms{NoHold: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob := storerec.BlobTopic(testBucket)
+	for name, c := range map[string]struct {
+		topic string
+		beef  []byte
+		want  string
+	}{
+		"an entry on the blob topic": {blob, put.BEEF, "piece"},
+		"another bucket's piece":     {storerec.BlobTopic("other_qzvmkwertz"), o.Pieces[0], "bucket"},
+		"not a topic of this one's":  {"tm_bstoreblob_nobody_abcdefghij", o.Pieces[0], "not a topic"},
+		"garbage":                    {blob, []byte("not beef"), "beef"},
+	} {
+		ans, err := r.writer.Submit(ctx, base, c.topic, c.beef)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok, why := testwriter.Admitted(ans, c.topic); ok || !strings.Contains(why, c.want) {
+			t.Errorf("%s: %v %q", name, ok, why)
+		}
+	}
+	// A writer the bucket does not take.
+	p.cfg.Buckets[0].Writers = []string{"02" + strings.Repeat("22", 32)}
+	ans, _ := r.writer.Submit(ctx, base, blob, o.Pieces[0])
+	if ok, why := testwriter.Admitted(ans, blob); ok || !strings.Contains(why, "writer") {
+		t.Errorf("a writer not taken: %v %q", ok, why)
+	}
 }

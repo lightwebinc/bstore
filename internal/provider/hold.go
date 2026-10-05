@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"time"
 
 	"github.com/bsv-blockchain/go-sdk/chainhash"
 
@@ -114,7 +115,21 @@ func (p *Provider) evaluate(ctx context.Context, rootHex string) error {
 		return nil
 	}
 	for _, e := range undecided {
+		// A closure held already is the one its root names: an entry that
+		// says otherwise of its size, content or proof root is the writer's
+		// fault, and not taken.
+		p.mu.Lock()
+		h = p.st.Holdings[rootHex]
+		mismatch := h != nil && (e.Size != h.Size || e.ContentHash != h.ContentHash || e.ProofRoot != h.ProofRoot)
+		p.mu.Unlock()
+		if mismatch {
+			p.decide(e.C, "the entry's size, content hash or proof root is not the closure's")
+			continue
+		}
 		until, why := p.policy(ctx, e)
+		if why == decisionRetry {
+			continue // looked at again on the next pass
+		}
 		if why != "" {
 			p.decide(e.C, why)
 			p.logf("entry %s for root %s: declined: %s", short(e.C), short(rootHex), why)
@@ -131,6 +146,18 @@ func (p *Provider) evaluate(ctx context.Context, rootHex string) error {
 	}
 	p.dropUnheld(rootHex)
 	return nil
+}
+
+// expireUndecided declines the entries whose closure has not arrived
+// within the time an unclaimed piece is kept: the pieces that came are gone
+// by then too.
+func (p *Provider) expireUndecided(entries []*EntryRec) {
+	cutoff := p.now().Add(-time.Duration(p.cfg.UnclaimedSeconds) * time.Second).UnixNano()
+	for _, e := range entries {
+		if e.At < cutoff {
+			p.decide(e.C, "the closure did not arrive in time")
+		}
+	}
 }
 
 func (p *Provider) decide(c, decision string) {
@@ -151,8 +178,12 @@ func (p *Provider) dropUnheld(rootHex string) {
 	if h == nil || len(h.Entries) > 0 || h.Ad != nil || h.Lease > 0 {
 		return
 	}
-	delete(p.st.Holdings, rootHex)
-	_ = os.RemoveAll(p.rootDir(rootHex))
+	for _, e := range p.st.Entries {
+		if e.Root == rootHex && e.Decision == "" {
+			return
+		}
+	}
+	p.dropHoldingLocked(rootHex)
 	_ = p.save()
 }
 
@@ -173,7 +204,10 @@ func (p *Provider) fetch(h [32]byte) ([]byte, error) {
 // writes the proof tree's files and the holding.
 func (p *Provider) verifyRoot(ctx context.Context, rootHex string, entries []*EntryRec) (bool, error) {
 	root := mustHash(rootHex)
-	if !p.store.Has(root) {
+	// Every object the closure names must be here before a blob is read:
+	// a closure still arriving costs its node reads, never its blobs.
+	if !p.store.Has(root) || !p.complete(root) {
+		p.expireUndecided(entries)
 		return false, nil
 	}
 	select {
@@ -188,7 +222,7 @@ func (p *Provider) verifyRoot(ctx context.Context, rootHex string, entries []*En
 	}
 	// The root's own rules against each entry's size and content hash:
 	// an entry that disagrees is the writer's fault, declined alone.
-	var e *EntryRec
+	var fit []*EntryRec
 	for _, x := range entries {
 		if x.Size > p.cfg.Policy.MaxObject {
 			p.decide(x.C, "the object is larger than this provider takes")
@@ -198,12 +232,12 @@ func (p *Provider) verifyRoot(ctx context.Context, rootHex string, entries []*En
 			p.decide(x.C, why(err))
 			continue
 		}
-		e = x
-		break
+		fit = append(fit, x)
 	}
-	if e == nil {
+	if len(fit) == 0 {
 		return false, nil
 	}
+	entries = fit
 	c, err := storerec.VerifyCHIRP(root, p.fetch)
 	if err != nil {
 		if errors.Is(err, storerec.ErrClosure) {
@@ -228,13 +262,18 @@ func (p *Provider) verifyRoot(ctx context.Context, rootHex string, entries []*En
 		}
 		return false, err
 	}
-	if pr != mustHash(e.ProofRoot) {
-		_ = os.RemoveAll(p.rootDir(rootHex))
-		for _, x := range entries {
-			if x.ProofRoot == e.ProofRoot {
-				p.decide(x.C, "proof-root: the recomputed proof root differs from the entry's")
-			}
+	// The proof root is computed once and every entry decided against it,
+	// so entries naming the root with another proof root cost one pass.
+	var e *EntryRec
+	for _, x := range entries {
+		if mustHash(x.ProofRoot) != pr {
+			p.decide(x.C, "proof-root: the recomputed proof root differs from the entry's")
+		} else if e == nil {
+			e = x
 		}
+	}
+	if e == nil {
+		_ = os.RemoveAll(p.rootDir(rootHex))
 		return false, nil
 	}
 	p.mu.Lock()
@@ -246,8 +285,13 @@ func (p *Provider) verifyRoot(ctx context.Context, rootHex string, entries []*En
 	}
 	h.Size, h.ContentHash, h.ProofRoot, h.RootLen = e.Size, e.ContentHash, hex.EncodeToString(pr[:]), uint64(len(rootBytes))
 	h.Objects, h.Blobs, h.Bytes, h.Verified, h.Damaged = len(c.Objects), len(c.Blobs), bytesHeld, true, false
+	// The closure's pieces are held now; a piece another closure still
+	// waiting for its entry sent keeps its record.
 	for _, o := range c.Objects {
-		delete(p.st.Unclaimed, hex.EncodeToString(o[:]))
+		k := hex.EncodeToString(o[:])
+		if u := p.st.Unclaimed[k]; u != nil && (u.Root == rootHex || u.Root == "") {
+			delete(p.st.Unclaimed, k)
+		}
 	}
 	if err := p.save(); err != nil {
 		return false, err
@@ -260,6 +304,8 @@ func (p *Provider) verifyRoot(ctx context.Context, rootHex string, entries []*En
 	}
 	return true, nil
 }
+
+var errShort = errors.New("a file is shorter than its record")
 
 var errIncomplete = errors.New("an object of the closure is not held")
 
@@ -397,7 +443,7 @@ func (p *Provider) readAt32(rootHex, name string, i, n uint64) ([][32]byte, erro
 	if _, err := f.ReadAt(buf, int64(32*i)); err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
 	} else if errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("%s: short", name)
+		return nil, fmt.Errorf("%s: %w", name, errShort)
 	}
 	out := make([][32]byte, n)
 	for k := range out {

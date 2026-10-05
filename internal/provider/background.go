@@ -23,6 +23,7 @@ func (p *Provider) recover(ctx context.Context) error {
 	p.mu.Lock()
 	p.evictLocked(true)
 	p.mu.Unlock()
+	p.collect()
 	return nil
 }
 
@@ -54,6 +55,7 @@ func (p *Provider) background(ctx context.Context) {
 		_, _ = p.tip(ctx)
 		p.collectChange(ctx)
 		p.waitPending(ctx)
+		p.makeOwed(ctx)
 		p.publishOutbox(ctx)
 		p.mu.Lock()
 		var roots []string
@@ -63,6 +65,33 @@ func (p *Provider) background(ctx context.Context) {
 			}
 		}
 		p.evictLocked(true)
+		live := map[string]bool{}
+		for _, e := range p.st.Entries {
+			if e.Hold != nil {
+				live[e.Hold.Outpoint()] = true
+			}
+		}
+		for op := range p.st.Free {
+			if !live[op] {
+				delete(p.st.Free, op)
+				p.dirty = true
+			}
+		}
+		for c := range p.scanned {
+			if e := p.st.Entries[c]; e == nil || !p.payoutOpenLocked(c) {
+				delete(p.scanned, c)
+			}
+		}
+		cutoff := p.now().Add(-fundingMemory).Unix()
+		for k, f := range p.st.Fundings {
+			if f.At < cutoff {
+				delete(p.st.Fundings, k)
+				p.dirty = true
+			}
+		}
+		if p.dirty {
+			_ = p.save()
+		}
 		p.metrics.set("bstore_provider_holdings", float64(len(p.st.Holdings)))
 		p.metrics.set("bstore_provider_store_bytes", float64(p.usageLocked()))
 		p.metrics.set("bstore_provider_sessions", float64(p.auth.Sessions()))
@@ -97,3 +126,7 @@ func (p *Provider) waitPending(ctx context.Context) {
 	defer p.mintMu.Unlock()
 	p.resumeAds(ctx)
 }
+
+// fundingMemory is how long a funding outpoint's carrier is remembered:
+// longer than an unclaimed piece or an undecided entry is kept.
+const fundingMemory = 7 * 24 * time.Hour

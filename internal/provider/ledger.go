@@ -29,9 +29,35 @@ type ledger struct {
 	f      *os.File
 	claims *payee.Claims
 	ps     []payee.Payment
+	// forgotten are payments the network refused for good: their coins
+	// claim nothing any more, so the transaction that did spend them (a
+	// settlement a decoy remittance hid) can be taken.
+	forgotten map[string]bool
 }
 
-func openLedger(dir string, now func() time.Time) (*ledger, error) {
+// forget lets a payment the network refused stop claiming its coins.
+func (l *ledger) forget(txid string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.forgotten[txid] = true
+	l.rebuild()
+}
+
+func (l *ledger) rebuild() {
+	var keep []payee.Payment
+	for _, p := range l.ps {
+		if !l.forgotten[p.Txid] {
+			keep = append(keep, p)
+		}
+	}
+	cl := payee.ClaimsOf(keep)
+	for t := range l.forgotten {
+		cl.Take(t, nil)
+	}
+	l.claims = cl
+}
+
+func openLedger(dir string, now func() time.Time, forgotten []string) (*ledger, error) {
 	p := filepath.Join(dir, payee.LedgerFile)
 	ps, err := payee.ReadLedgers(nil, p)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -52,7 +78,12 @@ func openLedger(dir string, now func() time.Time) (*ledger, error) {
 			}
 		}
 	}
-	return &ledger{path: p, now: now, f: f, claims: payee.ClaimsOf(ps), ps: ps}, nil
+	l := &ledger{path: p, now: now, f: f, ps: ps, forgotten: map[string]bool{}}
+	for _, t := range forgotten {
+		l.forgotten[t] = true
+	}
+	l.rebuild()
+	return l, nil
 }
 
 // take records p unless its txid or a coin it spends was taken before.
@@ -186,6 +217,7 @@ func (b lockedBook) RecordUnsettleable(txid, why string) error {
 	b.p.mu.Lock()
 	defer b.p.mu.Unlock()
 	b.p.st.AddUnsettleable(txid, why)
+	b.p.ledger.forget(txid)
 	return b.p.save()
 }
 

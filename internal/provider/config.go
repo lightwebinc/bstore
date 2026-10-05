@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -75,6 +76,12 @@ type Config struct {
 	FeeFloor  uint64 `json:"fee_floor"`
 	// Mainnet selects mainnet addresses for the fund address.
 	Mainnet bool `json:"mainnet"`
+	// TrustedProxies are the addresses (CIDR) of proxies in front of the
+	// provider whose X-Forwarded-For names the client: every per-address
+	// budget is the client's, not the proxy's.
+	TrustedProxies []string `json:"trusted_proxies,omitempty"`
+	// MetricsListen, when set, serves /metrics there, and only there.
+	MetricsListen string `json:"metrics_listen,omitempty"`
 }
 
 // BucketConfig is one bucket the provider subscribes to.
@@ -143,8 +150,11 @@ type Limits struct {
 	// address (the plane's listener, or a writer's unicast).
 	SubmitsPerAddrPerSec float64 `json:"submits_per_addr_per_sec"`
 	SubmitBurst          float64 `json:"submit_burst"`
-	// ObjectReaders bounds the object reads served at once.
-	ObjectReaders int `json:"object_readers"`
+	// ObjectReaders bounds the object reads served at once;
+	// ObjectReadsPerAddrPerSec and ObjectReadBurst one address's reads.
+	ObjectReaders            int     `json:"object_readers"`
+	ObjectReadsPerAddrPerSec float64 `json:"object_reads_per_addr_per_sec"`
+	ObjectReadBurst          float64 `json:"object_read_burst"`
 	// UploadSessions bounds the open upload sessions, and their life.
 	UploadSessions       int    `json:"upload_sessions"`
 	UploadSessionSeconds uint64 `json:"upload_session_seconds"`
@@ -180,6 +190,18 @@ func (c *Config) defaults() {
 		p.UnbountiedSeconds = 86400
 	}
 	t := &c.Terms
+	if t.ChallengeBase == 0 && t.ChallengePerSample == 0 {
+		t.ChallengeBase, t.ChallengePerSample = 10, 1
+	}
+	if t.MinBounty == 0 {
+		t.MinBounty = 1000
+	}
+	if t.RenewPerGiBDay == 0 {
+		t.RenewPerGiBDay = 100
+	}
+	if t.RenewMinimum == 0 {
+		t.RenewMinimum = 500
+	}
 	if t.FreeC == 0 {
 		t.FreeC = 30
 	}
@@ -192,8 +214,8 @@ func (c *Config) defaults() {
 			*v = d
 		}
 	}
-	def(&l.HandshakesPerSec, 4)
-	def(&l.HandshakeBurst, 8)
+	def(&l.HandshakesPerSec, 32)
+	def(&l.HandshakeBurst, 64)
 	def(&l.HandshakesPerAddrPerSec, 1)
 	def(&l.HandshakeAddrBurst, 4)
 	def(&l.ResponsesPerSec, 5)
@@ -204,6 +226,8 @@ func (c *Config) defaults() {
 	def(&l.RenewalsPerRootPerHour, 4)
 	def(&l.SubmitsPerAddrPerSec, 64)
 	def(&l.SubmitBurst, 256)
+	def(&l.ObjectReadsPerAddrPerSec, 50)
+	def(&l.ObjectReadBurst, 200)
 	if l.Sessions == 0 {
 		l.Sessions = 10000
 	}
@@ -324,6 +348,17 @@ func (c *Config) Check() error {
 	for _, v := range []uint64{t.ChallengeBase, t.ChallengePerSample, t.MinBounty, t.RenewPerGiBDay, t.RenewMinimum} {
 		if v > storerec.MaxSafe {
 			return errors.New("a price is above 2^53 - 1")
+		}
+	}
+	if t.RenewMinimum < c.FeeFloor {
+		return errors.New("terms.renew_minimum must cover a renewal's fee: at least fee_floor")
+	}
+	if t.MinBounty < c.FeeFloor {
+		return errors.New("terms.min_bounty must cover an advertisement's fee: at least fee_floor")
+	}
+	for _, cidr := range c.TrustedProxies {
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			return fmt.Errorf("trusted_proxies: %q is not a CIDR", cidr)
 		}
 	}
 	if c.TreeCount < 1 || c.TreeCount > 1023 {

@@ -109,11 +109,19 @@ type Provider struct {
 	// lastTip is the node's tip as last read; the Payer's Tip is set from
 	// it under mintMu only.
 	lastTip atomic.Uint32
+	// scanned is when each entry's hold output was last looked at for a
+	// payout (under mu).
+	scanned map[string]time.Time
+	// dirty is a change to the state not saved yet (under mu): pieces and
+	// funding records are saved with the next background pass.
+	dirty bool
 
-	server *http.Server
-	ln     net.Listener
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	server  *http.Server
+	ln      net.Listener
+	msrv    *http.Server
+	proxies []*net.IPNet
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
 }
 
 // Init creates a provider's wallet under data and returns its identity
@@ -178,7 +186,11 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 	if err := os.MkdirAll(filepath.Join(cfg.Data, "roots"), 0o700); err != nil {
 		return nil, err
 	}
-	if p.ledger, err = openLedger(cfg.Data, opts.Now); err != nil {
+	var refused []string
+	for _, u := range st.Unsettleable {
+		refused = append(refused, u.Txid)
+	}
+	if p.ledger, err = openLedger(cfg.Data, opts.Now, refused); err != nil {
 		return nil, err
 	}
 	l := cfg.Limits
@@ -187,10 +199,14 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 		Handshakes: auth104.Budget{Rate: l.HandshakesPerSec, Burst: l.HandshakeBurst},
 		PerAddress: auth104.Budget{Rate: l.HandshakesPerAddrPerSec, Burst: l.HandshakeAddrBurst},
 		Responses:  auth104.Budget{Rate: l.ResponsesPerSec, Burst: l.ResponseBurst},
-		Now:        opts.Now, Count: p.metrics.count,
+		Now:        opts.Now, Count: p.metrics.count, ClientAddr: p.clientAddr,
 	})
 	if err != nil {
 		return nil, err
+	}
+	for _, c := range cfg.TrustedProxies {
+		_, n, _ := net.ParseCIDR(c)
+		p.proxies = append(p.proxies, n)
 	}
 	if p.limits, err = newRouteLimits(cfg, opts.Now); err != nil {
 		return nil, err
@@ -272,6 +288,18 @@ func (p *Provider) Start(ctx context.Context) error {
 		p.server.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
 		ln = tls.NewListener(ln, p.server.TLSConfig)
 	}
+	if p.cfg.MetricsListen != "" {
+		mln, err := net.Listen("tcp", p.cfg.MetricsListen)
+		if err != nil {
+			cancel()
+			ln.Close()
+			return err
+		}
+		mux := http.NewServeMux()
+		mux.HandleFunc("/metrics", p.metrics.serve)
+		p.msrv = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+		go func() { _ = p.msrv.Serve(mln) }()
+	}
 	p.wg.Add(3)
 	go func() {
 		defer p.wg.Done()
@@ -314,6 +342,9 @@ func (p *Provider) Close() error {
 		_ = p.server.Shutdown(sctx)
 		cancel()
 	}
+	if p.msrv != nil {
+		_ = p.msrv.Close()
+	}
 	p.wg.Wait()
 	_ = p.trees.Wait(context.Background())
 	p.mu.Lock()
@@ -334,7 +365,9 @@ func (p *Provider) now() time.Time { return p.opts.Now() }
 
 // save writes the state; the caller holds p.mu.
 func (p *Provider) save() error {
+	p.dirty = false
 	if err := p.st.save(); err != nil {
+		p.dirty = true
 		p.logf("saving the state: %v", err)
 		return err
 	}

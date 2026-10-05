@@ -2,7 +2,6 @@ package provider
 
 import (
 	"fmt"
-	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -10,7 +9,7 @@ import (
 )
 
 // metrics are the provider's counters and gauges, served in Prometheus'
-// text format on /metrics to a loopback address only.
+// text format on /metrics on the metrics listener only.
 type metrics struct {
 	mu       sync.Mutex
 	counters map[string]float64
@@ -51,12 +50,7 @@ func series(name string, labels []string) string {
 	return name + "{" + strings.Join(parts, ",") + "}"
 }
 
-func (m *metrics) serve(w http.ResponseWriter, r *http.Request) {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if ip := net.ParseIP(host); err != nil || ip == nil || !ip.IsLoopback() {
-		http.NotFound(w, r)
-		return
-	}
+func (m *metrics) serve(w http.ResponseWriter, _ *http.Request) {
 	m.mu.Lock()
 	var lines []string
 	for k, v := range m.counters {

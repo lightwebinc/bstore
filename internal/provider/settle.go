@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/bsv-blockchain/go-sdk/transaction"
 
@@ -29,7 +30,10 @@ import (
 // payment is in the ledger (again 200 for the same payment sent twice) and
 // 400 for an output not derivable for this key. The payee settle run takes
 // it into the pool once it mines.
-func (p *Provider) settle(ctx context.Context, _ *http.Request, body []byte, _ *auth104.Caller) auth104.Reply {
+func (p *Provider) settle(ctx context.Context, r *http.Request, body []byte, _ *auth104.Caller) auth104.Reply {
+	if ok, retry := p.limits.settles.Take(auth104.AddressKey(p.clientAddr(r))); !ok {
+		return auth104.Error(http.StatusTooManyRequests, "ERR_RATE_LIMITED", "too many remittances; try again later", "Retry-After", itoa(uint64(retry)))
+	}
 	var rm struct {
 		Entry             string `json:"entry"`
 		Rank              int    `json:"rank"`
@@ -87,6 +91,10 @@ func (p *Provider) settle(ctx context.Context, _ *http.Request, body []byte, _ *
 	return auth104.JSON(http.StatusOK, map[string]any{"accepted": true, "txid": in.Txid, "satoshis": sats})
 }
 
+// scanEvery is how often one entry's hold output is looked at for a
+// settlement that paid this provider without a remittance.
+var scanEvery = time.Minute
+
 func spendsHold(tx *transaction.Transaction, h *HoldRec) bool {
 	for _, in := range tx.Inputs {
 		if in.SourceTXID != nil && in.SourceTXID.String() == h.Txid && in.SourceTxOutIndex == h.Vout {
@@ -96,10 +104,18 @@ func spendsHold(tx *transaction.Transaction, h *HoldRec) bool {
 	return false
 }
 
+// payoutOpenLocked: no payout is known for the entry, or the one known was
+// refused by the network for good (a remittance of a settlement never
+// broadcast, which another transaction's spend of the hold output beat).
+func (p *Provider) payoutOpenLocked(c string) bool {
+	po := p.st.Payouts[c]
+	return po == nil || (po.Via != "spent, nothing to this provider" && p.st.IsUnsettleable(po.Settlement))
+}
+
 func (p *Provider) notePayout(c, txid string, rank int, sats uint64, via string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.st.Payouts[c] != nil {
+	if !p.payoutOpenLocked(c) {
 		return
 	}
 	p.st.Payouts[c] = &Payout{Settlement: txid, Rank: rank, Satoshis: sats, Via: via, At: p.now().Unix()}
@@ -116,9 +132,14 @@ func (p *Provider) notePayout(c, txid string, rank int, sats uint64, via string)
 func (p *Provider) scanPayouts(ctx context.Context) {
 	p.mu.Lock()
 	var todo []EntryRec
+	now := p.now()
+	if p.scanned == nil {
+		p.scanned = map[string]time.Time{}
+	}
 	for c, e := range p.st.Entries {
-		if e.Decision == decisionHeld && e.Hold != nil && p.st.Payouts[c] == nil {
+		if e.Decision == decisionHeld && e.Hold != nil && p.payoutOpenLocked(c) && now.Sub(p.scanned[c]) >= scanEvery {
 			todo = append(todo, *e)
+			p.scanned[c] = now
 		}
 	}
 	p.mu.Unlock()
@@ -177,6 +198,10 @@ func (p *Provider) scanPayouts(ctx context.Context) {
 		}
 		if !found {
 			p.mu.Lock()
+			if !p.payoutOpenLocked(e.C) {
+				p.mu.Unlock()
+				continue
+			}
 			p.st.Payouts[e.C] = &Payout{Settlement: by, Via: "spent, nothing to this provider", At: p.now().Unix()}
 			_ = p.save()
 			p.mu.Unlock()

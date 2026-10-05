@@ -45,6 +45,11 @@ type State struct {
 	// Payouts are the settlements found paying this provider, by entry
 	// commitment: from a remittance or from the hold output's spend.
 	Payouts map[string]*Payout `json:"payouts"`
+	// Owed are renewals paid for and not made yet.
+	Owed []Owed `json:"owed,omitempty"`
+	// Fundings are the funding outpoints carriers were taken on, and the
+	// carrier each paid for (its commitment, hex).
+	Fundings map[string]*Funding `json:"fundings"`
 	// Book is the payee's record of the ledger's payments settled.
 	payee.Book
 }
@@ -171,6 +176,20 @@ type Unclaimed struct {
 	At     int64  `json:"at"`
 }
 
+// Owed is a renewal paid for: the root's advertisement is owed through
+// Until.
+type Owed struct {
+	Root    string `json:"root"`
+	Until   uint64 `json:"until"`
+	Payment string `json:"payment"`
+}
+
+// Funding is the carrier a funding outpoint paid for.
+type Funding struct {
+	C  string `json:"c"`
+	At int64  `json:"at"`
+}
+
 // Payout is a settlement found paying this provider for one entry.
 type Payout struct {
 	Settlement string `json:"settlement"`
@@ -206,6 +225,9 @@ func loadState(dir string) (*State, error) {
 	}
 	if st.Free == nil {
 		st.Free = map[string]int{}
+	}
+	if st.Fundings == nil {
+		st.Fundings = map[string]*Funding{}
 	}
 	if st.Payouts == nil {
 		st.Payouts = map[string]*Payout{}

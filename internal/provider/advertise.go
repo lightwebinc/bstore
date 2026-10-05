@@ -175,9 +175,15 @@ func (p *Provider) send(ctx context.Context, tx *transaction.Transaction) error 
 	return nil
 }
 
+// alreadyKnown reports a leg's answer for a transaction the network holds
+// already; an input already spent is not that.
 func alreadyKnown(err error) bool {
 	s := strings.ToLower(err.Error())
-	return strings.Contains(s, "already")
+	if strings.Contains(s, "spent") || strings.Contains(s, "conflict") || strings.Contains(s, "double") {
+		return false
+	}
+	return strings.Contains(s, "txn-already-known") || strings.Contains(s, "already known") ||
+		strings.Contains(s, "already in block") || strings.Contains(s, "already in the mempool") || strings.Contains(s, "already mined")
 }
 
 // finishAd records a mined advertisement as the root's live one, drops its
@@ -343,11 +349,15 @@ func (p *Provider) resumeAds(ctx context.Context) {
 		}
 		if pa.Prev != nil {
 			if by, err := p.asset.Spender(ctx, pa.Prev.Txid, pa.Prev.Vout); err == nil && by != "" && by != pa.Txid {
-				p.logf("pending renewal %s: the advertisement it renews was spent by %s", short(pa.Txid), short(by))
+				p.logf("pending renewal %s: the advertisement it renews was spent by %s; the root is advertised afresh", short(pa.Txid), short(by))
 				p.mu.Lock()
 				p.st.dropPendingAd(pa.Txid)
+				if h := p.st.Holdings[pa.Root]; h != nil && h.Ad != nil && h.Ad.Txid == pa.Prev.Txid {
+					h.Ad = nil
+				}
 				_ = p.save()
 				p.mu.Unlock()
+				p.enqueue(pa.Root)
 				continue
 			}
 		}

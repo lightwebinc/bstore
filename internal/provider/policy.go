@@ -6,15 +6,41 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"slices"
+	"strings"
 
 	"github.com/bsv-blockchain/go-sdk/chainhash"
 
 	"github.com/lightwebinc/bcommon/guard"
+	"github.com/lightwebinc/bcommon/nodeapi"
 
 	"github.com/lightwebinc/bstore/internal/storerec"
 )
+
+// retryError is a check that could not be made now (the node or the
+// header source did not answer): it decides nothing, and the entry is
+// looked at again.
+type retryError struct{ error }
+
+func (e *retryError) Unwrap() error { return e.error }
+
+func retry(err error) error { return &retryError{err} }
+
+// decisionRetry is policy's word that nothing is decided yet.
+const decisionRetry = "\x00retry"
+
+// Each unclaimed piece is counted at least minPieceCharge bytes, and at
+// most maxUnclaimedRecords are kept: tiny pieces do not make records free.
+const (
+	minPieceCharge      = 4096
+	maxUnclaimedRecords = 200000
+)
+
+// maxClockSkew is how far ahead of the provider's clock an entry's created
+// may be.
+const maxClockSkew = 600
 
 // policy decides whether to take an entry and through what expiry; why is
 // "" when it is taken.
@@ -36,15 +62,30 @@ func (p *Provider) policy(ctx context.Context, e *EntryRec) (until uint64, why s
 	if e.Hold == nil {
 		return unbountied("no bounty, and this provider holds only for one")
 	}
-	if e.Hold.Retention > pol.MaxRetentionSeconds {
+	if e.Created/1000 > now+maxClockSkew {
+		return 0, "created is ahead of this provider's clock"
+	}
+	until = max(e.Created/1000+e.Hold.Retention, now+advertMinLife)
+	if e.Hold.Retention > pol.MaxRetentionSeconds || until > now+pol.MaxRetentionSeconds {
 		return unbountied("the retention asked is longer than this provider holds for")
 	}
-	if err := p.checkBounty(ctx, e, true); err != nil {
-		return unbountied("bounty: " + err.Error())
+	// One hold output settles one entry (spec section 9.2): a second entry
+	// naming it is counted once, so it is not raced for again.
+	op := e.Hold.Outpoint()
+	p.mu.Lock()
+	for c, x := range p.st.Entries {
+		if c != e.C && x.Hold != nil && x.Hold.Outpoint() == op && x.Decision == decisionHeld {
+			p.mu.Unlock()
+			return 0, "its hold output already backs another entry this provider took"
+		}
 	}
-	until = e.Created/1000 + e.Hold.Retention
-	if until < now+advertMinLife {
-		until = now + advertMinLife
+	p.mu.Unlock()
+	if err := p.checkBounty(ctx, e, true); err != nil {
+		var re *retryError
+		if errors.As(err, &re) {
+			return 0, decisionRetry
+		}
+		return unbountied("bounty: " + err.Error())
 	}
 	return until, ""
 }
@@ -65,7 +106,7 @@ func (p *Provider) checkBounty(ctx context.Context, e *EntryRec, racing bool) er
 	}
 	tip, err := p.tip(ctx)
 	if err != nil {
-		return err
+		return retry(err)
 	}
 	if uint64(tip) >= hr.Deadline {
 		return errors.New("the deadline has passed")
@@ -90,7 +131,10 @@ func (p *Provider) holdOutput(ctx context.Context, e *EntryRec) (uint32, error) 
 	hr := e.Hold
 	raw, err := p.asset.TxRaw(ctx, hr.Txid)
 	if err != nil {
-		return 0, fmt.Errorf("the hold transaction is not known to the node: %v", err)
+		if nodeapi.IsHTTP(err, http.StatusNotFound) {
+			return 0, errors.New("the hold transaction is not known to the node")
+		}
+		return 0, retry(fmt.Errorf("the node did not answer for the hold transaction: %v", err))
 	}
 	tx, err := guard.ParseTransaction(raw, len(raw))
 	if err != nil {
@@ -116,15 +160,17 @@ func (p *Provider) holdOutput(ctx context.Context, e *EntryRec) (uint32, error) 
 	}
 	mp, height, err := p.asset.Proof(ctx, hr.Txid)
 	if err != nil {
-		return 0, errors.New("the hold output is not mined")
+		return 0, retry(errors.New("the hold output is not mined yet"))
 	}
 	id := chainhash.Hash(*tx.TxID())
-	if ok, err := mp.Verify(ctx, &id, p.hc); err != nil || !ok {
+	if ok, err := mp.Verify(ctx, &id, p.hc); err != nil {
+		return 0, retry(fmt.Errorf("the header source did not answer: %v", err))
+	} else if !ok {
 		return 0, errors.New("the hold output's proof does not verify against this provider's headers")
 	}
 	by, err := p.asset.Spender(ctx, hr.Txid, hr.Vout)
 	if err != nil {
-		return 0, fmt.Errorf("the node gave no evidence the hold output is unspent: %v", err)
+		return 0, retry(fmt.Errorf("the node gave no evidence the hold output is unspent: %v", err))
 	}
 	if by != "" {
 		return 0, fmt.Errorf("the hold output is spent by %s", short(by))
@@ -185,17 +231,28 @@ func (p *Provider) room(n uint64, writer string) string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.evictLocked(false)
-	var unclaimed, mine uint64
+	var unclaimed, mine, uploaded uint64
 	for _, u := range p.st.Unclaimed {
-		unclaimed += u.Size
+		sz := max(u.Size, minPieceCharge)
+		unclaimed += sz
 		if u.Writer == writer {
-			mine += u.Size
+			mine += sz
+		}
+		if strings.HasPrefix(u.Writer, uploaderKey) {
+			uploaded += sz
 		}
 	}
+	n = max(n, minPieceCharge)
 	switch {
+	case len(p.st.Unclaimed) >= maxUnclaimedRecords:
+		p.metrics.inc("bstore_provider_refused_total", "reason=unclaimed-records")
+		return "room: too many pieces wait for their entries"
 	case unclaimed+n > p.cfg.UnclaimedBytes:
 		p.metrics.inc("bstore_provider_refused_total", "reason=unclaimed-full")
 		return "room: the space for pieces no entry has claimed is full"
+	case strings.HasPrefix(writer, uploaderKey) && uploaded+n > p.cfg.UnclaimedBytes/2:
+		p.metrics.inc("bstore_provider_refused_total", "reason=upload-share")
+		return "room: the space for uploads no entry has claimed is full"
 	case mine+n > max(p.cfg.UnclaimedBytes/4, storerec.BlobSize+1<<16):
 		p.metrics.inc("bstore_provider_refused_total", "reason=writer-share")
 		return "room: this writer's share of the space for unclaimed pieces is full"
@@ -235,8 +292,14 @@ func (p *Provider) evictLocked(all bool) {
 			changed = true
 		}
 	}
+	waiting := map[string]bool{}
+	for _, e := range p.st.Entries {
+		if e.Decision == "" {
+			waiting[e.Root] = true
+		}
+	}
 	for rootHex, h := range p.st.Holdings {
-		if !p.evictable(h, uint64(now)) {
+		if waiting[rootHex] || !p.evictable(h, uint64(now)) {
 			continue
 		}
 		if !all && h.Lease != 0 {
@@ -251,20 +314,14 @@ func (p *Provider) evictLocked(all bool) {
 }
 
 // evictable: no pending advertisement, no advertisement unexpired, and the
-// lease run out.
+// lease run out. A closure verified for an entry still being decided is
+// not evicted under it either (evictLocked checks that).
 func (p *Provider) evictable(h *Holding, now uint64) bool {
 	if h.Lease >= now || (h.Ad != nil && h.Ad.Expiry >= now) {
 		return false
 	}
 	for _, pa := range p.st.PendingAds {
 		if pa.Root == h.Root {
-			return false
-		}
-	}
-	// A closure verified for an entry still being decided is not evicted
-	// under it.
-	for _, e := range p.st.Entries {
-		if e.Root == h.Root && e.Decision == "" {
 			return false
 		}
 	}
@@ -275,9 +332,17 @@ func (p *Provider) evictable(h *Holding, now uint64) bool {
 // holding names.
 func (p *Provider) dropHoldingLocked(rootHex string) {
 	objs, _ := p.rootObjects(rootHex)
+	if h := p.st.Holdings[rootHex]; h != nil {
+		for _, c := range h.Entries {
+			if e := p.st.Entries[c]; e != nil {
+				e.Decision = "evicted: its advertisement and lease ran out"
+			}
+		}
+	}
 	delete(p.st.Holdings, rootHex)
 	for _, o := range objs {
-		if !p.heldObjectLocked(hex.EncodeToString(o[:])) {
+		k := hex.EncodeToString(o[:])
+		if p.st.Unclaimed[k] == nil && !p.heldObjectLocked(k) {
 			_ = p.store.Delete(o)
 		}
 	}
@@ -285,7 +350,7 @@ func (p *Provider) dropHoldingLocked(rootHex string) {
 		_ = p.export.Remove(mustHash(rootHex))
 	}
 	_ = os.RemoveAll(p.rootDir(rootHex))
-	p.logf("root %s: evicted, its lease and advertisement run out", short(rootHex))
+	p.logf("root %s: dropped: no advertisement or lease holds it", short(rootHex))
 	p.metrics.inc("bstore_provider_evicted_total")
 }
 
@@ -298,4 +363,28 @@ func (p *Provider) heldObjectLocked(objHex string) bool {
 		}
 	}
 	return false
+}
+
+// collect deletes every object in the store that no held closure names and
+// no unclaimed record keeps: what a crash, or a drop cut short, left.
+func (p *Provider) collect() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	held := map[[32]byte]bool{}
+	for r := range p.st.Holdings {
+		objs, _ := p.rootObjects(r)
+		for _, o := range objs {
+			held[o] = true
+		}
+	}
+	n := 0
+	_ = p.store.Walk(func(h [32]byte, _ int64) {
+		if !held[h] && p.st.Unclaimed[hex.EncodeToString(h[:])] == nil {
+			_ = p.store.Delete(h)
+			n++
+		}
+	})
+	if n > 0 {
+		p.logf("%d object(s) in the store were neither held nor unclaimed, and are removed", n)
+	}
 }

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/bsv-blockchain/go-sdk/chainhash"
+	"github.com/bsv-blockchain/go-sdk/transaction"
 
 	"github.com/lightwebinc/bcommon/chirp"
 
@@ -34,7 +35,7 @@ func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		auth104.Write(w, auth104.Error(http.StatusMethodNotAllowed, "ERR_METHOD", "submit is a POST"))
 		return
 	}
-	if ok, retry := p.limits.submits.Take(auth104.AddressKey(r.RemoteAddr)); !ok {
+	if ok, retry := p.limits.submits.Take(auth104.AddressKey(p.clientAddr(r))); !ok {
 		p.metrics.inc("bstore_provider_submits_total", "result=limited")
 		auth104.Write(w, auth104.Error(http.StatusTooManyRequests, "ERR_RATE_LIMITED", "too many submissions; try again later", "Retry-After", strconv.Itoa(retry)))
 		return
@@ -50,17 +51,28 @@ func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 			bound = storerec.MaxPieceBEEF
 		}
 	}
-	select {
-	case p.limits.ingest <- struct{}{}:
-		defer func() { <-p.limits.ingest }()
-	case <-r.Context().Done():
+	addr := auth104.AddressKey(p.clientAddr(r))
+	if !p.limits.inflight.enter(addr) {
+		auth104.Write(w, auth104.Error(http.StatusTooManyRequests, "ERR_RATE_LIMITED", "too many submissions in flight from this address", "Retry-After", "1"))
 		return
 	}
+	defer p.limits.inflight.leave(addr)
 	if r.ContentLength > bound {
 		auth104.Write(w, auth104.Error(http.StatusRequestEntityTooLarge, "ERR_TOO_LARGE", "the submission is over this topic's bound"))
 		return
 	}
+	// The body is read under its own deadline, before a slot is taken: a
+	// client that trickles holds its own connection, nothing shared.
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(bodyDeadline))
 	beef, err := io.ReadAll(http.MaxBytesReader(w, r.Body, bound))
+	if err == nil {
+		select {
+		case p.limits.ingest <- struct{}{}:
+			defer func() { <-p.limits.ingest }()
+		case <-r.Context().Done():
+			return
+		}
+	}
 	if err != nil {
 		auth104.Write(w, auth104.Error(http.StatusRequestEntityTooLarge, "ERR_TOO_LARGE", "the submission is over this topic's bound"))
 		return
@@ -91,6 +103,8 @@ func parseTopics(h string) ([]string, error) {
 	} else if h != "" {
 		ts = []string{h}
 	}
+	slices.Sort(ts)
+	ts = slices.Compact(ts)
 	if len(ts) == 0 || len(ts) > 4 {
 		return nil, errors.New("x-topics names one to four topics")
 	}
@@ -134,6 +148,9 @@ func (p *Provider) take(ctx context.Context, topic string, beef []byte) ([]int, 
 		if !writerAllowed(b, pc.Piece.Writer) {
 			return []int{}, "writer: not a writer this provider takes for the bucket"
 		}
+		if !p.claimFunding(pc.Funding, pc.Commitment) {
+			return []int{}, "funding: a second carrier on one funding output"
+		}
 		if why := p.keepPiece(pc.Piece.Piece, hex.EncodeToString(pc.Piece.Root[:]), b.Bucket, hex.EncodeToString(pc.Piece.Writer)); why != "" {
 			return []int{}, why
 		}
@@ -156,16 +173,58 @@ func (p *Provider) take(ctx context.Context, topic string, beef []byte) ([]int, 
 	if !writerAllowed(b, e.Writer) {
 		return []int{}, "writer: not a writer this provider takes for the bucket"
 	}
-	p.noteEntry(chainhash.Hash(a.Txid).String(), e)
+	if !p.claimFunding(a.Carrier.Funding, a.Carrier.Commitment) {
+		return []int{}, "funding: a second carrier on one funding output"
+	}
+	if why := p.noteEntry(chainhash.Hash(a.Txid).String(), e); why != "" {
+		return []int{}, why
+	}
 	return []int{0}, ""
 }
 
+// claimFunding records the carrier a funding outpoint paid for: a writer
+// makes at most one carrier per funding output (spec section 13.2), so a
+// second, different one on the same outpoint is refused, and one mined
+// output buys one piece or one entry, never a stream of them.
+func (p *Provider) claimFunding(op transaction.Outpoint, c [32]byte) bool {
+	k := op.Txid.String() + "." + itoa(uint64(op.Index))
+	ch := hex.EncodeToString(c[:])
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if f, ok := p.st.Fundings[k]; ok {
+		return f.C == ch
+	}
+	p.st.Fundings[k] = &Funding{C: ch, At: p.now().Unix()}
+	p.dirty = true
+	return true
+}
+
+// The most undecided entries kept, from one writer and in all.
+const (
+	maxUndecidedPerWriter = 256
+	maxUndecided          = 10000
+)
+
 // noteEntry records a put entry, once, and asks for its root to be looked
 // at.
-func (p *Provider) noteEntry(c string, e *storerec.Entry) {
+func (p *Provider) noteEntry(c string, e *storerec.Entry) string {
 	rootHex := hex.EncodeToString(e.Root[:])
 	p.mu.Lock()
 	if _, ok := p.st.Entries[c]; !ok {
+		w := hex.EncodeToString(e.Writer)
+		mine, all := 0, 0
+		for _, x := range p.st.Entries {
+			if x.Decision == "" {
+				all++
+				if x.Writer == w {
+					mine++
+				}
+			}
+		}
+		if mine >= maxUndecidedPerWriter || all >= maxUndecided {
+			p.mu.Unlock()
+			return "room: too many entries waiting for their closures"
+		}
 		rec := &EntryRec{C: c, Bucket: e.Bucket, Writer: hex.EncodeToString(e.Writer), Root: rootHex, Size: e.Size,
 			ContentHash: hex.EncodeToString(e.ContentHash[:]), ProofRoot: hex.EncodeToString(e.ProofRoot[:]), Created: e.Created,
 			At: p.now().UnixNano()}
@@ -180,6 +239,7 @@ func (p *Provider) noteEntry(c string, e *storerec.Entry) {
 	}
 	p.mu.Unlock()
 	p.enqueue(rootHex)
+	return ""
 }
 
 // maxEntries bounds the entries kept; past it the oldest declined go first.
@@ -216,9 +276,11 @@ func (p *Provider) keepPiece(data []byte, rootHex, bucket, writer string) string
 			p.logf("storing piece %s: %v", short(hh), err)
 			return "store: the piece could not be stored"
 		}
+		// Saved with the next background pass: a piece a crash forgets is
+		// collected from the store on the next start, and sent again.
 		p.mu.Lock()
 		p.st.Unclaimed[hh] = &Unclaimed{Root: rootHex, Bucket: bucket, Writer: writer, Size: uint64(len(data)), At: p.now().Unix()}
-		_ = p.save()
+		p.dirty = true
 		p.mu.Unlock()
 	}
 	p.mu.Lock()
@@ -291,24 +353,30 @@ type uploads struct {
 }
 
 type upload struct {
-	id      string
-	owner   string
-	expires time.Time
-	objects map[[32]byte]bool
+	id        string
+	owner     string
+	addr      string
+	expires   time.Time
+	objects   map[[32]byte]bool
+	committed map[[32]byte]bool
 }
 
 func newUploads(c *Config, now func() time.Time) *uploads {
 	return &uploads{max: c.Limits.UploadSessions, life: time.Duration(c.Limits.UploadSessionSeconds) * time.Second, now: now, byID: map[string]*upload{}}
 }
 
-// maxUploadsPerIdentity bounds the sessions one identity holds open.
-const maxUploadsPerIdentity = 4
+// maxUploadsPerIdentity and maxUploadsPerAddress bound the sessions one
+// identity, and one address, hold open.
+const (
+	maxUploadsPerIdentity = 4
+	maxUploadsPerAddress  = 8
+)
 
-func (u *uploads) open(owner string) (*upload, error) {
+func (u *uploads) open(owner, addr string) (*upload, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	now := u.now()
-	n := 0
+	n, a := 0, 0
 	for id, s := range u.byID {
 		if now.After(s.expires) {
 			delete(u.byID, id)
@@ -317,13 +385,16 @@ func (u *uploads) open(owner string) (*upload, error) {
 		if s.owner == owner {
 			n++
 		}
+		if s.addr == addr {
+			a++
+		}
 	}
-	if len(u.byID) >= u.max || n >= maxUploadsPerIdentity {
+	if len(u.byID) >= u.max || n >= maxUploadsPerIdentity || a >= maxUploadsPerAddress {
 		return nil, errors.New("too many upload sessions open; commit or let one expire")
 	}
 	var b [16]byte
 	_, _ = rand.Read(b[:])
-	s := &upload{id: hex.EncodeToString(b[:]), owner: owner, expires: now.Add(u.life), objects: map[[32]byte]bool{}}
+	s := &upload{id: hex.EncodeToString(b[:]), owner: owner, addr: addr, expires: now.Add(u.life), objects: map[[32]byte]bool{}, committed: map[[32]byte]bool{}}
 	u.byID[s.id] = s
 	return s, nil
 }
@@ -342,9 +413,13 @@ func (u *uploads) get(id, owner string) *upload {
 const maxObjectsPerUpload = 1 << 16
 
 // uploadCreate is POST <prefix>/chirp/v1/uploads.
-func (p *Provider) uploadCreate(_ context.Context, _ *http.Request, body []byte, who *auth104.Caller) auth104.Reply {
+func (p *Provider) uploadCreate(_ context.Context, r *http.Request, body []byte, who *auth104.Caller) auth104.Reply {
 	if who == nil {
 		return auth104.Error(http.StatusUnauthorized, "ERR_AUTH_REQUIRED", "an upload session is opened over BRC-104 authentication")
+	}
+	addr := auth104.AddressKey(p.clientAddr(r))
+	if ok, retry := p.limits.uploads.Take(addr); !ok {
+		return auth104.Error(http.StatusTooManyRequests, "ERR_RATE_LIMITED", "too many upload sessions from this address", "Retry-After", itoa(uint64(retry)))
 	}
 	var req struct {
 		RetentionSeconds string  `json:"retentionSeconds"`
@@ -365,7 +440,7 @@ func (p *Provider) uploadCreate(_ context.Context, _ *http.Request, body []byte,
 			return auth104.Error(http.StatusRequestEntityTooLarge, "ERR_TOO_LARGE", "the object is larger than this provider takes")
 		}
 	}
-	s, err := p.uploads.open(who.Hex)
+	s, err := p.uploads.open(who.Hex, addr)
 	if err != nil {
 		return auth104.Error(http.StatusTooManyRequests, "ERR_RATE_LIMITED", err.Error())
 	}
@@ -384,12 +459,13 @@ func (p *Provider) handleUpload(w http.ResponseWriter, r *http.Request) {
 			auth104.Write(w, auth104.Error(http.StatusNotFound, "ERR_NOT_FOUND", "not an object identifier"))
 			return
 		}
-		select {
-		case p.limits.ingest <- struct{}{}:
-			defer func() { <-p.limits.ingest }()
-		case <-r.Context().Done():
+		addr := auth104.AddressKey(p.clientAddr(r))
+		if !p.limits.inflight.enter(addr) {
+			auth104.Write(w, auth104.Error(http.StatusTooManyRequests, "ERR_RATE_LIMITED", "too many uploads in flight from this address", "Retry-After", "1"))
 			return
 		}
+		defer p.limits.inflight.leave(addr)
+		_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(bodyDeadline))
 		p.auth.Serve(w, r, maxUploadObject, func(_ context.Context, r *http.Request, body []byte, who *auth104.Caller) auth104.Reply {
 			return p.uploadObject(r.Method, parts[0], obj, body, who)
 		})
@@ -433,14 +509,14 @@ func (p *Provider) uploadObject(method, id string, obj [32]byte, body []byte, wh
 	if p.store.Has(obj) {
 		status = http.StatusNoContent
 	} else {
-		if why := p.room(uint64(len(body)), who.Hex); why != "" {
+		if why := p.room(uint64(len(body)), uploaderKey+who.Hex); why != "" {
 			return auth104.Error(http.StatusInsufficientStorage, "ERR_NO_ROOM", why)
 		}
 		if err := p.store.Put(obj, body); err != nil {
 			return auth104.Error(http.StatusInternalServerError, "ERR_STORE", "the object could not be stored")
 		}
 		p.mu.Lock()
-		p.st.Unclaimed[hex.EncodeToString(obj[:])] = &Unclaimed{Writer: who.Hex, Size: uint64(len(body)), At: p.now().Unix()}
+		p.st.Unclaimed[hex.EncodeToString(obj[:])] = &Unclaimed{Writer: uploaderKey + who.Hex, Size: uint64(len(body)), At: p.now().Unix()}
 		_ = p.save()
 		p.mu.Unlock()
 	}
@@ -473,24 +549,32 @@ func (p *Provider) uploadCommit(ctx context.Context, id string, body []byte, who
 	if err != nil {
 		return auth104.Error(http.StatusBadRequest, "ERR_BAD_REQUEST", "rootIdentifier is not a UHRP identifier")
 	}
-	p.uploads.mu.Lock()
-	staged := s.objects[root]
-	p.uploads.mu.Unlock()
-	if !staged && !p.store.Has(root) {
-		return auth104.Error(http.StatusUnprocessableEntity, "ERR_INCOMPLETE", "the root node was not uploaded")
-	}
-	c, err := storerec.VerifyCHIRP(root, p.fetch)
-	if err != nil {
-		return auth104.JSON(http.StatusUnprocessableEntity, map[string]string{"status": "error", "code": "ERR_CLOSURE", "description": why(err)})
-	}
 	rootHex := hex.EncodeToString(root[:])
 	p.mu.Lock()
-	for _, o := range c.Objects {
-		if u := p.st.Unclaimed[hex.EncodeToString(o[:])]; u != nil {
+	hh := p.st.Holdings[rootHex]
+	held := hh != nil && hh.Verified && !hh.Damaged
+	p.mu.Unlock()
+	p.uploads.mu.Lock()
+	staged, done := s.objects[root], s.committed[root]
+	p.uploads.mu.Unlock()
+	if !held && !done {
+		if !staged {
+			return auth104.Error(http.StatusUnprocessableEntity, "ERR_INCOMPLETE", "the root node was not uploaded in this session")
+		}
+		if why := p.commitCheck(ctx, s, root); why != "" {
+			return auth104.JSON(http.StatusUnprocessableEntity, map[string]string{"status": "error", "code": "ERR_CLOSURE", "description": why})
+		}
+	}
+	p.uploads.mu.Lock()
+	s.committed[root] = true
+	p.uploads.mu.Unlock()
+	p.mu.Lock()
+	for o := range s.objects {
+		if u := p.st.Unclaimed[hex.EncodeToString(o[:])]; u != nil && u.Root == "" && u.Writer == uploaderKey+who.Hex {
 			u.Root = rootHex
 		}
 	}
-	_ = p.save()
+	p.dirty = true
 	h := p.st.Holdings[rootHex]
 	var ad *AdRec
 	if h != nil && h.Ad != nil && !h.Damaged {
@@ -504,4 +588,56 @@ func (p *Provider) uploadCommit(ctx context.Context, id string, body []byte, who
 	}
 	return auth104.JSON(http.StatusCreated, map[string]any{"chirpURL": chirp.URL(root), "uhrpURL": "uhrp://" + req.RootIdentifier,
 		"hostedFileLocation": p.be.ServeURL(root), "expiryTime": ad.Expiry})
+}
+
+// uploaderKey marks the unclaimed pieces an identity uploaded: identities
+// cost nothing, so uploads have a share of their own.
+const uploaderKey = "upload:"
+
+// commitCheck is BRC-167's closure check at commit, bounded: the root's
+// logical length within the provider's object bound before anything is
+// walked, every object staged in this session or held already, and the
+// walk under the verification limit with a deadline.
+func (p *Provider) commitCheck(ctx context.Context, s *upload, root [32]byte) string {
+	rb, err := p.fetch(root)
+	if err != nil {
+		return "the root node is not here"
+	}
+	r, err := chirp.DecodeRoot(rb)
+	if err != nil {
+		return "root: " + err.Error()
+	}
+	if r.Length > p.cfg.Policy.MaxObject {
+		return "the object is larger than this provider takes"
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	select {
+	case p.limits.verifyMu <- struct{}{}:
+		defer func() { <-p.limits.verifyMu }()
+	case <-ctx.Done():
+		return "busy; commit again later"
+	}
+	fetch := func(h [32]byte) ([]byte, error) {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		p.uploads.mu.Lock()
+		ok := s.objects[h]
+		p.uploads.mu.Unlock()
+		if !ok && !p.heldAnywhere(h) {
+			return nil, errors.New("not staged in this session")
+		}
+		return p.fetch(h)
+	}
+	if _, err := storerec.VerifyCHIRP(root, fetch); err != nil {
+		return why(err)
+	}
+	return ""
+}
+
+func (p *Provider) heldAnywhere(h [32]byte) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.heldObjectLocked(hex.EncodeToString(h[:]))
 }

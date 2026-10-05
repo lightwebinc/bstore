@@ -5,14 +5,18 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lightwebinc/bcommon/chirp"
 
 	"github.com/lightwebinc/bstore/internal/auth104"
+	"github.com/lightwebinc/bstore/internal/backend"
 	"github.com/lightwebinc/bstore/internal/storerec"
 )
 
@@ -35,6 +39,10 @@ type routeLimits struct {
 	writers  *auth104.Keyed // free settlement challenges per writer
 	roots    *auth104.Keyed // paid renewals per root
 	submits  *auth104.Keyed // submissions per address
+	settles  *auth104.Keyed // remittances per address
+	objects  *auth104.Keyed // object reads per address
+	uploads  *auth104.Keyed // upload sessions opened per address
+	inflight *perAddr       // submissions and uploads read at once, per address
 	work     chan struct{}  // challenges answered at once
 	readers  chan struct{}  // object reads at once
 	ingest   chan struct{}  // submissions and uploads read at once
@@ -44,7 +52,7 @@ type routeLimits struct {
 func newRouteLimits(c *Config, now func() time.Time) (*routeLimits, error) {
 	l := c.Limits
 	var err error
-	r := &routeLimits{work: make(chan struct{}, l.ChallengeWorkers), readers: make(chan struct{}, l.ObjectReaders),
+	r := &routeLimits{inflight: &perAddr{max: 4, n: map[string]int{}}, work: make(chan struct{}, l.ChallengeWorkers), readers: make(chan struct{}, l.ObjectReaders),
 		ingest: make(chan struct{}, 16), verifyMu: make(chan struct{}, 2)}
 	if r.buyers, err = auth104.NewKeyed(auth104.Budget{Rate: l.ChallengesPerBuyerPerMin / 60, Burst: l.ChallengeBurst}, 100000, now); err != nil {
 		return nil, err
@@ -56,6 +64,15 @@ func newRouteLimits(c *Config, now func() time.Time) (*routeLimits, error) {
 		return nil, err
 	}
 	if r.submits, err = auth104.NewKeyed(auth104.Budget{Rate: l.SubmitsPerAddrPerSec, Burst: l.SubmitBurst}, auth104.MaxAddresses, now); err != nil {
+		return nil, err
+	}
+	if r.settles, err = auth104.NewKeyed(auth104.Budget{Rate: 1, Burst: 16}, auth104.MaxAddresses, now); err != nil {
+		return nil, err
+	}
+	if r.objects, err = auth104.NewKeyed(auth104.Budget{Rate: l.ObjectReadsPerAddrPerSec, Burst: l.ObjectReadBurst}, auth104.MaxAddresses, now); err != nil {
+		return nil, err
+	}
+	if r.uploads, err = auth104.NewKeyed(auth104.Budget{Rate: 60.0 / 3600, Burst: 16}, auth104.MaxAddresses, now); err != nil {
 		return nil, err
 	}
 	return r, nil
@@ -73,7 +90,6 @@ func (p *Provider) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc(auth104.HandshakePath, p.auth.Handshake)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
-	mux.HandleFunc("/metrics", p.metrics.serve)
 	mux.HandleFunc("/submit", p.handleSubmit)
 	mux.HandleFunc(front+"/terms", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -156,22 +172,16 @@ func (p *Provider) handleObject(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	select {
-	case p.limits.readers <- struct{}{}:
-		defer func() { <-p.limits.readers }()
-	case <-r.Context().Done():
+	if ok, retry := p.limits.objects.Take(auth104.AddressKey(p.clientAddr(r))); !ok {
+		w.Header().Set("Retry-After", itoa(uint64(retry)))
+		http.Error(w, "too many reads; try again later", http.StatusTooManyRequests)
 		return
 	}
-	size := p.store.Size(obj)
-	if size < 0 || size > maxUploadObject {
-		p.damaged(rootHex, "an object of its closure is missing")
-		http.NotFound(w, r)
-		return
-	}
-	data, err := p.store.Get(obj, 0, uint64(size))
-	if err != nil || sha256.Sum256(data) != obj {
-		p.damaged(rootHex, "an object of its closure read back wrong")
-		http.NotFound(w, r)
+	// The read and the hash hold a reader's slot; writing to a slow client
+	// does not.
+	data, status := p.readObject(r.Context(), rootHex, obj)
+	if status != http.StatusOK {
+		http.Error(w, http.StatusText(status), status)
 		return
 	}
 	ct := "application/octet-stream"
@@ -188,4 +198,107 @@ func (p *Provider) handleObject(w http.ResponseWriter, r *http.Request) {
 // isNode reports whether b starts as a CHIRP node does.
 func isNode(b []byte) bool {
 	return len(b) >= len(chirp.Magic) && bytes.Equal(b[:len(chirp.Magic)], chirp.Magic[:])
+}
+
+// clientAddr is the address a request is budgeted under: the connection's,
+// or, from a trusted proxy, the last address its X-Forwarded-For names
+// that is not itself a trusted proxy.
+func (p *Provider) clientAddr(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	if !p.trusted(host) {
+		return host
+	}
+	hops := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
+	for i := len(hops) - 1; i >= 0; i-- {
+		h := strings.TrimSpace(hops[i])
+		if net.ParseIP(h) == nil {
+			break
+		}
+		if !p.trusted(h) {
+			return h
+		}
+	}
+	return host
+}
+
+func (p *Provider) trusted(host string) bool {
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	for _, c := range p.proxies {
+		if c.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// readObject reads an object of a held closure whole and checks its hash
+// under a reader's slot. Only an object that is gone or reads back as
+// other bytes marks the root damaged; any other failure (a file the system
+// could not open now) is 503 and marks nothing.
+func (p *Provider) readObject(ctx context.Context, rootHex string, obj [32]byte) ([]byte, int) {
+	select {
+	case p.limits.readers <- struct{}{}:
+		defer func() { <-p.limits.readers }()
+	case <-ctx.Done():
+		return nil, http.StatusServiceUnavailable
+	}
+	size := p.store.Size(obj)
+	if size < 0 {
+		if !p.store.Has(obj) {
+			p.damaged(rootHex, "an object of its closure is missing")
+			return nil, http.StatusNotFound
+		}
+		return nil, http.StatusServiceUnavailable
+	}
+	if size > maxUploadObject {
+		p.damaged(rootHex, "an object of its closure is over the bound")
+		return nil, http.StatusNotFound
+	}
+	data, err := p.store.Get(obj, 0, uint64(size))
+	switch {
+	case errors.Is(err, backend.ErrMissing) || errors.Is(err, backend.ErrRange):
+		p.damaged(rootHex, "an object of its closure is missing or short")
+		return nil, http.StatusNotFound
+	case err != nil:
+		return nil, http.StatusServiceUnavailable
+	case sha256.Sum256(data) != obj:
+		p.damaged(rootHex, "an object of its closure read back wrong")
+		return nil, http.StatusNotFound
+	}
+	return data, http.StatusOK
+}
+
+// bodyDeadline is how long a submission's or an upload's body may take to
+// arrive: 4 MiB at about 70 KB a second.
+const bodyDeadline = time.Minute
+
+// perAddr bounds the requests one address has in flight.
+type perAddr struct {
+	mu  sync.Mutex
+	max int
+	n   map[string]int
+}
+
+func (a *perAddr) enter(k string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.n[k] >= a.max {
+		return false
+	}
+	a.n[k]++
+	return true
+}
+
+func (a *perAddr) leave(k string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.n[k]--; a.n[k] <= 0 {
+		delete(a.n, k)
+	}
 }

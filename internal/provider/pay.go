@@ -11,6 +11,7 @@ import (
 	"github.com/bsv-blockchain/go-sdk/auth/utils"
 	"github.com/bsv-blockchain/go-sdk/wallet"
 
+	"github.com/lightwebinc/bcommon/guard"
 	"github.com/lightwebinc/bcommon/payee"
 
 	"github.com/lightwebinc/bstore/internal/auth104"
@@ -27,6 +28,9 @@ import (
 // signed. The payee settle run takes it into the pool later.
 
 const paymentVersion = "1.0"
+
+// maxPaymentBEEF bounds a payment's BEEF.
+const maxPaymentBEEF = 192 << 10
 
 // paid is a payment taken for one answer.
 type paid struct {
@@ -83,8 +87,14 @@ func (p *Provider) checkPayment(ctx context.Context, raw string, who *auth104.Ca
 		return bad(http.StatusBadRequest, "ERR_INVALID_DERIVATION_PREFIX", "this provider did not issue that derivation prefix")
 	}
 	beef, err := base64.StdEncoding.Strict().DecodeString(pm.Transaction)
-	if err != nil {
-		return bad(http.StatusBadRequest, "ERR_MALFORMED_PAYMENT", "the payment transaction is not standard base64")
+	if err != nil || len(beef) > maxPaymentBEEF {
+		return bad(http.StatusBadRequest, "ERR_MALFORMED_PAYMENT", "the payment transaction is not standard base64 of at most 192 KiB")
+	}
+	// A payment taken before is refused before any proof is checked.
+	if _, _, txid, err := guard.ParseBEEF(beef, maxPaymentBEEF); err != nil || txid == nil {
+		return bad(http.StatusBadRequest, "ERR_INVALID_PAYMENT", "the payment is not a BEEF with its subject")
+	} else if p.ledger.has(txid.String()) {
+		return bad(http.StatusConflict, "ERR_PAYMENT_REPLAYED", "this payment was already used")
 	}
 	in, err := p.incoming(ctx, beef, 0, pm.DerivationPrefix, pm.DerivationSuffix, who.Hex)
 	if err != nil {

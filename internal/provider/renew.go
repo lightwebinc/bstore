@@ -5,9 +5,11 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"math/big"
 	"net/http"
+	"slices"
+
+	"github.com/bsv-blockchain/go-sdk/transaction"
 
 	"github.com/lightwebinc/bstore/internal/auth104"
 )
@@ -60,39 +62,50 @@ func (p *Provider) renew(ctx context.Context, r *http.Request, body []byte, who 
 	case req.Until > now+p.cfg.Terms.MaxRenewSeconds:
 		return auth104.Error(http.StatusBadRequest, "ERR_UNTIL", "until is further ahead than this provider renews")
 	}
+	if who == nil {
+		return auth104.Error(http.StatusUnauthorized, "ERR_AUTH_REQUIRED", "a renewal is priced; ask over BRC-104 authentication")
+	}
 	price := renewPrice(size, max(now, expiry), req.Until, p.cfg.Terms.RenewPerGiBDay, p.cfg.Terms.RenewMinimum)
-	var pay *paymentLine
-	if price > 0 {
-		if who == nil {
-			return auth104.Error(http.StatusUnauthorized, "ERR_AUTH_REQUIRED", "a renewal is priced; ask over BRC-104 authentication")
-		}
-		raw := r.Header.Get("x-bsv-payment")
-		if raw == "" {
-			_, rep := p.requirePayment(ctx, r, who, price, "renew")
-			return *rep
-		}
-		pl, rep := p.checkPayment(ctx, raw, who, price)
-		if rep != nil {
-			return *rep
-		}
-		pay = pl
+	raw := r.Header.Get("x-bsv-payment")
+	if raw == "" {
+		_, rep := p.requirePayment(ctx, r, who, price, "renew")
+		return *rep
+	}
+	// A payment taken before is refused before the root's budget is
+	// spent, so an old payment cannot lock a root's renewals.
+	pl, rep := p.checkPayment(ctx, raw, who, price)
+	if rep != nil {
+		return *rep
 	}
 	if ok, retry := p.limits.roots.Take(req.Root); !ok {
 		return auth104.Error(http.StatusTooManyRequests, "ERR_RATE_LIMITED", "this root was renewed often lately; try again later", "Retry-After", itoa(uint64(retry)))
 	}
-	if pay != nil {
-		if _, rep := p.claimPayment(*pay, "renew"); rep != nil {
-			return *rep
+	if _, rep := p.claimPayment(*pl, "renew"); rep != nil {
+		return *rep
+	}
+	// The payment is broadcast before the renewal is made: the payer
+	// cannot take its coin back once the renewal costs the provider a fee.
+	if tx, err := paymentTx(pl); err == nil {
+		if err := p.send(ctx, tx); err != nil {
+			p.logf("renewal payment %s: %v", short(pl.Txid), err)
 		}
+	}
+	// The renewal is owed from here: recorded before it is made, and made
+	// by the background when it cannot be now.
+	p.mu.Lock()
+	p.st.Owed = append(p.st.Owed, Owed{Root: req.Root, Until: req.Until, Payment: pl.Txid})
+	err = p.save()
+	p.mu.Unlock()
+	if err != nil {
+		return auth104.Error(http.StatusInternalServerError, "ERR_INTERNAL", "the renewal could not be recorded")
 	}
 	ad, err := p.be.Advertise(ctx, [32]byte(root), req.Until)
 	if err != nil {
-		p.logf("root %s: renewal through %d paid and not made: %v", short(req.Root), req.Until, err)
-		if errors.Is(err, errAdPending) {
-			return auth104.Error(http.StatusConflict, "ERR_PENDING", "an advertisement for this root is not mined yet; the payment is kept and the renewal is made once it mines", "Retry-After", "60")
-		}
-		return auth104.Error(http.StatusServiceUnavailable, "ERR_RENEWAL", "the renewal could not be made now; the payment is kept")
+		p.logf("root %s: renewal through %d paid, made later: %v", short(req.Root), req.Until, err)
+		return auth104.JSON(http.StatusAccepted, map[string]any{"pending": true, "until": req.Until,
+			"description": "paid; the renewal is owed and made as soon as it can be, and the root's advertisement then answers it"})
 	}
+	p.payOwed(req.Root, req.Until)
 	p.metrics.inc("bstore_provider_renewals_total")
 	return auth104.JSON(http.StatusOK, map[string]any{"advertisement": base64.StdEncoding.EncodeToString(ad.BEEF), "txid": ad.Txid, "expiryTime": ad.Expiry})
 }
@@ -113,4 +126,43 @@ func renewPrice(size, from, until, perGiBDay, minimum uint64) uint64 {
 		return 1<<53 - 1
 	}
 	return max(minimum, n.Uint64())
+}
+
+// paymentTx is a ledger payment's transaction, with its ancestry.
+func paymentTx(pl *paymentLine) (*transaction.Transaction, error) {
+	raw, err := base64.StdEncoding.DecodeString(pl.Beef)
+	if err != nil {
+		return nil, err
+	}
+	return transaction.NewTransactionFromBEEF(raw)
+}
+
+// payOwed drops the owed renewals an advertisement through until settles.
+func (p *Provider) payOwed(root string, until uint64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.st.Owed = slices.DeleteFunc(p.st.Owed, func(o Owed) bool { return o.Root == root && o.Until <= until })
+	_ = p.save()
+}
+
+// makeOwed makes the renewals paid for and not made yet.
+func (p *Provider) makeOwed(ctx context.Context) {
+	p.mu.Lock()
+	owed := slices.Clone(p.st.Owed)
+	p.mu.Unlock()
+	for _, o := range owed {
+		p.mu.Lock()
+		h := p.st.Holdings[o.Root]
+		gone := h == nil || h.Damaged || !h.Verified
+		p.mu.Unlock()
+		if gone {
+			p.logf("root %s: a renewal through %d was paid (%s) and cannot be made: the root is no longer held", short(o.Root), o.Until, short(o.Payment))
+			p.payOwed(o.Root, o.Until)
+			continue
+		}
+		if _, err := p.be.Advertise(ctx, mustHash(o.Root), o.Until); err != nil {
+			continue
+		}
+		p.payOwed(o.Root, o.Until)
+	}
 }
