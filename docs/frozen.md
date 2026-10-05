@@ -6,8 +6,8 @@ already published. Once one record using it is on a public host, readers
 verify against it for as long as anyone reads that record, so changing it
 afterwards is a new identifier or a new record version, never an edit.
 
-**Status: signed, with seven clarifications pending owner confirmation
-(section 14, rows C1 to C7).** Every other row below is signed with the
+**Status: signed, with eight clarifications pending owner confirmation
+(section 14, rows C1 to C8).** Every other row below is signed with the
 value it gives, and none is provisional. The rows marked "vectors" are pinned byte for byte by
 the golden vectors the codec generates ([spec.md](spec.md) section 22); a
 vector that disagrees with a row is a defect in the codec, not a change to
@@ -205,7 +205,7 @@ least 1024. As ceilings, not floors: the BEEF ceilings of section 2.
 
 A clarification rewords a signed rule where the signed wording leaves a
 case open. Each below is pending the owner's confirmation; the codec and its
-vectors already follow it.
+vectors (C1 to C7) and the host module (C8) already follow it.
 
 | Row | Item | Clarification | Status |
 | --- | --- | --- | --- |
@@ -216,3 +216,4 @@ vectors already follow it.
 | C5 | Vectors, spec section 22 | The `chirp-v1.json` of section 22 is bcommon's file of that name at the tag go.mod pins, read from that module by bstore's tests; bstore's own vectors of its closure checks are `closure-v1.json`, so that no two vector files of one name differ | PENDING owner confirmation |
 | C6 | Challenge request, spec section 7.1 | `seedHeight` is at most 2^32 - 1, the range of a block height in a BUMP (BRC-74); a request with a larger one is refused (`request`) | PENDING owner confirmation |
 | C7 | Front statement, spec section 8.2 | The url's authority, from after `https://` to the first `/`, is not empty; `https:///x` is refused (`url`) | PENDING owner confirmation |
+| C8 | The index, spec section 12.2 | The latest tokens of a chain are those of the branch on the current chain: walking down from the highest `seq` that holds a rooted (and, for a served chain, consistent) token, the tokens at the first `seq` where any token's own proof verifies in the host's headers, and among them the lowest txid where one answer needs one token. A longer branch that a reorganisation orphaned is not answered as latest, and retention follows the branch on the chain. When no token verifies within 64 `seq`s of the highest (the header source does not answer), the tokens at the highest `seq` | PENDING owner confirmation |

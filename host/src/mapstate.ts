@@ -242,6 +242,10 @@ export class MapState {
 
 // ---- answers: the honest object answer and page (keymap.ts proveObject and provePage, over the kept tree)
 
+/**
+ * A UTF-8 prefix as a UTF-16 one: the same for well-formed strings, which every key is (decoded from CBOR,
+ * invalid UTF-8 refused) and every question value is (parseQuery reads a lone surrogate as U+FFFD).
+ */
 const startsWith = (k: string, p: string): boolean => k.startsWith(p)
 const inRange = (k: string, p: string, a: string): boolean => startsWith(k, p) && cmpKey(k, a) > 0
 

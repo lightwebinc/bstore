@@ -1,7 +1,7 @@
 /**
  * Sorted lists the index pages from: each answer starts with a binary
- * search and walks at most a page, so no question costs more than its page
- * whatever the index holds.
+ * search and walks at most a page, plus what aged out of its window since
+ * the last retention pass, which it takes out as it meets it.
  */
 
 /** Strings in ascending order (UTF-16 code units, which is byte order for the ASCII keys used here), each once. */

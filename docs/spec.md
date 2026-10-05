@@ -1132,7 +1132,12 @@ map of the last consistent token before it, and nothing after the break is
 answered as latest. Only the owner can cause it, and the way on is a new
 bucket chain. Where two rooted tokens share a `seq` after a reorganisation,
 each is folded on its own; an answer uses the one whose proof verifies in
-the host's headers, else the lowest txid.
+the host's headers, else the lowest txid. The latest tokens are those of the
+branch on the current chain (clarification pending owner confirmation,
+frozen.md section 14, row C8): walking down from the highest `seq` that holds
+a candidate, the candidates at the first `seq` where any token's proof
+verifies in the host's headers, so a longer branch a reorganisation orphaned
+is not answered as latest.
 
 **Entries.** An entry is `anchored` when the latest consistent token's map
 holds its `C`, `replaced` when an earlier consistent token named it (as a put, a removal's delete, or in `consumed`) and the current map does not hold it, `pending` when no token names it and its writer is

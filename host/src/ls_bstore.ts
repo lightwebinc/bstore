@@ -66,7 +66,7 @@ export const FrontsPerAdvertiser = 16
 export const FloorKeepDays = 31
 export const FloorPendingDays = 7
 export const FloorOtherHours = 24
-/** How long a choice between two rooted tokens at one seq is reused, milliseconds. */
+/** How long the latest tokens found against the headers are reused, milliseconds. */
 const ChoiceTTL = 60_000
 /** How long a drop waits for the engine to record the admission it drops, milliseconds. */
 export const SettleMs = 60_000
@@ -118,7 +118,11 @@ interface ChainIdx {
   top: number
   /** Tokens a full seq turned away while pending, by the txid they name as predecessor. */
   turned: Map<string, Map<string, number>>
-  choice: Map<number, { among: string; txid: string; at: number }>
+  /** The seqs that hold a rooted token, and (a served chain) a consistent one, each with how many: chain, latest and heads search these, never every seq. */
+  rootedSeqs: SeqIndex
+  consistentSeqs: SeqIndex
+  /** The latest tokens as heads() last found them against the headers, and when. */
+  head?: { ts: TokenEntry[]; at: number }
   /** A served chain: every commitment a held token names (changes and consumed), with how many name it. */
   named: Map<string, number>
   /** A served chain: by key, the rooted tokens whose changes set or remove it; built when first asked. */
@@ -126,6 +130,33 @@ interface ChainIdx {
   /** latest(), until a token is rooted or forgotten. */
   latest?: TokenEntry[]
 }
+
+/** Seqs with a count of tokens at each: a sorted list the classes search by binary search. */
+class SeqIndex {
+  readonly sorted = new SortedNumbers()
+  private readonly n = new Map<number, number>()
+  add(seq: number): void {
+    const k = (this.n.get(seq) ?? 0) + 1
+    this.n.set(seq, k)
+    if (k === 1) this.sorted.insert(seq)
+  }
+  remove(seq: number): void {
+    const k = (this.n.get(seq) ?? 0) - 1
+    if (k > 0) {
+      this.n.set(seq, k)
+      return
+    }
+    this.n.delete(seq)
+    this.sorted.remove(seq)
+  }
+  clear(): void {
+    this.n.clear()
+    this.sorted.a.length = 0
+  }
+}
+
+/** How many seqs below the highest heads() looks for a token whose proof verifies, before it falls back to the highest. */
+export const ReorgDepth = 64
 
 /** A served chain's own indexes of entries no token of it names (pending, unanchored). */
 interface ServedIdx {
@@ -281,7 +312,7 @@ export class StoreLookupService implements LookupService {
 
   // What the journal holds.
   private readonly rows = new Map<string, { c: string; at: number }>()
-  private readonly marks = new Map<string, { key: string; at: number; life: boolean }>()
+  private readonly marks = new Map<string, { key: string; at: number; life: boolean; b?: string }>()
   private readonly table = new Map<string, { s: string; at: number }>()
   private readonly seen = new Map<string, { b: string; at: number }>()
   private readonly tokenSeen = new Map<string, { b: string; vout: number; at: number }>()
@@ -409,7 +440,7 @@ export class StoreLookupService implements LookupService {
         this.seen.delete(l.c)
         break
       case 'x':
-        if (!this.marks.has(l.op)) this.marks.set(l.op, { key: l.key, at: l.at, life: l.life })
+        if (!this.marks.has(l.op)) this.marks.set(l.op, l.b === undefined ? { key: l.key, at: l.at, life: l.life } : { key: l.key, at: l.at, life: l.life, b: l.b })
         break
       case 'xl': {
         const m = this.marks.get(l.op)
@@ -457,7 +488,7 @@ export class StoreLookupService implements LookupService {
   compact(): void {
     const out: Line[] = []
     for (const [op, r] of this.rows) out.push({ k: 'c', op, c: r.c, at: r.at })
-    for (const [op, m] of this.marks) out.push({ k: 'x', op, key: m.key, at: m.at, life: m.life })
+    for (const [op, m] of this.marks) out.push(m.b === undefined ? { k: 'x', op, key: m.key, at: m.at, life: m.life } : { k: 'x', op, key: m.key, at: m.at, life: m.life, b: m.b })
     for (const [op, p] of this.table) out.push({ k: 'p', op, s: p.s, at: p.at })
     for (const [c, s] of this.seen) if (this.carriers.has(c)) out.push({ k: 'a', b: s.b, c, at: s.at })
     for (const [txid, t] of this.tokenSeen) out.push({ k: 't', b: t.b, txid, vout: t.vout, at: t.at })
@@ -564,57 +595,84 @@ export class StoreLookupService implements LookupService {
     return m
   }
 
+  /**
+   * Roots token x when its predecessor is rooted and it descends from it,
+   * folding it onto its branch's map for a served chain; returns the tokens
+   * that may root after it, or nothing when x does not root now.
+   */
+  private rootStep(v: ChainIdx, x: TokenEntry, count: boolean): TokenEntry[] {
+    if (x.rooted) return []
+    let p: TokenEntry | undefined
+    if (x.seq === 0) {
+      if (!x.first) return []
+    } else {
+      p = v.byTxid.get(x.prev)
+      if (p === undefined || !p.rooted || !this.descends(p, x)) return []
+    }
+    x.rooted = true
+    if (!v.served) {
+      x.status = 'rooted'
+    } else if (p !== undefined && p.status === 'map-mismatch') {
+      // Sticky: everything after a break is broken.
+      x.status = 'map-mismatch'
+      x.reason = 'after-break'
+    } else {
+      let m: MapState
+      if (p === undefined) {
+        m = new MapState()
+      } else {
+        // The branch's map moves to x. A second child of p (a reorganisation)
+        // finds it taken and folds p's map again from seq 0: rare, and the
+        // one place the host folds a chain whole outside a restore.
+        const held = v.branches.get(p.txid)
+        v.branches.delete(p.txid)
+        m = held ?? this.rebuild(v, p)
+      }
+      const r = m.apply(x.rec)
+      if (r === undefined) {
+        x.status = 'consistent'
+        v.branches.set(x.txid, m)
+        v.consistentSeqs.add(x.seq)
+      } else {
+        x.status = 'map-mismatch'
+        x.reason = r
+        // The map stays its predecessor's: it is the map of the last consistent token.
+        if (p !== undefined) v.branches.set(p.txid, m)
+      }
+      if (v.hist !== undefined) this.histAdd(v, x)
+    }
+    v.rootedSeqs.add(x.seq)
+    v.top = Math.max(v.top, x.seq)
+    this.moved(v)
+    if (count) this.counted(v, x)
+    for (const [txid, vout] of v.turned.get(x.txid) ?? []) this.reread.push({ b: v.b, txid, vout })
+    v.turned.delete(x.txid)
+    const next: TokenEntry[] = []
+    for (const c of v.children.get(x.txid) ?? []) {
+      const child = v.byTxid.get(c)
+      if (child !== undefined) next.push(child)
+    }
+    return next
+  }
+
   private rootFrom(v: ChainIdx, t: TokenEntry, count: boolean): void {
     const work = [t]
+    while (work.length > 0) work.push(...this.rootStep(v, work.pop()!, count))
+  }
+
+  /** rootFrom, giving the event loop a turn after every served token it folds: a restore folds whole chains. */
+  private async rootAsync(v: ChainIdx, t: TokenEntry, count: boolean): Promise<void> {
+    const work = [t]
     while (work.length > 0) {
-      const x = work.pop()!
-      if (x.rooted) continue
-      let p: TokenEntry | undefined
-      if (x.seq === 0) {
-        if (!x.first) continue
-      } else {
-        p = v.byTxid.get(x.prev)
-        if (p === undefined || !p.rooted || !this.descends(p, x)) continue
-      }
-      x.rooted = true
-      if (!v.served) {
-        x.status = 'rooted'
-      } else if (p !== undefined && p.status === 'map-mismatch') {
-        // Sticky: everything after a break is broken.
-        x.status = 'map-mismatch'
-        x.reason = 'after-break'
-      } else {
-        let m: MapState
-        if (p === undefined) {
-          m = new MapState()
-        } else {
-          const held = v.branches.get(p.txid)
-          v.branches.delete(p.txid)
-          m = held ?? this.rebuild(v, p)
-        }
-        const r = m.apply(x.rec)
-        if (r === undefined) {
-          x.status = 'consistent'
-          v.branches.set(x.txid, m)
-        } else {
-          x.status = 'map-mismatch'
-          x.reason = r
-          // The map stays its predecessor's: it is the map of the last consistent token.
-          if (p !== undefined) v.branches.set(p.txid, m)
-        }
-        if (v.hist !== undefined) this.histAdd(v, x)
-      }
-      v.top = Math.max(v.top, x.seq)
-      v.choice.clear()
-      delete v.latest
-      if (count) this.counted(v, x)
-      for (const [txid, vout] of v.turned.get(x.txid) ?? []) this.reread.push({ b: v.b, txid, vout })
-      v.turned.delete(x.txid)
-      for (const c of v.children.get(x.txid) ?? []) {
-        const child = v.byTxid.get(c)
-        if (child !== undefined) work.push(child)
-      }
+      work.push(...this.rootStep(v, work.pop()!, count))
+      if (v.served) await new Promise((r) => setImmediate(r))
     }
+  }
+
+  /** What changed under a chain's latest tokens: they are found again when next asked. */
+  private moved(v: ChainIdx): void {
+    delete v.latest
+    delete v.head
   }
 
   private counted(v: ChainIdx, t: TokenEntry): void {
@@ -627,9 +685,10 @@ export class StoreLookupService implements LookupService {
   private reroot(v: ChainIdx): void {
     v.branches.clear()
     v.top = -1
-    v.choice.clear()
+    v.rootedSeqs.clear()
+    v.consistentSeqs.clear()
     delete v.hist
-    delete v.latest
+    this.moved(v)
     for (const t of v.byTxid.values()) {
       t.rooted = false
       t.status = 'pending'
@@ -657,54 +716,65 @@ export class StoreLookupService implements LookupService {
     if (again) this.reroot(v)
   }
 
-  /** The rooted, consistent tokens at the highest seq that has one (served), or the rooted ones at the highest seq (any other chain). */
-  private latest(v: ChainIdx): TokenEntry[] {
-    if (v.latest !== undefined) return v.latest
-    v.latest = []
-    for (let i = v.seqs.size - 1; i >= 0; i--) {
-      const at = (v.bySeq.get(v.seqs.a[i]!) ?? []).filter((t) => t.rooted && (v.served ? t.status === 'consistent' : true))
-      if (at.length > 0) {
-        v.latest = at
-        break
-      }
-    }
-    return v.latest
+  /** The tokens at seq that latest() and heads() consider: rooted and consistent (served), or rooted. */
+  private candidatesAt(v: ChainIdx, seq: number): TokenEntry[] {
+    return (v.bySeq.get(seq) ?? []).filter((t) => t.rooted && (v.served ? t.status === 'consistent' : true))
   }
 
   /**
-   * Of several tokens at one seq, the one an answer uses: the one whose
-   * proof verifies against the host's headers, else the lowest txid. The
-   * choice is kept for a minute.
+   * The chain's latest tokens, without asking the headers: those heads()
+   * last found when it asked them within ChoiceTTL, else the rooted,
+   * consistent tokens at the highest seq that has one (served), or the
+   * rooted ones at the highest seq (any other chain).
    */
-  private async choose(v: ChainIdx, seq: number, ts: TokenEntry[]): Promise<TokenEntry | undefined> {
-    if (ts.length <= 1) return ts[0]
-    const sorted = [...ts].sort((a, b) => cmp(a.txid, b.txid))
-    const among = sorted.map((t) => t.txid).join(',')
-    const now = Date.now()
-    const kept = v.choice.get(seq)
-    if (kept !== undefined && kept.among === among && now - kept.at < ChoiceTTL) return sorted.find((t) => t.txid === kept.txid)
-    let pick = sorted[0]!
-    if (this.headers !== undefined) {
-      for (const t of sorted) {
-        try {
-          if (t.root !== '' && (await this.headers.isValidRootForHeight(t.root, t.height))) {
-            pick = t
-            break
-          }
-        } catch {
-          // A header source that cannot answer leaves the lowest txid.
-        }
-      }
-    }
-    v.choice.set(seq, { among, txid: pick.txid, at: now })
-    return pick
+  private latest(v: ChainIdx): TokenEntry[] {
+    if (v.head !== undefined && this.now() - v.head.at < ChoiceTTL) return v.head.ts
+    if (v.latest !== undefined) return v.latest
+    const idx = v.served ? v.consistentSeqs : v.rootedSeqs
+    const top = idx.sorted.a[idx.sorted.size - 1]
+    v.latest = top === undefined ? [] : this.candidatesAt(v, top)
+    return v.latest
   }
 
-  /** The token a served chain's answers are proven against, and its map. */
+  private async verifies(t: TokenEntry): Promise<boolean> {
+    if (this.headers === undefined || t.root === '') return false
+    try {
+      return await this.headers.isValidRootForHeight(t.root, t.height)
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * The chain's latest tokens (spec section 12.2 and frozen.md row C8):
+   * walking down from the highest seq that holds a candidate, the
+   * candidates at the first seq where any token's proof verifies against
+   * the host's headers, only those; after a reorganisation that orphaned a
+   * longer branch, the tip of the branch on the current chain. When none
+   * verifies within ReorgDepth seqs (the header source does not answer),
+   * the candidates at the highest seq. Kept for ChoiceTTL.
+   */
+  private async heads(v: ChainIdx): Promise<TokenEntry[]> {
+    if (v.head !== undefined && this.now() - v.head.at < ChoiceTTL) return v.head.ts
+    const idx = (v.served ? v.consistentSeqs : v.rootedSeqs).sorted
+    let found: TokenEntry[] | undefined
+    for (let i = idx.size - 1, n = 0; this.headers !== undefined && i >= 0 && n < ReorgDepth; i--, n++) {
+      const ok: TokenEntry[] = []
+      for (const t of this.candidatesAt(v, idx.a[i]!)) if (await this.verifies(t)) ok.push(t)
+      if (ok.length > 0) {
+        found = ok
+        break
+      }
+    }
+    delete v.latest
+    found ??= this.latest(v)
+    v.head = { ts: found, at: this.now() }
+    return found
+  }
+
+  /** The token a served chain's answers are proven against (the lowest txid of its heads), and its map. */
   private async view(v: ChainIdx): Promise<{ t: TokenEntry; m: MapState } | undefined> {
-    const cands = this.latest(v)
-    if (cands.length === 0) return undefined
-    const t = await this.choose(v, cands[0]!.seq, cands)
+    const t = [...(await this.heads(v))].sort((a, b) => cmp(a.txid, b.txid))[0]
     if (t === undefined) return undefined
     let m = v.branches.get(t.txid)
     if (m === undefined) v.branches.set(t.txid, (m = this.rebuild(v, t)))
@@ -918,7 +988,7 @@ export class StoreLookupService implements LookupService {
     }
     // A sweep that arrived before the carrier: the outpoint is marked now.
     const early = this.table.get(op)
-    if (early !== undefined && !this.marks.has(op)) this.write({ k: 'x', op, key: e.owner, at: early.at, life: this.isParty(b, e.owner) })
+    if (early !== undefined && !this.marks.has(op)) this.write({ k: 'x', op, key: e.owner, at: early.at, life: this.isParty(b, e.owner), b })
     // Retraction wins over every floor: a carrier on a marked outpoint is retracted whenever it is offered.
     const mark = this.marks.get(op)
     if (mark !== undefined) {
@@ -1021,7 +1091,9 @@ export class StoreLookupService implements LookupService {
 
   /** Retracts a held carrier: its outpoint is marked, and the carrier goes. */
   private retract(e: CarrierEntry, sweepAt: number): void {
-    if (!this.marks.has(e.op)) this.write({ k: 'x', op: e.op, key: e.owner, at: sweepAt, life: this.isParty(e.b, e.owner) })
+    // During a restore the chains are not folded yet, so a writer may not count as a party here; the next
+    // retention pass makes the mark lifelong once it does, well inside the shorter floor.
+    if (!this.marks.has(e.op)) this.write({ k: 'x', op: e.op, key: e.owner, at: sweepAt, life: this.isParty(e.b, e.owner), b: e.b })
     this.host.metrics.inc('bstore_retractions_total')
     this.drop(e, 'retracted')
   }
@@ -1040,7 +1112,7 @@ export class StoreLookupService implements LookupService {
     const key = this.chainKey(b, owner, id)
     let v = this.chains.get(key)
     if (v === undefined) {
-      v = { key, b, owner, id, served: this.served.has(key), bySeq: new Map(), seqs: new SortedNumbers(), byTxid: new Map(), children: new Map(), branches: new Map(), top: -1, turned: new Map(), choice: new Map(), named: new Map() }
+      v = { key, b, owner, id, served: this.served.has(key), bySeq: new Map(), seqs: new SortedNumbers(), byTxid: new Map(), children: new Map(), branches: new Map(), top: -1, turned: new Map(), rootedSeqs: new SeqIndex(), consistentSeqs: new SeqIndex(), named: new Map() }
       this.chains.set(key, v)
     }
     if (!this.tokenSeen.has(txid)) this.write({ k: 't', b, txid, vout, at })
@@ -1070,7 +1142,9 @@ export class StoreLookupService implements LookupService {
   }
 
   private forgetToken(v: ChainIdx, t: TokenEntry, reroot = true): void {
-    delete v.latest
+    this.moved(v)
+    if (t.rooted) v.rootedSeqs.remove(t.seq)
+    if (t.status === 'consistent') v.consistentSeqs.remove(t.seq)
     v.byTxid.delete(t.txid)
     this.tokenChain.delete(t.txid)
     this.releaseOutput(v.b, t.txid, t.vout)
@@ -1147,14 +1221,16 @@ export class StoreLookupService implements LookupService {
       const op = outpoint(src, input.sourceOutputIndex)
       spent.push(op)
       if (!this.table.has(op)) this.write({ k: 'p', op, s: txid, at })
-      const on = this.byOp.get(op)
-      if (on === undefined) continue
-      matched = true
-      for (const c of [...on]) this.retract(this.carriers.get(c)!, this.table.get(op)!.at)
+      // Every carrier on the outpoint is retracted, in whatever bucket; the sweep is kept in this bucket only
+      // where it spends the outpoint of a carrier of this bucket: one held now, or one a mark says was retracted
+      // (by this sweep offered to another bucket first, or before a restart).
+      for (const c of [...(this.byOp.get(op) ?? [])]) {
+        const e = this.carriers.get(c)!
+        matched ||= e.b === b
+        this.retract(e, this.table.get(op)!.at)
+      }
+      matched ||= this.marks.get(op)?.b === b
     }
-    // A restore reads what storage kept: a sweep that matched left a mark on the outpoint of what it retracted;
-    // one that did not was being dropped when the host stopped, and is dropped now.
-    if (this.restoring && !matched) matched = spent.some((op) => this.marks.has(op))
     if (!matched) {
       this.queueDrop(b, txid, 0)
       this.host.metrics.inc('bstore_dropped_total', { why: 'unmatched-sweep' })
@@ -1244,7 +1320,9 @@ export class StoreLookupService implements LookupService {
       if (sv.anchored.has(e.c)) {
         if (e.root !== undefined) sv.roots.add(e.root)
         if (e.hold !== undefined) sv.holds.add(e.hold)
-      } else if (e.hold !== undefined && sv.parties.has(e.owner) && !this.namedByServed(b, e.c)) {
+      } else if (e.hold !== undefined && !sv.left.has(e.c) && (sv.parties.has(e.owner) || this.namedByServed(b, e.c))) {
+        // Kept as long as floorOf keeps its entry on the pending floor: unnamed and a party's, or named only by
+        // tokens not rooted or off the latest branch, which may yet anchor it.
         sv.holds.add(e.hold)
       }
     }
@@ -1288,6 +1366,11 @@ export class StoreLookupService implements LookupService {
   async prune(): Promise<number> {
     while (this.inflight !== undefined) await this.inflight.catch(() => {})
     if (!this.ready) return 0
+    // The latest tokens against the headers, so the floors follow the branch on the current chain (frozen.md row C8).
+    for (const s of this.servedIdx.values()) {
+      const v = this.chains.get(s.chain)
+      if (v !== undefined) await this.heads(v)
+    }
     const now = this.now()
     const views = new Map<string, ServedView>()
     const sv = (b: string): ServedView => {
@@ -1473,7 +1556,7 @@ export class StoreLookupService implements LookupService {
     switch (q.class) {
       case 'bucket': {
         const v = chainOf(m['owner']!, m['id']!)
-        return v === undefined ? [] : this.latest(v).slice(0, PerSeq).map(tok)
+        return v === undefined ? [] : [...(await this.heads(v))].sort((x, y) => cmp(x.txid, y.txid)).slice(0, PerSeq).map(tok)
       }
       case 'bucket-seq': {
         const v = chainOf(m['owner']!, m['id']!)
@@ -1521,10 +1604,14 @@ export class StoreLookupService implements LookupService {
         if (list === undefined) return []
         const out: LookupFormula = []
         const since = nowMs - UnanchoredDays * Day
+        const aged: string[] = []
         for (let i = m['after'] === '' ? 0 : list.upper(m['after']!); i < list.size && out.length < PageLimit; i++) {
           const e = this.carriers.get(cOf(list.a[i]!))
           if (e !== undefined && e.at >= since) out.push(car(e))
+          else aged.push(list.a[i]!)
         }
+        // What aged out of the window since the last retention pass is walked once, here, and leaves the index.
+        for (const txid of aged) list.remove(txid)
         return out
       }
       case 'entry': {
@@ -1538,6 +1625,7 @@ export class StoreLookupService implements LookupService {
         const cap = q.class === 'ads' ? PageLimit : PerSmall
         const out: LookupFormula = []
         let i = list.lower(afterTxid(q.class === 'ads' ? m['after']! : ''))
+        const dead: AdEntry[] = []
         while (i < list.size) {
           // A page never splits a transaction: the next page asks strictly after its txid.
           const txid = list.a[i]!.slice(0, 64)
@@ -1546,6 +1634,7 @@ export class StoreLookupService implements LookupService {
             const vout = Number(list.a[i]!.slice(65))
             const ad = this.ads.get(`${b}|${txid}.${vout}`)
             if (ad !== undefined && !ad.spent && ad.expiry * 1000 > nowMs) group.push({ txid, outputIndex: vout })
+            else if (ad !== undefined) dead.push(ad)
           }
           // `ad` has no cursor and no next page: it answers the first eight, a transaction split or not.
           if (out.length + group.length > cap) {
@@ -1554,6 +1643,8 @@ export class StoreLookupService implements LookupService {
           }
           out.push(...group)
         }
+        // An advertisement that expired since the last retention pass is walked once, here, and leaves the live index.
+        for (const ad of dead) this.adLive(ad, false)
         return out
       }
       case 'fronts': {
@@ -1594,16 +1685,30 @@ export class StoreLookupService implements LookupService {
         if (v === undefined) return []
         const hist = this.hist(v).get(m['history']!) ?? []
         const before = Number(m['before'])
+        // The first held change at or above `before`, by binary search; the page walks down from below it.
+        let lo = 0
+        let hi = hist.length
+        while (lo < hi) {
+          const mid = (lo + hi) >>> 1
+          if (hist[mid]!.t.seq < before) lo = mid + 1
+          else hi = mid
+        }
         const out: LookupFormula = []
         let tokens = 0
-        // Newest first: by seq, then txid.
-        for (let i = hist.length - 1; i >= 0 && tokens < PageLimit; i--) {
-          const h = hist[i]!
-          if (h.t.seq >= before) continue
-          tokens++
-          out.push(tok(h.t))
-          const e = this.carriers.get(h.c)
-          if (e !== undefined && e.kind === 'entry' && e.b === b) out.push(car(e))
+        // Newest first, by seq; a page never splits a seq, so the next page, asked below the last seq answered, misses none.
+        for (let i = lo - 1; i >= 0; ) {
+          const seq = hist[i]!.t.seq
+          let j = i
+          while (j >= 0 && hist[j]!.t.seq === seq) j--
+          const group = hist.slice(j + 1, i + 1).reverse()
+          if (tokens > 0 && tokens + group.length > PageLimit) break
+          for (const h of group) {
+            tokens++
+            out.push(tok(h.t))
+            const e = this.carriers.get(h.c)
+            if (e !== undefined && e.kind === 'entry' && e.b === b) out.push(car(e))
+          }
+          i = j
         }
         return out
       }
@@ -1611,8 +1716,10 @@ export class StoreLookupService implements LookupService {
         const v = chainOf(m['owner']!, m['chain']!)
         if (v === undefined) return []
         const out: LookupFormula = []
-        for (let i = v.seqs.upper(Number(m['after'])); i < v.seqs.size; i++) {
-          const at = (v.bySeq.get(v.seqs.a[i]!) ?? []).filter((t) => t.rooted)
+        // The seqs that hold a rooted token only: a stranger's unrooted tokens are never walked.
+        const seqs = v.rootedSeqs.sorted
+        for (let i = seqs.upper(Number(m['after'])); i < seqs.size; i++) {
+          const at = (v.bySeq.get(seqs.a[i]!) ?? []).filter((t) => t.rooted)
           // A page never splits a seq.
           if (out.length > 0 && out.length + at.length > PageLimit) break
           out.push(...at.map(tok))
@@ -1627,14 +1734,20 @@ export class StoreLookupService implements LookupService {
   private newest(list: Sorted | undefined, below: string, n: number, nowMs?: number): string[] {
     const out: string[] = []
     if (list === undefined) return out
+    const aged: string[] = []
     for (let i = list.lower(below) - 1; i >= 0 && out.length < n; i--) {
       const txid = txidOfKey(list.a[i]!)
       if (nowMs !== undefined) {
         const e = this.carriers.get(cOf(txid))
-        if (e === undefined || nowMs - e.at >= OutcomeWindowDays * Day) continue
+        if (e === undefined || nowMs - e.at >= OutcomeWindowDays * Day) {
+          aged.push(list.a[i]!)
+          continue
+        }
       }
       out.push(txid)
     }
+    // An outcome that aged out of the free window since the last retention pass is walked once, here, and leaves it.
+    for (const k of aged) list.remove(k)
     return out
   }
 
@@ -1716,10 +1829,10 @@ export class StoreLookupService implements LookupService {
     }
     const named: Array<{ topic: string; txid: string; vout: number }> = []
     for (const [txid, t] of this.tokenSeen) if (this.buckets.has(t.b)) named.push({ topic: RecordsPrefix + t.b, txid, vout: t.vout })
-    for (const k of this.spentHeld) {
-      const o = this.minedSeen.get(k)
-      if (o !== undefined && this.buckets.has(o.b)) named.push({ topic: RecordsPrefix + o.b, txid: o.txid, vout: o.vout })
-    }
+    // Every mined output the journal names, spent or not: the engine marks an output spent before it stores the
+    // transaction that spends it, so a crash between leaves one spent that no `w` line names, and the unspent rows
+    // never carry it.
+    for (const o of this.minedSeen.values()) if (this.buckets.has(o.b)) named.push({ topic: RecordsPrefix + o.b, txid: o.txid, vout: o.vout })
     for (const n of named) {
       const k = `${n.topic}|${n.txid}.${n.vout}`
       if (seen.has(k)) continue
@@ -1755,6 +1868,9 @@ export class StoreLookupService implements LookupService {
     let indexed = 0
     this.restoring = true
     const take = (o: Output, tx: Transaction): void => {
+      const b = this.bucketOf(o.topic)!
+      const k = `${b}|${o.txid}.${o.outputIndex}`
+      if (o.spent && this.minedSeen.has(k) && !this.spentHeld.has(k)) this.write({ k: 'w', b, txid: o.txid, vout: o.outputIndex })
       try {
         const at = o.score !== undefined && o.score > 0 ? o.score : this.now()
         if (this.index(this.bucketOf(o.topic)!, tx, o.outputIndex, at)) indexed++
@@ -1787,7 +1903,7 @@ export class StoreLookupService implements LookupService {
       this.restoring = false
     }
     for (const v of this.chains.values()) {
-      for (const t of v.bySeq.get(0) ?? []) this.rootFrom(v, t, true)
+      for (const t of v.bySeq.get(0) ?? []) await this.rootAsync(v, t, true)
       for (const t of v.byTxid.values()) if (!t.rooted) this.counted(v, t)
       for (const seq of [...v.seqs.a]) this.bound(v, seq)
     }

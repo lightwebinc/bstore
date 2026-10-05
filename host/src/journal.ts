@@ -14,7 +14,8 @@
  *   {"k":"cf","op":"..."}                                           that row was dropped by retention
  *   {"k":"a","b":"<bucket>","c":"<C>","at":<ms>}                    a carrier, first seen
  *   {"k":"af","c":"<C>"}                                            the carrier was dropped
- *   {"k":"x","op":"...","key":"<owner>","at":<ms>,"life":<bool>}    a retraction mark: the swept outpoint of a carrier, its owner, the sweep's first sight
+ *   {"k":"x","op":"...","key":"<owner>","at":<ms>,"life":<bool>,"b":"..."}
+ *                                                                   a retraction mark: the swept outpoint of a carrier, its owner, the sweep's first sight, the carrier's bucket
  *   {"k":"xl","op":"..."}                                           the mark is kept for the host's life
  *   {"k":"xf","op":"..."}                                           the mark was dropped by retention
  *   {"k":"p","op":"...","s":"<sweep txid>","at":<ms>}               an input outpoint of an admitted sweep, first seen
@@ -39,7 +40,7 @@ export type Line =
   | { k: 'cf'; op: string }
   | { k: 'a'; b: string; c: string; at: number }
   | { k: 'af'; c: string }
-  | { k: 'x'; op: string; key: string; at: number; life: boolean }
+  | { k: 'x'; op: string; key: string; at: number; life: boolean; b?: string }
   | { k: 'xl'; op: string }
   | { k: 'xf'; op: string }
   | { k: 'p'; op: string; s: string; at: number }
@@ -98,7 +99,7 @@ export function isLine(v: unknown): v is Line {
     case 'af':
       return h('c', 64)
     case 'x':
-      return op() && h('key', 66) && n('at') && typeof o['life'] === 'boolean'
+      return op() && h('key', 66) && n('at') && typeof o['life'] === 'boolean' && (o['b'] === undefined || b())
     case 'p':
       return op() && h('s', 64) && n('at')
     case 't':

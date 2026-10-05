@@ -114,6 +114,22 @@ kept with its tree, so an `object` or `list` answer costs one path per
 output. A chain the host does not serve is rooted but never folded: its
 `bucket` answers its highest rooted tokens, and the map classes refuse it.
 
+The **latest** tokens are those of the branch on the current chain (frozen.md
+row C8, pending the owner's confirmation): walking down from the highest
+`seq` that holds a candidate, the candidates at the first `seq` where any
+token's proof verifies in the host's headers, kept for a minute; an answer
+that needs one token takes the lowest txid among them. A longer branch a
+reorganisation orphaned is not latest, and retention follows the branch on
+the chain. With no answer from the header source, the highest `seq`.
+
+**What a fold costs.** Each token costs its changes and one tree over the
+whole map (about two hashes a key). Folding a chain whole costs that for
+every token: a restore does it, giving the event loop a turn after every
+token, before the host answers anything; and a reorganisation does it once,
+synchronously, for the second branch of a fork (the first takes the map),
+as does a `seq` turned over its cap of 8 tokens. A token that only extends a
+branch never refolds anything.
+
 ### One carrier per funding outpoint keeps a floor
 
 The first carrier the host admits on a funding outpoint is recorded. A later
@@ -131,7 +147,10 @@ carrier's owner is a served chain's owner or one of its latest token's
 writers, otherwise for `BSTORE_KEEP_DAYS` after the sweep's first sight. A
 carrier on a marked outpoint is retracted whenever it is offered. The
 sweep's own transaction is kept only where an input matched a carrier the
-host held, as long as its outpoints; `sweep` answers those.
+host held in that bucket, as long as its outpoints; `sweep` answers those.
+A sweep retracts carriers in every bucket the host carries, and is kept in
+a bucket only where it matched one of that bucket's carriers (or the mark one
+left), whichever bucket it reached first.
 
 The replay of a retracted carrier is admitted by the topic manager, which
 reads nothing the topic holds, and dropped by the index at once: it is never
@@ -152,7 +171,7 @@ with an error for any other.
 
 | Class | Answer | Order | Cap | Price |
 | --- | --- | --- | --- | --- |
-| `bucket` | the latest tokens: rooted and consistent (served), or rooted (any other chain), at the highest such `seq` | txid | 8 | free |
+| `bucket` | the latest tokens: rooted and consistent (served), or rooted (any other chain), of the branch on the current chain (above) | txid | 8 | free |
 | `bucket-seq` | the tokens held at the `seq`, rooted or not | rooted first, then txid | 8 | free |
 | `object` (served) | the latest token, with the token context (empty, or the leaves that prove the key absent, or its role 2 leaf); then the entry with its context | | 2 outputs | free |
 | `list` (served) | the latest token with its context, then the entries whose keys start with the prefix and sort after the cursor, each with its context; stops at the first entry the host cannot produce, as a role 2 leaf | key bytes | 256 | free |
@@ -166,7 +185,7 @@ with an error for any other.
 | `hold` | the transaction holding the hold output | | 1 | free |
 | `outcomes`, `outcomes-of`, `outcomes-by`, `outcomes-of-by` | outcome records naming the answerer (or provider; and buyer), admitted within 31 days, never dated after the host's time | newest `created` first | 64 | free |
 | `sweep` | the held sweeps that spend the outpoint | height, position, txid | 8 | free |
-| `history` (served) | the rooted tokens below the `seq` whose changes set or remove the key, each followed by the entry its change names when held | newest first | 64 tokens | priceable |
+| `history` (served) | the rooted tokens below the `seq` whose changes set or remove the key, each followed by the entry its change names when held | newest first; a page never splits a `seq` | 64 tokens | priceable |
 | `chain` | the chain's rooted tokens above the `seq`; a page never splits a `seq` | `seq`, then txid | 64 | priceable |
 | `export` (served) | as `list` with no prefix | key bytes | 512 | priceable |
 | `outcome-history`, `outcome-history-of` | outcome records naming the answerer (or provider) strictly before the time cursor, no window, never dated after the host's time | newest first | 64 | priceable |
@@ -174,8 +193,14 @@ with an error for any other.
 A question carrying the members of no class, a value that breaks its rule
 (spec section 11.2), a bucket the host does not carry, or a chain it does
 not serve for a served class is refused with an error, never answered
-empty. Every answer starts with a binary search and walks at most its page:
-an index a stranger fills costs that stranger, not the next question.
+empty. Every answer starts with a binary search and walks at most its page,
+plus anything that left a window (`ads`, `ad`, `unanchored`, the free
+`outcomes` classes) since the last retention pass, which the answer that
+meets it takes out of the index, so it is walked once: an index a stranger
+fills costs that stranger, not the next question. `chain` and the latest
+tokens search only the `seq`s that hold a rooted token, so a stranger's
+unrooted tokens are never walked; `history` finds its `seq` by binary search
+and never ends a page inside a `seq`.
 
 ## Retention
 
