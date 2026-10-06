@@ -112,8 +112,8 @@ func cmdRenew(ctx context.Context, g *global, args []string) error {
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	call, err := h.pub.Post(cctx, strings.TrimRight(fr, "/")+"/renew", body, *budget)
-	if errors.Is(err, publish.ErrOverBudget) {
-		return &exitError{exitUsage, err.Error()}
+	if errors.Is(err, publish.ErrOverBudget) || errors.Is(err, publish.ErrCannotPay) {
+		return err
 	}
 	if err != nil {
 		return incomplete("renewal at %s: no answer: %v", fr, err)

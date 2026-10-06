@@ -136,7 +136,8 @@ func (p *Publisher) Challenge(ctx context.Context, ch *Challenge, fetch *http.Cl
 	cctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	call, err := p.Post(cctx, strings.TrimRight(ch.Front, "/")+"/challenge", body, ch.Budget)
-	if errors.Is(err, ErrOverBudget) {
+	if errors.Is(err, ErrOverBudget) || errors.Is(err, ErrCannotPay) {
+		// The buyer's own state: nothing is said about the answerer.
 		return nil, err
 	}
 	if err != nil {

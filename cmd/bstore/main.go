@@ -284,6 +284,8 @@ func classify(err error) (int, string) {
 		return exitIncomplete, msg
 	case errors.Is(err, publish.ErrOverBudget):
 		return exitUsage, msg + " (raise -budget to pay it)"
+	case errors.Is(err, publish.ErrCannotPay):
+		return exitUsage, msg + " (nothing was recorded about the provider; try again once the pool's change is mined, or fund the home)"
 	}
 	return exitUsage, msg
 }

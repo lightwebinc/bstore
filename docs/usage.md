@@ -270,7 +270,9 @@ one) and the provider's key, paid through the provider's 402 up to
 bucket's records topic unless `-no-publish`. A pass exits 0; an invalid
 signed response, which anyone holding it can check again, exits 1; no valid
 signed answer (a refusal, a timeout, a provider that found its own copy
-damaged) or a sample the advertised URL did not serve exits 3. One dropped
+damaged) or a sample the advertised URL did not serve exits 3. A home whose
+pool cannot pay the price now (its change waits for a proof) exits 2 and
+records nothing about the provider. One dropped
 blob of a 100 MiB object is caught by `c = 113` 99 times in 100.
 
 A provider answering for another advertiser (a bridge in front of an

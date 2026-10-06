@@ -115,6 +115,11 @@ type Call struct {
 // ErrOverBudget is a 402 whose price is over the bound the call was given.
 var ErrOverBudget = errors.New("publish: the price is over the budget")
 
+// ErrCannotPay is a 402 this identity could not pay: its pool had no coin
+// to spend (change waiting for its proof, or none at all). It is the
+// buyer's own state, never the answerer's failure.
+var ErrCannotPay = errors.New("publish: this identity cannot pay now")
+
 func (a *authClient) purse(ctx context.Context, maxPay uint64) *purse.Purse {
 	p := a.p
 	tip := uint32(0)
@@ -169,10 +174,7 @@ func (a *authClient) once(ctx context.Context, method, url string, headers map[s
 		if tx := pu.Settle(); tx != nil {
 			a.p.notePayment(tx, false)
 		}
-		if errors.Is(err, purse.ErrOverMaxPay) || strings.Contains(err.Error(), "at most") && strings.Contains(err.Error(), "satoshis asked") {
-			return nil, ErrOverBudget
-		}
-		return nil, err
+		return nil, payErr(err)
 	}
 	defer res.Body.Close()
 	if max <= 0 {
@@ -210,6 +212,19 @@ func (a *authClient) once(ctx context.Context, method, url string, headers map[s
 		}
 	}
 	return c, nil
+}
+
+// payErr names a failed authenticated call's payment errors: a price over
+// the call's bound (ErrOverBudget) and a pool with nothing to pay it from
+// (ErrCannotPay); any other error is returned as it is.
+func payErr(err error) error {
+	switch {
+	case errors.Is(err, purse.ErrOverMaxPay) || strings.Contains(err.Error(), "at most") && strings.Contains(err.Error(), "satoshis asked"):
+		return ErrOverBudget
+	case errors.Is(err, bwallet.ErrNoSpendable):
+		return fmt.Errorf("%w: %v", ErrCannotPay, err)
+	}
+	return err
 }
 
 // Post sends a JSON body over BRC-104 to a front (a URL an advertisement

@@ -40,6 +40,7 @@ func TestClassify(t *testing.T) {
 		{reader.ErrNoSource, exitIncomplete},
 		{reader.ErrNoChain, exitIncomplete},
 		{publish.ErrOverBudget, exitUsage},
+		{fmt.Errorf("%w: x", publish.ErrCannotPay), exitUsage},
 		{errors.New("connection refused"), exitUsage},
 		{usage("x"), exitUsage},
 		{refused("NoSuchKey"), exitRefused},
