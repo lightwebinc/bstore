@@ -151,6 +151,9 @@ func (p *Parallel) Write(b []byte) (int, error) {
 		p.n += uint64(k)
 		if len(p.cur) == BlobSize {
 			p.dispatch()
+			if err := p.failed(); err != nil {
+				return n - len(b), err
+			}
 		}
 	}
 	return n, nil

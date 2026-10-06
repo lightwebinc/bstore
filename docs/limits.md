@@ -238,18 +238,24 @@ not do, stated so that nobody finds it by accident.
    write sent again (same identity, key, content, content type, ETag and
    metadata) within an hour, while that entry is still the key's newest
    pending one at the gateway, is answered `200` from it, and no second
-   entry is made. A retry after another write to the key, after the hour,
-   or at another gateway makes a second entry for the same content; the
-   later one decides the key, and the owner's anchor consumes the earlier.
+   entry is made. Only an entry answered `503` is reused: a write answered
+   `200` and sent again is a new write. A retry after another write to
+   the key at this gateway, after the hour, after a gateway restart, or at
+   another gateway makes a second entry for the same content; the later
+   one decides the key, and the owner's anchor consumes the earlier. A
+   retry answered from its entry does not make it newer than a write to
+   the key made at another gateway in between.
 9. **A provider that stays down stops the gateway's puts at a bound.**
    Every piece a target has not taken is kept and sent again, the same
    bytes, for a week, pinned in the local store while it is owed. Past
-   `outbox_bytes` owed (default 8 GiB per identity) a put is refused
-   before anything is spent, `503 SlowDown`, naming the target that owes
-   most; it is taken again once that target takes what it is owed (or the
-   week passes). The bound counts what is owed, so one provider that is
-   down for long enough stops every put of the identity, by design: the
-   alternative is a store that grows without bound.
+   `outbox_bytes` owed (default 8 GiB per identity, counted at most every
+   5 s, so puts started together may pass it by their own sizes) a put is
+   refused before anything is spent, `503 SlowDown`, and the gateway's log
+   names the target that owes most; puts are taken again once that target
+   takes what it is owed (or the week passes). The bound counts what is
+   owed, so one provider that is down for long enough stops every put of
+   the identity, by design: the alternative is a store that grows without
+   bound.
 10. **The reference host gives a module no engine handle.** So:
     - **no evict:** the module drops an object through the storage the host
       hands it after the engine has recorded the admission, never by an

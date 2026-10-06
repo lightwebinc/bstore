@@ -284,7 +284,9 @@ func (p *Provider) madeGood(e EntryRec, by string, sats uint64) {
 	lost := po.Settlement
 	_ = p.save()
 	p.mu.Unlock()
-	if !p.stillLost(e.Writer) {
+	// Only the flag this loss set is lifted: a flag naming another payment
+	// (a loss the watch found and the book has not recorded yet) stands.
+	if why, flagged := p.acc.Exposure.Flagged(e.Writer); flagged && strings.HasSuffix(why, lost) && !p.stillLost(e.Writer) {
 		p.acc.Exposure.Unflag(e.Writer)
 	}
 	p.logf("entry %s: the lost remittance %s was made good by settlement %s; its writer is no longer held on its account", short(e.C), short(lost), short(by))

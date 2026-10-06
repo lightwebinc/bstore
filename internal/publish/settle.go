@@ -446,7 +446,11 @@ func (p *Publisher) resumeSettlement(ctx context.Context, r *Race) error {
 				// them ever pays.
 				s.Abandoned = "its fee input was spent by " + cf.By.TxID().String()
 				if r.State == RaceRemitted {
-					p.cfg.Logf("race %s: settlement %s was remitted before mining and will never mine; its payees are remitted the one built next", short(r.Entry), short(s.Txid))
+					if s.RemittedAt == 0 {
+						// Remitted by an earlier version, which kept no time.
+						s.RemittedAt = max(r.Started, 1)
+					}
+					p.cfg.Logf("race %s: settlement %s was remitted before mining and will never mine; the one built next is remitted once it mines", short(r.Entry), short(s.Txid))
 				}
 				r.Abandoned = append(r.Abandoned, *s)
 				r.Settlement, r.State = nil, RaceOpen

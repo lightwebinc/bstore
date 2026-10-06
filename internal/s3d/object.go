@@ -613,9 +613,12 @@ func (s *Server) afterPublish(b *bucket, rec *publish.Receipt, err error) (*publ
 			return rec, &s3Error{"SlowDown", "No mined hold output is ready for the bounty yet; try again shortly.", http.StatusServiceUnavailable}
 		}
 		if errors.Is(err, publish.ErrOutboxFull) {
-			return rec, &s3Error{"SlowDown", "A provider has not taken what this gateway sent it, and the gateway's outbox is at its bound: " + err.Error(), http.StatusServiceUnavailable}
+			return rec, &s3Error{"SlowDown", "A provider has not taken what this gateway sent it, and the gateway's outbox is at its bound; try again later.", http.StatusServiceUnavailable}
 		}
 		if errors.Is(err, publish.ErrNotSent) {
+			if rec != nil {
+				s.st.markUnsent(hex.EncodeToString(rec.C[:]))
+			}
 			return rec, &s3Error{"SlowDown", "The entry was made but no host took it yet; it is sent again.", http.StatusServiceUnavailable}
 		}
 		return nil, &s3Error{"InternalError", "The write could not be published: " + err.Error(), http.StatusInternalServerError}
@@ -869,13 +872,37 @@ func responseControllerOf(r *http.Request) *http.ResponseController {
 	return rc
 }
 
+// markUnsent records an entry a put answered 503 for.
+func (s *state) markUnsent(c string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.unsent == nil {
+		s.unsent = map[string]time.Time{}
+	}
+	now := s.now()
+	for k, at := range s.unsent {
+		if now.Sub(at) > retryWindow {
+			delete(s.unsent, k)
+		}
+	}
+	s.unsent[c] = now
+}
+
+func (s *state) wasUnsent(c string, now time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	at, ok := s.unsent[c]
+	return ok && now.Sub(at) <= retryWindow
+}
+
 // retryWindow is how long after a put's entry the same write, sent again,
 // is answered by that entry instead of a second one.
 const retryWindow = time.Hour
 
-// retryOf is the entry a put made moments ago for exactly this write: the
-// key's newest pending entry at this gateway, made within retryWindow by
-// the same identity, of the same content (root and size), content type,
+// retryOf is the entry a put made moments ago for exactly this write and
+// answered 503 for (made, not yet taken by a quorum): the key's newest
+// pending entry at this gateway, made within retryWindow by the same
+// identity, of the same content (root and size), content type,
 // ETag and metadata. A client that retries a put after a 503 SlowDown
 // (whose entry stays in the outbox, to be delivered) gets that entry
 // instead of a second one for the same content. Any other write to the key
@@ -890,7 +917,7 @@ func (s *Server) retryOf(a *Auth, b *bucket, key, ct string, meta []storerec.Met
 
 func (s *state) retryOf(bucket string, id [32]byte, writer []byte, key, ct string, meta []storerec.MetaPair, etag string, root [32]byte, size uint64, now time.Time) *storerec.Entry {
 	pe := s.newest(bucket, key)
-	if pe == nil || now.Sub(time.Unix(pe.Seen, 0)) > retryWindow {
+	if pe == nil || now.Sub(time.Unix(pe.Seen, 0)) > retryWindow || !s.wasUnsent(pe.C, now) {
 		return nil
 	}
 	e := pe.decoded()

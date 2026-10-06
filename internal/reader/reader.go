@@ -336,7 +336,7 @@ func (r *Reader) walk(ctx context.Context, host string, c Chain, t *Token) error
 	walk := []storerec.Link{{Txid: t.Txid, Bucket: t.Bucket}}
 	cur := t
 	for cur.Bucket.Seq > 0 && (held == nil || cur.Bucket.Seq > held.Seq) {
-		prev, err := r.tokenAt(ctx, host, c, cur.Bucket.Seq-1, cur.Bucket.Prev)
+		prev, err := r.tokenAt(ctx, host, c, cur.Bucket.Seq-1, cur.Bucket.Prev, true)
 		if err != nil {
 			return err
 		}
@@ -397,7 +397,9 @@ func (r *Reader) checkUnspent(ctx context.Context, t *Token) error {
 
 // tokenAt finds the chain's token at seq whose txid is want, at host then
 // at every other host.
-func (r *Reader) tokenAt(ctx context.Context, host string, c Chain, seq uint64, want [32]byte) (*Token, error) {
+// keep records each token found in the chain's walk file (walk only; a
+// walk's completion removes the file).
+func (r *Reader) tokenAt(ctx context.Context, host string, c Chain, seq uint64, want [32]byte, keep bool) (*Token, error) {
 	if t := r.tokens.get(want); t != nil && t.Bucket.Seq == seq {
 		return t, nil
 	}
@@ -413,7 +415,9 @@ func (r *Reader) tokenAt(ctx context.Context, host string, c Chain, seq uint64, 
 		for _, o := range a.Outputs {
 			t, err := r.verifyToken(ctx, c, o)
 			if err == nil && t.Txid == want && t.Bucket.Seq == seq {
-				r.walkKeep(c, want, o)
+				if keep {
+					r.walkKeep(c, want, o)
+				}
 				return t, nil
 			}
 		}

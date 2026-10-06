@@ -25,6 +25,10 @@ func TestRetryOfSameWrite(t *testing.T) {
 	if err := st.add(e, []byte{0}, [32]byte{4}); err != nil {
 		t.Fatal(err)
 	}
+	if st.retryOf("bk", id, writer, "k", "text/plain", meta, "abc", root, 10, now) != nil {
+		t.Fatal("a write answered 200 was taken as one to retry")
+	}
+	st.markUnsent("0400000000000000000000000000000000000000000000000000000000000000")
 	same := []storerec.MetaPair{{Key: "a", Value: "1"}, {Key: "b", Value: "2"}}
 	if st.retryOf("bk", id, writer, "k", "text/plain", same, "abc", root, 10, now) == nil {
 		t.Fatal("the same write was not recognised")

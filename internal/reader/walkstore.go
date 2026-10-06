@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/lightwebinc/bcommon/lookup"
 )
@@ -22,8 +23,14 @@ import (
 // it verifies and is the one the walk asks for (its txid and seq).
 
 // maxWalkFile bounds one chain's file; past it the walk is not recorded
-// further (a restart then asks hosts for the rest again).
-const maxWalkFile = 64 << 20
+// further (a restart then asks hosts for the rest again). maxWalkOpen
+// bounds the chains whose files are held in memory, and walkFileAge how
+// long a file no walk completed is kept.
+const (
+	maxWalkFile = 64 << 20
+	maxWalkOpen = 16
+	walkFileAge = 7 * 24 * time.Hour
+)
 
 type walkFiles struct {
 	mu   sync.Mutex
@@ -35,10 +42,10 @@ func (r *Reader) walkPath(c Chain) string {
 	return filepath.Join(r.WalkDir, hex.EncodeToString(h[:16])+".jsonl")
 }
 
-// walkLoad reads a chain's file once per process.
+// walkLoad reads a chain's file once per process; the caller holds wf.mu.
+// A file older than walkFileAge is removed instead (a walk that never
+// completed).
 func (r *Reader) walkLoad(c Chain) map[[32]byte]lookup.Output {
-	r.wf.mu.Lock()
-	defer r.wf.mu.Unlock()
 	if r.wf.open == nil {
 		r.wf.open = map[string]map[[32]byte]lookup.Output{}
 	}
@@ -46,6 +53,9 @@ func (r *Reader) walkLoad(c Chain) map[[32]byte]lookup.Output {
 		return m
 	}
 	m := map[[32]byte]lookup.Output{}
+	if fi, err := os.Stat(r.walkPath(c)); err == nil && time.Since(fi.ModTime()) > walkFileAge {
+		_ = os.Remove(r.walkPath(c))
+	}
 	if f, err := os.Open(r.walkPath(c)); err == nil {
 		sc := bufio.NewScanner(f)
 		sc.Buffer(make([]byte, 0, 64<<10), 8<<20)
@@ -63,6 +73,12 @@ func (r *Reader) walkLoad(c Chain) map[[32]byte]lookup.Output {
 		}
 		f.Close()
 	}
+	if len(r.wf.open) >= maxWalkOpen {
+		for k := range r.wf.open {
+			delete(r.wf.open, k)
+			break
+		}
+	}
 	r.wf.open[c.key()] = m
 	return m
 }
@@ -73,7 +89,9 @@ func (r *Reader) walkSaved(ctx context.Context, c Chain, seq uint64, want [32]by
 	if r.WalkDir == "" {
 		return nil
 	}
+	r.wf.mu.Lock()
 	o, ok := r.walkLoad(c)[want]
+	r.wf.mu.Unlock()
 	if !ok {
 		return nil
 	}
@@ -89,9 +107,9 @@ func (r *Reader) walkKeep(c Chain, txid [32]byte, o lookup.Output) {
 	if r.WalkDir == "" {
 		return
 	}
-	m := r.walkLoad(c)
 	r.wf.mu.Lock()
 	defer r.wf.mu.Unlock()
+	m := r.walkLoad(c)
 	if _, ok := m[txid]; ok {
 		return
 	}

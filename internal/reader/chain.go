@@ -103,7 +103,7 @@ func (r *Reader) Tokens(ctx context.Context, c Chain) ([]*Token, error) {
 		var err error
 		for cur.Bucket.Seq > 0 {
 			var prev *Token
-			if prev, err = r.tokenAt(ctx, hostOf[i], c, cur.Bucket.Seq-1, cur.Bucket.Prev); err != nil {
+			if prev, err = r.tokenAt(ctx, hostOf[i], c, cur.Bucket.Seq-1, cur.Bucket.Prev, false); err != nil {
 				break
 			}
 			walk = append(walk, storerec.Link{Txid: prev.Txid, Bucket: prev.Bucket})

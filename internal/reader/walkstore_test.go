@@ -18,7 +18,9 @@ func TestWalkFileSurvivesRestart(t *testing.T) {
 	a.walkKeep(c, [32]byte{2}, lookup.Output{Beef: []byte{4}, OutputIndex: 1})
 	a.walkKeep(c, [32]byte{2}, lookup.Output{Beef: []byte{4}, OutputIndex: 1})
 	b := &Reader{WalkDir: dir}
+	b.wf.mu.Lock()
 	m := b.walkLoad(c)
+	b.wf.mu.Unlock()
 	if len(m) != 2 || m[[32]byte{2}].OutputIndex != 1 || string(m[[32]byte{1}].Beef) != "\x01\x02\x03" {
 		t.Fatalf("reloaded %v", m)
 	}
@@ -30,7 +32,11 @@ func TestWalkFileSurvivesRestart(t *testing.T) {
 	if _, err := os.Stat(b.walkPath(c)); !os.IsNotExist(err) {
 		t.Fatalf("file kept: %v", err)
 	}
-	if n := len((&Reader{WalkDir: dir}).walkLoad(c)); n != 0 {
+	d := &Reader{WalkDir: dir}
+	d.wf.mu.Lock()
+	n := len(d.walkLoad(c))
+	d.wf.mu.Unlock()
+	if n != 0 {
 		t.Fatalf("%d after done", n)
 	}
 }

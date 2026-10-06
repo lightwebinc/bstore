@@ -73,6 +73,10 @@ type state struct {
 	byC   map[string]*pendingEntry
 	log   *os.File
 	lines int
+	// unsent are the entries a put answered 503 for (made, not yet taken
+	// by a quorum), by commitment, with when: the only ones a retry of the
+	// same write is answered from. Kept in memory.
+	unsent map[string]time.Time
 }
 
 func openState(dir string, now func() time.Time) (*state, error) {
