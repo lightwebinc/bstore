@@ -18,8 +18,9 @@ package main
 // settlement), both providers paid by remittance; the owner anchors; the
 // object is read back, every check made; a blob dropped from one provider
 // is caught by a paid challenge of c = 113 whose no-answer outcome is
-// recorded and published; a copy is read; rm, anchor and NoSuchKey; a
-// bounty nobody can win lapses at its deadline and is reclaimed; and the
+// recorded and published; a reader buys a renewal from the other provider;
+// a copy is read; rm, anchor and NoSuchKey; a bounty nobody can win lapses
+// at its deadline and is reclaimed; and the
 // kill switch sweeps every tree, after which the writer's unanchored entry
 // is retracted and the owner's next anchoring skips it.
 
@@ -334,6 +335,14 @@ func TestPublisherE2E(t *testing.T) {
 		e.fail("provider b's paid challenge did not pass")
 	}
 	e.ok("provider b passes the same paid challenge")
+
+	// A renewal of provider b's advertisement, bought by a reader (the
+	// owner's home, which wrote nothing of the object).
+	out = e.must(owner, 0, "renew", "photos/big.bin", "-provider", pb.identity, "-days", "1", "-budget", "2000")
+	if !strings.Contains(out, "successor ") || !strings.Contains(out, ": 200 (paid ") {
+		e.fail("renew: %s", out)
+	}
+	e.ok("a reader bought a renewal of provider b's advertisement: the successor spends it, a day later")
 
 	// A copy, rm, anchor, NoSuchKey.
 	e.must(writer, 0, "cp", "photos/big.bin", "photos/copy.bin", "-no-bounty")

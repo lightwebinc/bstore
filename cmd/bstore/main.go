@@ -84,6 +84,8 @@ anyone:
   ls [PREFIX] [-after KEY]    list keys, every page proven complete
   challenge KEY -provider K [-c N] [-budget SATS]
                               a paid possession challenge; its outcome recorded
+  renew KEY -provider K (-until T | -days N) [-budget SATS]
+                              buy a later expiry of a provider's advertisement
   fill                        replay what this home made to every host that lacks it
   sync                        send what is owed and record what the chain anchored
   due                         what is owed: exit 3 when anything is
@@ -187,6 +189,7 @@ func init() {
 		"ls":        cmdLs,
 		"put":       cmdPut,
 		"reclaim":   cmdReclaim,
+		"renew":     cmdRenew,
 		"rm":        cmdRm,
 		"s3d":       cmdS3D,
 		"settle":    cmdSettle,

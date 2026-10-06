@@ -24,7 +24,8 @@ section 9.4): for each open race it asks every host for the root's
 advertisements, records when it first sees each eligible one (mined in its
 own headers, the entry's root, expiring no earlier than the retention,
 fileSize the root node's length, a CHIRP URL, not the anyone key), ranks
-them by that time (ties to the lower txid), and challenges each candidate in
+them by that time (ties in one look to the lower tie key, spec section
+9.4), and challenges each candidate in
 rank order at its front with a settlement challenge of min(checkC, freeC)
 samples, within the provider's terms (freeC, minAge, minBounty), answered
 free. A candidate that does not pass is skipped; a failure is published as

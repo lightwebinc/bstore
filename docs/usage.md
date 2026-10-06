@@ -273,6 +273,31 @@ signed answer (a refusal, a timeout, a provider that found its own copy
 damaged) or a sample the advertised URL did not serve exits 3. One dropped
 blob of a 100 MiB object is caught by `c = 113` 99 times in 100.
 
+A provider answering for another advertiser (a bridge in front of an
+incumbent UHRP host) is asked with `-front` and `-answerer`: the front's
+URL and key, from its front statement.
+
+## Renewals
+
+```console
+$ bstore renew photos/cat.jpg -provider 03... -days 30 -budget 5000
+renewal of 03... at https://provider.example.com/store/bstore/v1: 200 (paid 500)
+  advertisement 7a..., expiry 1790000000, until 1792592000
+  successor 4c....0 spends 7a..., expiry 1792592000: mined, its proof verified in this home's headers
+```
+
+Anyone may buy more time from an advertiser (spec section 10.3), a reader
+above all: the provider's live advertisement of the object's root is found
+at the hosts, and the renewal is posted to its front (`-front` for a front
+that answers for it), paid through the provider's 402 up to `-budget`.
+`-until` is the new expiry in Unix seconds, `-days` moves the current one
+later. The answer is checked: an output advertising the same root by the
+same provider through exactly the expiry asked, in a transaction that
+spends the advertisement it renews; confirmed once its proof verifies in
+the home's headers, a promise until then. Exit 0 a successor that checks; 3
+a renewal paid and owed (the provider answered `202`), or no live
+advertisement; 1 an answer that does not check; 2 a price over the budget.
+
 ## Keeping up
 
 - `sync` sends everything owed: the outbox, closures owed to an upload
@@ -311,7 +336,7 @@ copy anyone kept stays a copy.
 
 | Code | Meaning |
 | --- | --- |
-| 0 | done; everything asked verified; a challenge passed |
+| 0 | done; everything asked verified; a challenge passed; a renewal checked |
 | 1 | refused: a check that names the owner or the writer failed, a broken chain, an invalid signed response, a key proven absent (`NoSuchKey`) |
 | 2 | usage, configuration, local or transport error; a quorum not met; a price over the budget; a home in use by another process |
 | 3 | incomplete: a host answered what does not verify (named), a key no host produces, a challenge with no valid signed answer, a spend the node cannot vouch for, something still owed. It proves nothing either way |

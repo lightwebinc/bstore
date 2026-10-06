@@ -62,6 +62,10 @@ func TestUsageErrors(t *testing.T) {
 		{"put", "bad\x01key", "-"},
 		{"challenge", "k", "-provider", "zz"},
 		{"challenge", "k", "-provider", "02" + strings.Repeat("11", 32), "-c", "0"},
+		{"renew", "k"},
+		{"renew", "k", "-provider", "zz", "-days", "1"},
+		{"renew", "k", "-provider", "02" + strings.Repeat("11", 32)},
+		{"renew", "k", "-provider", "02" + strings.Repeat("11", 32), "-days", "1", "-until", "5"},
 		{"kill"},
 		{"kill", "-confirm", "yes"},
 		{"ls"},  // no home
