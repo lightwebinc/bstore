@@ -427,11 +427,13 @@ func (w *Writer) purse(ctx context.Context, maxPay uint64) (*purse.Purse, error)
 	}, Fees: w.Fees, MaxPay: maxPay, Settler: w.Settler, Asset: w.Asset, Headers: w.Headers, Wait: 20 * time.Second, Poll: 20 * time.Millisecond}, nil
 }
 
-// Call is one authenticated request's answer.
+// Call is one authenticated request's answer, and the BRC-105 payment
+// made for it, if any.
 type Call struct {
-	Status int
-	Body   []byte
-	Paid   uint64
+	Status  int
+	Body    []byte
+	Paid    uint64
+	Payment *transaction.Transaction
 }
 
 // Post sends body to url over BRC-104, paying a 402 up to maxPay.
@@ -456,7 +458,8 @@ func (w *Writer) Post(ctx context.Context, url string, body []byte, maxPay uint6
 	defer res.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(res.Body, storerec.MaxSignedResponse+1))
 	c := &Call{Status: res.StatusCode, Body: b}
-	if v := res.Header.Get("x-bsv-payment-satoshis-paid"); v != "" || pu.Settle() != nil {
+	c.Payment = pu.Settle()
+	if v := res.Header.Get("x-bsv-payment-satoshis-paid"); v != "" || c.Payment != nil {
 		c.Paid = 1
 	}
 	if res.StatusCode >= 400 {

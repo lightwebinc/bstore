@@ -1,11 +1,13 @@
 package publish
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 )
 
 // ErrInUse is an identity directory another process has open: two
@@ -40,5 +42,23 @@ func (l *dirLock) release() {
 		_ = syscall.Flock(int(l.f.Fd()), syscall.LOCK_UN)
 		_ = l.f.Close()
 		l.f = nil
+	}
+}
+
+// lockDirWait is lockDir, waiting up to wait for another process to
+// release the directory: a gateway restarted while a command has its
+// identity open starts once the command ends.
+func lockDirWait(ctx context.Context, dir string, wait time.Duration) (*dirLock, error) {
+	end := time.Now().Add(wait)
+	for {
+		l, err := lockDir(dir)
+		if err == nil || !errors.Is(err, ErrInUse) || !time.Now().Before(end) {
+			return l, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, err
+		case <-time.After(500 * time.Millisecond):
+		}
 	}
 }

@@ -12,6 +12,8 @@ import (
 
 	"github.com/lightwebinc/bcommon/guard"
 
+	"github.com/lightwebinc/bstore/internal/publish"
+
 	"github.com/lightwebinc/bstore/storerec"
 )
 
@@ -74,11 +76,38 @@ type Config struct {
 	FeeRate   uint64 `json:"fee_sat_per_byte"`
 	FeeFloor  uint64 `json:"fee_floor"`
 	Mainnet   bool   `json:"mainnet"`
+	// PieceWorkers is how many piece carriers a put mints and sends at once
+	// (default 4); PieceAhead how few outputs left on a piece tree start the
+	// next one in the background (default piece_tree: one always ready).
+	PieceWorkers int `json:"piece_workers,omitempty"`
+	PieceAhead   int `json:"piece_ahead,omitempty"`
+	// Race is the hold race, settlement and reclaim the gateway runs in the
+	// background for its own puts.
+	Race RaceConfig `json:"race"`
 	// StoreBytes bounds the local closures kept for reading the gateway's
 	// own writes and for copies.
 	StoreBytes int64 `json:"store_bytes"`
 	// MetricsListen, when set, serves /metrics there, and only there.
 	MetricsListen string `json:"metrics_listen,omitempty"`
+}
+
+// RaceConfig is the gateway's background race (spec section 9.4): for each
+// identity's own puts with a bounty, the race judged, settled by rank once
+// closed, the remittances sent, and the hold output reclaimed after the
+// deadline when nothing settled, as `bstore holds`, `settle` and `reclaim`
+// would. On by default.
+type RaceConfig struct {
+	// Off leaves races to the command line, run against a stopped gateway.
+	Off bool `json:"off,omitempty"`
+	// WindowSeconds is the race window (default an hour); TickSeconds the
+	// pause between passes (default 10).
+	WindowSeconds int64 `json:"window_seconds,omitempty"`
+	TickSeconds   int   `json:"tick_seconds,omitempty"`
+	// Budget is the most paid for one settlement challenge a provider
+	// prices (default 0: only free answers).
+	Budget uint64 `json:"budget,omitempty"`
+	// NoPublish keeps failed challenges unpublished as outcome records.
+	NoPublish bool `json:"no_publish,omitempty"`
 }
 
 // AccessKey is one S3 access key.
@@ -319,14 +348,23 @@ func (c *Config) Check() error {
 	if c.HoldAhead <= 0 {
 		c.HoldAhead = 8
 	}
-	if c.PieceTree <= 0 {
-		c.PieceTree = 64
-	}
-	if c.EntryTree <= 0 {
-		c.EntryTree = 16
+	if c.PieceTree < 0 || c.EntryTree < 0 || c.PieceAhead < 0 || c.PieceWorkers < 0 {
+		return errors.New("piece_tree, entry_tree, piece_ahead and piece_workers are not negative")
 	}
 	if c.PieceTree > 1023 || c.EntryTree > 1023 {
 		return errors.New("piece_tree and entry_tree are at most 1023")
+	}
+	if c.PieceWorkers > 32 {
+		return errors.New("piece_workers is at most 32")
+	}
+	if c.Race.WindowSeconds < 0 || c.Race.TickSeconds < 0 {
+		return errors.New("race: window_seconds and tick_seconds are not negative")
+	}
+	if c.Race.WindowSeconds == 0 {
+		c.Race.WindowSeconds = 3600
+	}
+	if c.Race.TickSeconds == 0 {
+		c.Race.TickSeconds = 10
 	}
 	if c.FeeRate == 0 {
 		c.FeeRate = 1
@@ -338,6 +376,21 @@ func (c *Config) Check() error {
 		c.StoreBytes = 8 << 30
 	}
 	c.Limits.defaults()
+	if c.PieceTree == 0 {
+		// A tree holds the largest PutObject's pieces, so no put waits
+		// for one to mine: up to 1,023 outputs (about 4 GiB of content);
+		// a larger put spans trees.
+		c.PieceTree = min(max(publish.PiecesFor(uint64(c.Limits.MaxObject)), 64), 1023)
+	}
+	if c.EntryTree == 0 {
+		c.EntryTree = 16
+	}
+	if c.PieceAhead == 0 || c.PieceAhead > c.PieceTree {
+		c.PieceAhead = c.PieceTree
+	}
+	if c.PieceWorkers == 0 {
+		c.PieceWorkers = 4
+	}
 	return nil
 }
 

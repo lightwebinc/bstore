@@ -42,6 +42,9 @@ type Options struct {
 	Logf func(format string, args ...any)
 	// Tick paces the background work.
 	Tick time.Duration
+	// LockWait is how long an identity another process has open (a
+	// command run against it) is waited for at start.
+	LockWait time.Duration
 }
 
 // Server is one running gateway.
@@ -50,6 +53,7 @@ type Server struct {
 	opts    Options
 	signer  *signer
 	reader  *reader.Reader
+	fetch   *http.Client
 	store   *publish.Store
 	pubs    map[string]*publish.Publisher
 	buckets map[string]*bucket // by S3 name
@@ -120,6 +124,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Server, error) {
 		return nil, err
 	}
 	s.reader = &reader.Reader{Hosts: cfg.Hosts, HTTP: hostHTTP, Fetch: fetchHTTP, Headers: hc, Held: s.st, Logf: opts.Logf, Now: opts.Now}
+	s.fetch = fetchHTTP
 	asset := &nodeapi.Asset{Base: cfg.Node}
 	s.reader.Spender = asset.Spender
 	s.reader.OnToken = s.st.named
@@ -131,7 +136,9 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Server, error) {
 	for _, name := range cfg.Identities {
 		p, err := publish.Open(ctx, publish.Config{Dir: cfg.IdentityDir(name), Asset: asset, Settler: settler,
 			Fees: mint.Fees{SatPerByte: cfg.FeeRate, Floor: cfg.FeeFloor}, Mainnet: cfg.Mainnet,
-			PieceTree: cfg.PieceTree, EntryTree: cfg.EntryTree, HoldAhead: cfg.HoldAhead, Store: s.store, Delivery: d, Logf: opts.Logf, Now: opts.Now})
+			PieceTree: cfg.PieceTree, EntryTree: cfg.EntryTree, PieceAhead: cfg.PieceAhead, PieceWorkers: cfg.PieceWorkers,
+			HoldAhead: cfg.HoldAhead, Store: s.store, Delivery: d, Reader: s.reader, FrontHTTP: fetchHTTP,
+			LockWait: opts.LockWait, Logf: opts.Logf, Now: opts.Now})
 		if err != nil {
 			return nil, fmt.Errorf("identity %s (bstore s3d init creates it): %w", name, err)
 		}
@@ -352,6 +359,19 @@ func (s *Server) background(ctx context.Context) {
 			}
 		}
 	}()
+	// Each identity's races, settlements and reclaims, on a run of their
+	// own: a settlement waits for its block.
+	if !s.cfg.Race.Off {
+		o := publish.RaceOptions{Window: time.Duration(s.cfg.Race.WindowSeconds) * time.Second, Budget: s.cfg.Race.Budget,
+			Fetch: s.fetch, Publish: !s.cfg.Race.NoPublish}
+		for _, p := range s.pubs {
+			s.wg.Add(1)
+			go func(p *publish.Publisher) {
+				defer s.wg.Done()
+				p.Background(ctx, o, time.Duration(s.cfg.Race.TickSeconds)*time.Second)
+			}(p)
+		}
+	}
 	for {
 		for _, p := range s.pubs {
 			p.CheckHolds(ctx)

@@ -54,7 +54,7 @@ An unknown key is refused.
 | `hold_ahead` | 8 | mined hold outputs of a bounty kept ready |
 | `race_window_seconds` | 3600 | the writer's race window |
 | `publish_outcomes` | true | publish failed settlement challenges and every challenge's outcome as outcome records |
-| `piece_tree`, `entry_tree` | 64, 16 | outputs of a new funding tree (outcome trees take `entry_tree`) |
+| `piece_tree`, `entry_tree` | 256, 16 | outputs of a new funding tree (outcome trees take `entry_tree`); the next tree of each kind is minted ahead, in the background, so a put of up to `piece_tree` pieces never waits for a block |
 | `fee_sat_per_byte`, `fee_floor` | 1, 250 | the fee policy |
 | `buckets`, `bucket` | none | the chains this home reads and writes (`{"bucket", "owner", "id"}`), and the one used unless `-bucket` names another |
 
@@ -174,7 +174,8 @@ $ bstore settle
   original's sight. No provider can make this client see an advertisement
   before it exists and is mined, and an advertisement says nothing about the
   bytes: possession is what the challenge proves.
-- **The settlement challenge.** In rank order, each candidate is challenged
+- **The settlement challenge.** In rank order, as many candidates as passes
+  are still missing are challenged at once, each
   at its front (derived from its advertisement's URL; a front statement
   naming it, four at most, only once its own front has not answered) with
   `min(checkC, freeC)` samples, `freeC` from its terms (30, the floor every
@@ -188,7 +189,9 @@ $ bstore settle
   the same nonce, until its seed leaves the answerer's window or three sends
   have failed; only then is it spent. So a provider cannot answer the draws
   it can serve and refuse the rest: refusing only delays it. A refusal of
-  the request itself, or a signed answer, spends the draw.
+  the request itself, a signed answer, or a front with no challenge route
+  (`404`, `410`) spends the draw at once; after a front with no route the
+  next draw goes to the next front in the same look.
 - **Whose failure.** A failure is the answerer's (spec section 7.4): at the
   advertiser's own front it fails the candidate; at a front that is not the
   advertiser it is the front's, that front is not asked again, and the
@@ -237,10 +240,12 @@ never settled. A put that stops before its entry is made gives its hold
 output back to the next put; `reclaim -unused` spends back every mined hold
 output no entry names, each reclaim recorded whole before it is sent.
 
-The gateway's puts with a bounty are judged and settled the same way: run
-`bstore holds` and `bstore settle` with `-home` at the identity's directory
-(`<data>/identities/<name>`, with a `config.json` beside its wallet) while
-the gateway is stopped.
+The gateway's puts with a bounty are judged, settled and reclaimed the
+same way, by the gateway itself in the background ([s3.md](s3.md), `race`).
+With `race.off`, or to look at a race, run `bstore holds` and `bstore
+settle` with `-home` at the identity's directory (`<data>/identities/<name>`,
+with a `config.json` beside its wallet) while the gateway is stopped: a
+running gateway holds the directory and a command there is refused.
 
 ## Reading
 
@@ -314,7 +319,15 @@ advertisement; 1 an answer that does not check; 2 a price over the budget.
   made; then records which of this identity's entries a token has named. A
   BRC-105 payment is kept once it has left this process, answered or not,
   since the payee may broadcast it; one the node has not seen in an hour,
-  whose coin the node shows unspent, gives its coin back.
+  whose coin the node shows unspent, gives its coin back. A refusal that
+  carries the payee's signed note that it did not take the payment (spec
+  section 10.4) gives the coin back at once.
+- Paid calls take a small payment coin of their own: coins split off the
+  pool into `wallet/paycoins.json` (eight, each two payments of the call's
+  budget and their fees), so a payment a payee refuses and keeps holds only
+  that coin. Funding trees and fees never take them. When fewer than half
+  are left more are split in the background; a call that finds none pays
+  from the pool.
 - `fill` replays to every host what this home made and the host lacks: its
   entries no token has named yet, and every token of the chains it owns
   (spec section 12.6).

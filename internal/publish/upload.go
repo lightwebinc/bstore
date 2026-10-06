@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lightwebinc/bcommon/chirp"
@@ -61,12 +62,19 @@ func (p *Publisher) uploadClosure(ctx context.Context, root [32]byte, c Closure,
 	}
 	_ = p.saveLocked()
 	p.mu.Unlock()
+	// Every provider at once, each on a session of its own.
 	out := make([]UploadResult, len(provs))
+	var wg sync.WaitGroup
 	for i, base := range provs {
-		st, n, err := p.uploadTo(ctx, base, root, c, retention)
-		out[i] = UploadResult{Provider: base, Status: st, Staged: n, Err: err}
-		p.settleUpload(rootHex, base, err)
+		wg.Add(1)
+		go func(i int, base string) {
+			defer wg.Done()
+			st, n, err := p.uploadTo(ctx, base, root, c, retention)
+			out[i] = UploadResult{Provider: base, Status: st, Staged: n, Err: err}
+			p.settleUpload(rootHex, base, err)
+		}(i, base)
 	}
+	wg.Wait()
 	return out
 }
 
@@ -118,34 +126,50 @@ func (p *Publisher) uploadTo(ctx context.Context, base string, root [32]byte, c 
 		return 0, 0, errors.New("open a session: no upload id")
 	}
 	sess := base + "/" + s.UploadID
-	sent := 0
+	// The objects go uploadLanes at a time, each lane over a BRC-104
+	// session of its own (one session's requests are made one at a time).
+	// A fresh upload session holds nothing, so no object is asked about
+	// first: a PUT of an object the provider already stores answers 204.
+	jobs := make(chan [32]byte)
+	var mu sync.Mutex
+	var first error
+	firstStatus, sent := 0, 0
+	wctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var wg sync.WaitGroup
+	for range min(uploadLanes, len(objs)) {
+		lane := newAuthClient(p, p.cfg.Delivery.HTTP)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for h := range jobs {
+				st, err := p.uploadObject(wctx, lane, sess, c, h)
+				mu.Lock()
+				if err != nil && first == nil {
+					first, firstStatus = err, st
+					cancel()
+				} else if err == nil {
+					sent++
+				}
+				mu.Unlock()
+			}
+		}()
+	}
 	for _, h := range objs {
-		url := sess + "/objects/" + chirp.Identifier(h)
-		if hc, err := p.auth.do(ctx, http.MethodHead, url, nil, nil, 0, 1<<10); err == nil && hc.Status == http.StatusOK {
+		select {
+		case jobs <- h:
 			continue
+		case <-wctx.Done():
 		}
-		b, err := c.Object(ctx, h)
-		if err != nil {
-			return 0, sent, fmt.Errorf("object %x: %w", h[:6], err)
-		}
-		var put *Call
-		for try := 0; try < 3; try++ {
-			if put, err = p.auth.do(ctx, http.MethodPut, url, map[string]string{"content-type": "application/octet-stream"}, b, 0, 64<<10); err == nil && put.Status < 500 && put.Status != http.StatusTooManyRequests {
-				break
-			}
-			select {
-			case <-ctx.Done():
-				return 0, sent, ctx.Err()
-			case <-time.After(time.Duration(try+1) * time.Second):
-			}
-		}
-		if err != nil {
-			return 0, sent, fmt.Errorf("object %x: %w", h[:6], err)
-		}
-		if put.Status != http.StatusCreated && put.Status != http.StatusNoContent {
-			return put.Status, sent, fmt.Errorf("object %x: %d %s", h[:6], put.Status, firstLine(string(put.Body)))
-		}
-		sent++
+		break
+	}
+	close(jobs)
+	wg.Wait()
+	if first != nil {
+		return firstStatus, sent, first
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, sent, err
 	}
 	commit, _ := json.Marshal(map[string]string{"rootIdentifier": chirp.Identifier(root)})
 	call, err = p.auth.do(ctx, http.MethodPost, sess+"/commit", map[string]string{"content-type": "application/json"}, commit, 0, 64<<10)
@@ -156,6 +180,37 @@ func (p *Publisher) uploadTo(ctx context.Context, base string, root [32]byte, c 
 		return call.Status, sent, fmt.Errorf("commit: %d %s", call.Status, firstLine(string(call.Body)))
 	}
 	return call.Status, sent, nil
+}
+
+// uploadLanes is how many objects one upload session sends at once.
+const uploadLanes = 4
+
+// uploadObject sends one object to a session, retrying a server error or a
+// rate limit twice.
+func (p *Publisher) uploadObject(ctx context.Context, a *authClient, sess string, c Closure, h [32]byte) (int, error) {
+	url := sess + "/objects/" + chirp.Identifier(h)
+	b, err := c.Object(ctx, h)
+	if err != nil {
+		return 0, fmt.Errorf("object %x: %w", h[:6], err)
+	}
+	var put *Call
+	for try := 0; try < 3; try++ {
+		if put, err = a.do(ctx, http.MethodPut, url, map[string]string{"content-type": "application/octet-stream"}, b, 0, 64<<10); err == nil && put.Status < 500 && put.Status != http.StatusTooManyRequests {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-time.After(time.Duration(try+1) * time.Second):
+		}
+	}
+	if err != nil {
+		return 0, fmt.Errorf("object %x: %w", h[:6], err)
+	}
+	if put.Status != http.StatusCreated && put.Status != http.StatusNoContent {
+		return put.Status, fmt.Errorf("object %x: %d %s", h[:6], put.Status, firstLine(string(put.Body)))
+	}
+	return put.Status, nil
 }
 
 // RetryUploads sends every closure still owed to a provider again, from

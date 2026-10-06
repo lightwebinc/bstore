@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/lightwebinc/bcommon/bwallet"
 	"github.com/lightwebinc/bcommon/nodeapi"
@@ -127,7 +128,9 @@ func cmdS3D(ctx context.Context, g *global, args []string) error {
 		fmt.Fprintf(g.stdout, "%d output(s) found; pool %d satoshis\n", n, w.Pool.Balance())
 		return nil
 	}
-	s, err := s3d.New(ctx, cfg, s3d.Options{})
+	// A command holding an identity (bstore holds against a stopped
+	// gateway) is waited for, not raced: the gateway starts once it ends.
+	s, err := s3d.New(ctx, cfg, s3d.Options{LockWait: 10 * time.Minute})
 	if err != nil {
 		return err
 	}

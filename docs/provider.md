@@ -206,6 +206,19 @@ soon as it can.
    `derive(provider, "challenge")`, checked as a buyer checks it before it
    leaves.
 
+A refusal of a request that came with a payment the provider did not take
+(any answer but `200`, `402` and `409`) carries a signed
+**payment-not-taken note** as `"notTaken"` (spec section 10.4, row C30,
+pending the owner's confirmation of its bytes): the payment's txid, the
+SHA-256 of the request, the refusal's reason and the time, under
+`derive(provider, "challenge")`. The buyer gives its coin back at once on
+it. Only a payment that passed the payment check (this provider's own
+derivation prefix, paying it at least the price, new to the ledger) is
+noted, never on a `429`, and at most 200 a day for one caller. The txid is
+appended to `nottaken.jsonl`, synced, before the note is signed and read
+back at every start: the payment is refused for good (`409
+ERR_PAYMENT_REFUSED`), so a note never names a payment the provider takes.
+
 Samples are inline by default (spec section 7.5: a native provider SHOULD).
 With `answer_inline` off every sample is by reference and the buyer fetches
 it from the advertised URL with `Range`: that proves what a reader of the

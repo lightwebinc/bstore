@@ -122,10 +122,18 @@ func (p *Provider) takePayment(ctx context.Context, raw string, who *auth104.Cal
 	return p.claimPayment(*pl, class)
 }
 
-// claimPayment writes a checked payment to the ledger.
+// claimPayment writes a checked payment to the ledger. A payment this
+// provider signed a not-taken note for is never taken.
 func (p *Provider) claimPayment(pl payee.Payment, class string) (*paid, *auth104.Reply) {
 	pl.Class = class
+	p.noteMu.Lock()
+	if _, noted := p.notTaken[pl.Txid]; noted {
+		p.noteMu.Unlock()
+		rep := auth104.Error(http.StatusConflict, "ERR_PAYMENT_REFUSED", "this payment was refused and is not taken")
+		return nil, &rep
+	}
 	c, err := p.ledger.take(pl)
+	p.noteMu.Unlock()
 	if err != nil {
 		rep := auth104.Error(http.StatusInternalServerError, "ERR_INTERNAL", "the payment could not be recorded")
 		return nil, &rep

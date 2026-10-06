@@ -495,7 +495,7 @@ func (s *Server) completeUpload(ctx context.Context, w http.ResponseWriter, r *h
 	}
 	etag := partETag(md5s)
 	rec, e := s.publishPut(ctx, a, b, key, up.ContentType, up.Meta, &etag, publish.Object{Root: staged.Root, Size: staged.Size,
-		ContentHash: staged.ContentHash, ProofRoot: staged.ProofRoot, Closure: publish.StoreClosure{Store: s.store, Manifest: staged.Manifest}})
+		ContentHash: staged.ContentHash, ProofRoot: staged.ProofRoot, Closure: publish.StoreClosure{Store: s.store, Manifest: staged.Manifest, Staged: true}})
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"

@@ -244,7 +244,7 @@ func (g *global) open(ctx context.Context) (*home, error) {
 	pub, err := publish.Open(ctx, publish.Config{Dir: g.home, Asset: asset, Settler: settler, Fees: fees, Mainnet: cfg.Network == "main",
 		PieceTree: cfg.PieceTree, EntryTree: cfg.EntryTree, HoldAhead: cfg.HoldAhead, Store: st, Delivery: d, Reader: rd, FrontHTTP: frontHC, Logf: g.logf})
 	if errors.Is(err, publish.ErrInUse) {
-		return nil, usage("%v: one process at a time uses a home", err)
+		return nil, usage("%v: one process at a time uses a home; a running gateway (bstore s3d) holds its identities and judges, settles and reclaims their races itself, so stop it to run this command there", err)
 	}
 	if err != nil {
 		return nil, err

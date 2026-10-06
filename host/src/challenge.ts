@@ -7,8 +7,9 @@
 import { CborMap, decodeValue, encode, hashLeaf, pathLength, proveLeafHashes, readerLockingKey, rootOfLeafHashes, verifyAt, verifyField, type Pair, type Value } from '@lightwebinc/bcommon'
 import { isKey } from './names.js'
 import {
-  BlobSize, KeyChallenge, MagicRequest, MagicResponse, MaxC, MaxRequest, MaxSignedResponse, MaxSize, MaxU32, NonceLen, OutcomeInvalid,
-  OutcomeNoAnswer, OutcomePass, OutcomeUnretrievable, Protocol, QK, RK, SeedWindow, SegmentSize, SegmentsPerBlob, StoreError, refuse,
+  BlobSize, KeyChallenge, MagicNotTaken, MagicRequest, MagicResponse, MaxC, MaxNotTaken, MaxNoteReason, MaxRequest, MaxSignedResponse, MaxSize,
+  MaxU32, NK, NonceLen, OutcomeInvalid, OutcomeNoAnswer, OutcomePass, OutcomeUnretrievable, Protocol, QK, RK, SeedWindow, SegmentSize,
+  SegmentsPerBlob, StoreError, refuse,
 } from './storerec.js'
 import { Fields, rr } from './records.js'
 import { concat, equal, littleEndian, sha256, toHex } from './util.js'
@@ -160,6 +161,81 @@ export const challengeKey = (answerer: Uint8Array): Uint8Array =>
 export function verifyChallengeSig(answerer: Uint8Array, requestHash: Uint8Array, responseHash: Uint8Array, sig: Uint8Array): boolean {
   if (!isKey(answerer)) return false
   return verifyField(challengeKey(answerer), concat(requestHash, responseHash), sig)
+}
+
+/**
+ * The payment-not-taken note (frozen.md row C30): the body a provider signs
+ * under its challenge key when it refuses a priced challenge and takes
+ * nothing of the payment the request came with.
+ */
+export interface NotTaken {
+  payment: Uint8Array
+  request: Uint8Array
+  reason: string
+  time: number
+  answerer: Uint8Array
+}
+
+/** A refusal inside a note: not-taken, the inner label or rule as its rule. */
+function asNote<T>(f: () => T): T {
+  try {
+    return f()
+  } catch (e) {
+    if (e instanceof StoreError && e.label !== 'not-taken') throw new StoreError('not-taken', e.rule !== '' ? e.rule : e.label, e.message)
+    throw e
+  }
+}
+
+const noteReason = (s: string): boolean => s.length >= 1 && s.length <= MaxNoteReason && /^[a-z0-9-]+$/.test(s)
+
+export function encodeNotTaken(n: NotTaken): Uint8Array {
+  const out = asNote(() => rr.encode([p(NK.magic, MagicNotTaken), p(NK.payment, n.payment), p(NK.request, n.request), p(NK.reason, n.reason),
+    p(NK.time, u(n.time)), p(NK.answerer, n.answerer)], [], MaxNotTaken))
+  decodeNotTakenBody(out)
+  return out
+}
+
+/** Reads a note's body; every refusal is not-taken, its rule the step (the Go DecodeNotTakenBody's order). */
+export function decodeNotTakenBody(raw: Uint8Array): NotTaken {
+  return asNote(() => {
+    const f = Fields.read(raw, MaxNotTaken, NK.last, MagicNotTaken)
+    if (f.extra.length > 0) throw refuse('unknown-key')
+    const payment = f.bytesN(NK.payment, 32)
+    const request = f.bytesN(NK.request, 32)
+    const reason = f.text(NK.reason)
+    if (!noteReason(reason)) throw refuse('reason')
+    const time = f.uint(NK.time, 0, MaxU32, 'time')
+    const answerer = f.key(NK.answerer)
+    return { payment, request, reason, time, answerer }
+  })
+}
+
+export const notTakenView = (n: NotTaken): Record<string, unknown> => ({
+  payment: toHex(n.payment), request: toHex(n.request), reason: n.reason, time: n.time, answerer: toHex(n.answerer),
+})
+
+/** Reads a signed note [body, signature] and checks the signature under derive(answerer, "challenge"). */
+export function verifyNotTaken(signed: Uint8Array): NotTaken {
+  if (signed.length > MaxNotTaken) throw refuse('not-taken', 'too-large')
+  let v: Value
+  try {
+    v = decodeValue(signed)
+  } catch {
+    throw refuse('not-taken', 'shape')
+  }
+  if (!Array.isArray(v) || v.length !== 2 || !(v[0] instanceof Uint8Array) || !(v[1] instanceof Uint8Array)) throw refuse('not-taken', 'shape')
+  const n = decodeNotTakenBody(v[0])
+  if (!verifyField(challengeKey(n.answerer), v[0], v[1])) throw refuse('not-taken', 'signature')
+  return n
+}
+
+/** The buyer's check: the note verifies and names its payment (hash byte order), its request and the answerer it asked. */
+export function checkNotTaken(signed: Uint8Array, payment: Uint8Array, request: Uint8Array, answerer: Uint8Array): NotTaken {
+  const n = verifyNotTaken(signed)
+  if (!equal(n.payment, payment)) throw refuse('not-taken', 'payment')
+  if (!equal(n.request, sha256(request))) throw refuse('not-taken', 'request')
+  if (!equal(n.answerer, answerer)) throw refuse('not-taken', 'answerer')
+  return n
 }
 
 /** A signed response [body, signature] as byte strings, or undefined. */

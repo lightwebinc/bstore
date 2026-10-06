@@ -93,7 +93,7 @@ func cmdPut(ctx context.Context, g *global, args []string) error {
 	ct := contentType(*ctype, name)
 	rc, err := h.pub.Put(ctx, publish.Fields{Bucket: ch.Bucket, ID: ch.ID, Key: key, ContentType: ct, ETag: &etag, Meta: pairs},
 		publish.Object{Root: staged.Root, Size: staged.Size, ContentHash: staged.ContentHash, ProofRoot: staged.ProofRoot,
-			Closure: publish.StoreClosure{Store: h.store, Manifest: staged.Manifest}}, b)
+			Closure: publish.StoreClosure{Store: h.store, Manifest: staged.Manifest, Staged: true}}, b)
 	return h.reportPut(rc, err)
 }
 

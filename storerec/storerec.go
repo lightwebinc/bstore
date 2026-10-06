@@ -366,7 +366,7 @@ var reasons = []struct {
 	{ErrFirst, "first"}, {ErrObjKey, "objkey"}, {ErrKind, "kind"}, {ErrSize, "size"}, {ErrProfile, "profile"},
 	{ErrContentType, "content-type"}, {ErrETag, "etag"}, {ErrMeta, "meta"}, {ErrHold, "hold"},
 	{ErrEmpty, "empty"}, {ErrPiece, "piece"}, {ErrRequest, "request"}, {ErrOutcome, "outcome"},
-	{ErrRespSig, "response-signature"}, {ErrURL, "url"}, {ErrQuery, "query"},
+	{ErrRespSig, "response-signature"}, {ErrURL, "url"}, {ErrQuery, "query"}, {ErrNotTaken, "not-taken"},
 	// The transaction rules (admit.go).
 	{ErrShape, "shape"}, {ErrBEEF, "beef"}, {ErrMineable, "mineable"}, {ErrUnlock, "unlock"},
 	{ErrLock, "lock"}, {ErrFieldSig, "signature"}, {ErrFunding, "funding"}, {ErrUnmined, "unmined"},

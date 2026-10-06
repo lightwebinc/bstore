@@ -75,7 +75,7 @@ with its proof path, about 4,576 bytes for a 100 MiB object.
 | Price | the provider's `base + perSample * c`: 40 at `c = 30` and 123 at `c = 113` on terms of 10 + 1; 70 at `c = 30` at a bridge pricing 10 + 2 | measured |
 | A response at `c = 30`, `c = 113` | about 138 KB and 517 KB for a 100 MiB object; at most 8 MiB at the bound `c = 1024` | contract arithmetic |
 | Time | 1.8 s at `c = 30` through a bridge, every sample by reference from the incumbent's own URL (60 ranged reads: the bridge's and the reader's); 2.2 s at `c = 113` at a native provider; 0.9 s for a refusal of a dropped blob (`unknown-root`, nothing paid) | measured |
-| A challenge's payment | built on the provider's 402 and kept for an hour when the answer is a refusal (see known limit 5) | set |
+| A challenge's payment | built on the provider's 402 from a small payment coin; on a refusal released at once when the provider signs it did not take it, else kept for an hour (see known limit 5) | set |
 
 **Detection.** A provider missing a fraction `f` of the segments passes one
 challenge of `c` samples with probability `(1 - f)^c` (spec section 7.6).
@@ -184,22 +184,26 @@ not do, stated so that nobody finds it by accident.
    the entry is published can still grind its advertisement's txid, and
    wins only ties with advertisements first seen in that same look.
 3. **A bridged incumbent gets one draw.** Its own derived front does not
-   exist, so the first draw at it goes unanswered and that front is not
-   asked again (C29); the second draw reaches the bridge's front. A native
-   provider has two draws in which to answer.
+   exist: the first draw at it is spent, at once when the incumbent answers
+   `404` and after three tries when it does not answer, and that front is
+   not asked again (C23, C29); the second draw reaches the bridge's front in
+   the same look. A native provider has two draws in which to answer.
 4. **Incumbents that ignore `Range` cost 4 MiB a sample.** A bridge reads
    each sampled segment from the incumbent's URL; when the incumbent
    answers a ranged request with the whole blob, a challenge of `c` reads
    up to `c` x 4 MiB there, and is priced per sample all the same. The
    bridge probes `Range` after each commit and daily, and states what it
    found.
-5. **A refused paid challenge holds the buyer's coin for an hour.** The
-   buyer builds its payment on the provider's 402; a provider that then
-   refuses (`unknown-root`) takes nothing, but the client keeps the payment
-   as possibly broadcast, since the payee could still broadcast it, and
-   gives the coin back only when the node has not seen it in an hour. A
-   reader with few coins can be locked out of further paid calls by one
-   caught challenge; fund it with several coins.
+5. **A refused paid challenge without a note holds a coin for an hour.**
+   The buyer builds its payment on the provider's 402; a provider that then
+   refuses (`unknown-root`) takes nothing. This version's providers say so
+   in a signed payment-not-taken note (spec section 10.4, row C30, pending
+   the owner's confirmation of its bytes), and the buyer releases the coin
+   at once. A provider that sends no note leaves the client keeping the
+   payment as possibly broadcast, since the payee could still broadcast it,
+   and giving the coin back only when the node has not seen it in an hour.
+   Paid calls take a small payment coin of their own, split off the pool,
+   so such a hold costs little and never blocks the identity's other coin.
 6. **A bridged incumbent's remittance is never taken.** Its own front has
    no settle route; the bridge forwards the settlement to the incumbent's
    operator instead (C28). `bstore settle` and `bstore due` therefore list
@@ -219,8 +223,10 @@ not do, stated so that nobody finds it by accident.
    the owner's anchor consumes the earlier one.
 9. **The outbox can grow while a provider is down.** Every piece a target
    has not taken is kept and sent again, the same bytes, for a week. A
-   provider that stays down while large objects are written costs the
-   writer disk up to their size.
+   piece is kept by reference to the local store's copy of its object,
+   which stays pinned there while it is owed, so a provider that stays
+   down while large objects are written holds them in the store beyond
+   its bound.
 10. **The reference host gives a module no engine handle.** So:
     - **no evict:** the module drops an object through the storage the host
       hands it after the engine has recorded the admission, never by an

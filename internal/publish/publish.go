@@ -90,8 +90,24 @@ type Config struct {
 	Mainnet bool
 	// PieceTree and EntryTree are the outputs of a new piece or entry
 	// funding tree (spec section 19.2: small trees cost less per piece).
-	PieceTree int
-	EntryTree int
+	// A put of up to PieceTree pieces never waits for a block: the next
+	// tree of each kind is minted ahead, in the background, once the
+	// current one has PieceAhead (EntryAhead) outputs or fewer left.
+	// PieceAhead zero is PieceTree, so one tree is always ready; EntryAhead
+	// zero is half of EntryTree.
+	PieceTree  int
+	EntryTree  int
+	PieceAhead int
+	EntryAhead int
+	// PieceWorkers is how many piece carriers are minted and sent at once;
+	// zero is 4.
+	PieceWorkers int
+	// Poll is how often a wait for a transaction to mine asks the node;
+	// zero is a second.
+	Poll time.Duration
+	// LockWait is how long Open waits for an identity another process has
+	// open; zero refuses at once (ErrInUse).
+	LockWait time.Duration
 	// HoldAhead is how many mined hold outputs of each bounty value are kept
 	// ready, so a put never waits for a block; HoldWait is how long a put
 	// waits for one when none is ready.
@@ -122,6 +138,10 @@ type Publisher struct {
 	st *state
 
 	mintMu sync.Mutex // one put mints at a time: the trees are not shared
+	// run is the Publisher's own lifetime: what a put starts in the
+	// background (a funding tree minted ahead) outlives the request.
+	run    context.Context
+	stop   context.CancelFunc
 	holdMu sync.Mutex // one hold transaction minted at a time
 	kept   *producer.Kept
 	payer  *producer.Payer
@@ -132,9 +152,13 @@ type Publisher struct {
 	lock   *dirLock
 	// auth reaches the providers configured (upload sessions); frontAuth
 	// reaches the fronts advertisements and statements name, through
-	// FrontHTTP.
+	// FrontHTTP, a client a front.
 	auth      *authClient
-	frontAuth *authClient
+	frontAuth *authPool
+	// payMu is held while a small payment coin is taken or minted.
+	payMu   sync.Mutex
+	splitMu sync.Mutex
+	coins   *bwallet.Pool // the payment coins, under payMu
 }
 
 type state struct {
@@ -154,6 +178,9 @@ type state struct {
 	Uploads []UploadRecord `json:"uploads,omitempty"`
 	// Payments are BRC-105 payments made and not yet seen mined.
 	Payments []PaymentRecord `json:"payments,omitempty"`
+	// Intents are payment coins taken for calls in flight, recorded before
+	// the call (a stop mid-call leaves them to ReconcilePayments).
+	Intents []PaymentRecord `json:"intents,omitempty"`
 }
 
 type treeSet struct {
@@ -207,10 +234,24 @@ func Open(ctx context.Context, cfg Config) (*Publisher, error) {
 		cfg.Now = time.Now
 	}
 	if cfg.PieceTree <= 0 {
-		cfg.PieceTree = 64
+		cfg.PieceTree = DefaultPieceTree
 	}
 	if cfg.EntryTree <= 0 {
 		cfg.EntryTree = 16
+	}
+	cfg.PieceTree, cfg.EntryTree = min(cfg.PieceTree, mint.MaxFundingOutputs), min(cfg.EntryTree, mint.MaxFundingOutputs)
+	if cfg.PieceAhead <= 0 {
+		cfg.PieceAhead = cfg.PieceTree
+	}
+	if cfg.EntryAhead <= 0 {
+		cfg.EntryAhead = max(cfg.EntryTree/2, 1)
+	}
+	if cfg.PieceWorkers <= 0 {
+		cfg.PieceWorkers = 4
+	}
+	cfg.PieceWorkers = min(cfg.PieceWorkers, 32)
+	if cfg.Poll <= 0 {
+		cfg.Poll = time.Second
 	}
 	if cfg.HoldAhead <= 0 {
 		cfg.HoldAhead = 8
@@ -224,7 +265,7 @@ func Open(ctx context.Context, cfg Config) (*Publisher, error) {
 	if cfg.Store == nil || cfg.Delivery == nil || cfg.Asset == nil || cfg.Settler == nil {
 		return nil, errors.New("publish: a store, a delivery, a node and a settlement leg are required")
 	}
-	lk, err := lockDir(cfg.Dir)
+	lk, err := lockDirWait(ctx, cfg.Dir, cfg.LockWait)
 	if err != nil {
 		return nil, err
 	}
@@ -236,9 +277,11 @@ func Open(ctx context.Context, cfg Config) (*Publisher, error) {
 	w.Mainnet = cfg.Mainnet
 	w.Originator = "bstore-publisher"
 	p := &Publisher{cfg: cfg, wallet: w, signer: w.Signer(), lock: lk}
+	p.run, p.stop = context.WithCancel(context.WithoutCancel(ctx))
 	ok := false
 	defer func() {
 		if !ok {
+			p.stop()
 			lk.release()
 		}
 	}()
@@ -252,11 +295,11 @@ func Open(ctx context.Context, cfg Config) (*Publisher, error) {
 	}
 	p.kept = &producer.Kept{Load: p.loadKept}
 	p.payer = &producer.Payer{Pool: w.Pool, Keys: map[string]*bwallet.Signer{p.signer.IdentityHex(): p.signer},
-		Kept: p.kept, Settler: cfg.Settler, Asset: cfg.Asset, Fees: cfg.Fees, Note: p.note}
-	p.pieces = p.newTrees(kindPiece, storerec.PieceDerivation, cfg.PieceTree)
-	p.ents = p.newTrees(kindEntry, storerec.EntryDerivation, cfg.EntryTree)
-	p.outs = p.newTrees(kindOutcome, storerec.OutcomeDerivation, cfg.EntryTree)
-	if p.outbox, err = openOutbox(filepath.Join(cfg.Dir, "outbox"), cfg.Delivery, cfg.Logf, cfg.Now); err != nil {
+		Kept: p.kept, Settler: cfg.Settler, Asset: cfg.Asset, Fees: cfg.Fees, Note: p.note, Poll: cfg.Poll}
+	p.pieces = p.newTrees(kindPiece, storerec.PieceDerivation, cfg.PieceTree, cfg.PieceAhead)
+	p.ents = p.newTrees(kindEntry, storerec.EntryDerivation, cfg.EntryTree, cfg.EntryAhead)
+	p.outs = p.newTrees(kindOutcome, storerec.OutcomeDerivation, cfg.EntryTree, cfg.EntryAhead)
+	if p.outbox, err = openOutbox(filepath.Join(cfg.Dir, "outbox"), cfg.Delivery, cfg.Store, cfg.Logf, cfg.Now); err != nil {
 		return nil, err
 	}
 	p.auth = newAuthClient(p, cfg.Delivery.HTTP)
@@ -264,7 +307,8 @@ func Open(ctx context.Context, cfg Config) (*Publisher, error) {
 	if fh == nil {
 		fh = cfg.Delivery.HTTP
 	}
-	p.frontAuth = newAuthClient(p, fh)
+	p.frontAuth = newAuthPool(p, fh)
+	p.mergePayPools()
 	if err := p.save(); err != nil {
 		return nil, err
 	}
@@ -275,8 +319,16 @@ func Open(ctx context.Context, cfg Config) (*Publisher, error) {
 	return p, nil
 }
 
-// Close releases the identity's directory for another process.
+// Close stops what the identity runs in the background (a funding tree
+// minted ahead is settled on the next start from its record) and releases
+// the identity's directory for another process.
 func (p *Publisher) Close() {
+	// A split of payment coins started by a call is let reach the leg:
+	// once it has, its outputs are recorded.
+	p.waitFill(30 * time.Second)
+	if p.stop != nil {
+		p.stop()
+	}
 	if p.lock != nil {
 		p.lock.release()
 		p.lock = nil
@@ -346,9 +398,30 @@ func carrierParams(d pushdrop.Derivation) carrier.Params {
 		ErrIdentity: storerec.ErrIdentity}
 }
 
-func (p *Publisher) newTrees(kind string, d pushdrop.Derivation, count int) *producer.Trees {
+// DefaultPieceTree is a piece funding tree's outputs when none is set: a
+// put of up to 1 GiB (256 pieces of 4 MiB) spends one tree, and the tree
+// adds about 12.5 KB to each piece carrier's BEEF.
+const DefaultPieceTree = 256
+
+// PiecesFor is how many pieces a closure of size bytes has: its blobs, its
+// branches and its root (CHIRP Profile 1, at most 256 children a node).
+func PiecesFor(size uint64) int {
+	n := storerec.Blobs(size)
+	total := uint64(1)
+	for n > 256 {
+		n = (n + 255) / 256
+		total += n
+	}
+	total += storerec.Blobs(size)
+	if total > 1<<30 {
+		return 1 << 30
+	}
+	return int(total)
+}
+
+func (p *Publisher) newTrees(kind string, d pushdrop.Derivation, count, ahead int) *producer.Trees {
 	return &producer.Trees{Payer: p.payer, State: treeState{p, kind}, Identity: p.signer.IdentityHex(),
-		Count: count, Sats: 1, Funder: "pool",
+		Count: count, Sats: 1, Funder: "pool", Ahead: uint32(ahead),
 		Lock: func(ctx context.Context) (*script.Script, error) {
 			return carrier.FundingLock(ctx, p.wallet, p.wallet.Originator, carrierParams(d))
 		},
@@ -490,10 +563,15 @@ func (p *Publisher) spend(ctx context.Context, kind string, need uint32) (*trans
 	if err := p.promoteAhead(kind); err != nil {
 		return nil, 0, err
 	}
-	tree, vout, err := trees.Spend(ctx, need)
+	// The run's context, not the request's: a spend that leaves the tree
+	// low starts the next one in the background, and that mint must
+	// outlive this put. A spend that has to wait for a tree is bounded by
+	// the payer's own timeout.
+	tree, vout, err := trees.Spend(p.run, need)
 	if errors.Is(err, producer.ErrPublish) {
-		tree, vout, err = trees.Spend(ctx, need)
+		tree, vout, err = trees.Spend(p.run, need)
 	}
+	p.keepHeld(kind)
 	if err != nil {
 		return nil, 0, feeError(fmt.Errorf("%s funding tree: %w", kind, err))
 	}
@@ -512,6 +590,52 @@ func (p *Publisher) spend(ctx context.Context, kind string, need uint32) (*trans
 		return nil, 0, err
 	}
 	return tree, vout, nil
+}
+
+// keepHeld records every tree the library holds for a switch (a tree
+// minted ahead, settled and mined) in the state's trees ahead, and drops its
+// Prepare record: a crash before the switch leaves it where a sweep, and
+// the next start's promoteAhead, find it. The library adopts it itself at
+// the switch, which takes it out of the trees ahead again.
+func (p *Publisher) keepHeld(kind string) {
+	held := p.treesOf(kind).Held()
+	if len(held) == 0 {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s := p.set(kind)
+	changed := false
+	for _, h := range held {
+		if s.Tree != nil && s.Tree.Txid == h.Txid {
+			continue
+		}
+		if !slices.ContainsFunc(s.Ahead, func(a funding.Tree) bool { return a.Txid == h.Txid }) {
+			s.Ahead = append(s.Ahead, h)
+			changed = true
+		}
+		if slices.ContainsFunc(p.st.Pending, func(pt pendingTree) bool { return pt.Tree.Txid == h.Txid }) {
+			p.dropPending(h.Txid)
+			changed = true
+		}
+	}
+	if changed {
+		if err := p.saveLocked(); err != nil {
+			p.cfg.Logf("publisher state: %v", err)
+		}
+	}
+}
+
+// pieceRoom is how many outputs the current piece tree has left for this
+// identity: a put spends them before it switches to the next tree.
+func (p *Publisher) pieceRoom() uint32 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	t := p.st.Piece.Tree
+	if t == nil || t.IdentityKeyHex != p.signer.IdentityHex() {
+		return 0
+	}
+	return t.Remaining()
 }
 
 // promoteAhead makes a tree a previous run left held the current one when

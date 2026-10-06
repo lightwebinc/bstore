@@ -527,3 +527,27 @@ test('transaction-v1: every case admitted or refused as the Go codec decided', a
     }
   }
 })
+
+test('nottaken-v1: notes, every refusal for the Go rule, the buyer check', () => {
+  const v = load('nottaken-v1.json')
+  for (const n of v.notes) {
+    const body = fromHex(n.body)
+    const got = s.decodeNotTakenBody(body)
+    assert.deepEqual(s.notTakenView(got), n.view, n.name)
+    assert.equal(toHex(s.encodeNotTaken(got)), n.body, `${n.name}: re-encoded`)
+    assert.deepEqual(s.notTakenView(s.verifyNotTaken(fromHex(n.signed))), n.view, `${n.name}: verified`)
+    assert.equal(toHex(s.challengeKey(got.answerer)), n.challengeKey, `${n.name}: key`)
+    assert.equal(toHex(sha256(fromHex(n.request))), n.view.request, `${n.name}: request hash`)
+  }
+  for (const c of v.refusals) {
+    const raw = fromHex(c.hex)
+    const [label, rule] = labelOf(() => (c.kind === 'body' ? s.decodeNotTakenBody(raw) : s.verifyNotTaken(raw)))
+    assert.equal(label, c.label, `${c.kind}: ${c.name}`)
+    assert.equal(rule, c.rule ?? '', `${c.kind}: ${c.name} rule`)
+  }
+  for (const c of v.checks) {
+    const [label, rule] = labelOf(() => s.checkNotTaken(fromHex(c.signed), fromHex(c.payment), fromHex(c.request), fromHex(c.answerer)))
+    assert.equal(label, c.label, c.name)
+    assert.equal(rule, c.rule ?? '', `${c.name} rule`)
+  }
+})

@@ -138,7 +138,7 @@ func put(files map[string][]byte, name string, v any) error {
 func Generate() (map[string][]byte, error) {
 	files := map[string][]byte{}
 	for _, f := range []func(map[string][]byte) error{
-		genDerivation, genHex, genRefusal, genScript, genMap, genProof, genSettle, genQuery, genClosure, genTransaction,
+		genDerivation, genHex, genRefusal, genScript, genMap, genProof, genSettle, genQuery, genClosure, genTransaction, genNotTaken,
 	} {
 		if err := f(files); err != nil {
 			return nil, err

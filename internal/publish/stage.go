@@ -44,16 +44,20 @@ func (st *Store) Stage(ctx context.Context, r io.Reader, max uint64) (*Staged, e
 		max = storerec.MaxSize
 	}
 	var blobs []string
-	var pinned [][32]byte
+	var pinned, wrote [][32]byte
 	ok := false
 	defer func() {
 		if !ok {
 			st.unpin(pinned)
+			st.unstage(wrote)
 		}
 	}()
 	put := func(b []byte) ([32]byte, error) {
-		h, err := st.put(b, true)
+		h, w, err := st.put(b, true)
 		pinned = append(pinned, h)
+		if w {
+			wrote = append(wrote, h)
+		}
 		return h, err
 	}
 	b := storerec.NewStreaming(func(blob []byte) error {
@@ -111,6 +115,7 @@ func (st *Store) Stage(ctx context.Context, r io.Reader, max uint64) (*Staged, e
 	release := func() {
 		hold()
 		st.unpin(pinned)
+		st.unstage(wrote)
 	}
 	return &Staged{Root: built.RootHash, ContentHash: built.ContentHash, ProofRoot: built.ProofRoot, Size: built.Size,
 		Manifest: m, release: release}, nil
@@ -126,12 +131,20 @@ type Closure interface {
 	Object(ctx context.Context, h [32]byte) ([]byte, error)
 }
 
-// StoreClosure is a stored closure as a Closure.
+// StoreClosure is a stored closure as a Closure. Staged marks a closure
+// this process staged in the same request, still pinned: its objects are
+// read without hashing them a second time.
 type StoreClosure struct {
 	Store    *Store
 	Manifest *Manifest
+	Staged   bool
 }
 
 func (c StoreClosure) Objects() [][32]byte { return objectsOf(c.Manifest) }
 
-func (c StoreClosure) Object(_ context.Context, h [32]byte) ([]byte, error) { return c.Store.Get(h) }
+func (c StoreClosure) Object(_ context.Context, h [32]byte) ([]byte, error) {
+	if c.Staged {
+		return c.Store.readStaged(h)
+	}
+	return c.Store.Get(h)
+}

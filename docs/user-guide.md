@@ -213,8 +213,10 @@ topic: a pass, a failure (an invalid signed answer, exit 1), or no answer
 (exit 3). At `c = 113` one dropped blob of a 100 MiB object is caught 99
 times in 100. A challenge of an incumbent behind a bridge names the
 bridge's front and key: `-front URL -answerer KEY`, from its front
-statement; a renewal of one names `-front`. A refused paid challenge keeps
-its coin for an hour (limits.md, known limit 5): keep several coins.
+statement; a renewal of one names `-front`. A paid challenge pays from a
+small coin split off the pool; one refused with the provider's signed note
+that it did not take the payment gives the coin back at once, and one
+refused without a note keeps it for an hour (limits.md, known limit 5).
 
 ## 9. An S3 user
 

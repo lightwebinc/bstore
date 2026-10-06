@@ -560,7 +560,7 @@ func (s *Server) putObject(ctx context.Context, w http.ResponseWriter, r *http.R
 	s.metrics.add("bstore_s3d_bytes_in_total", int64(staged.Size))
 	etag := bd.hashes.md5Hex()
 	rec, e := s.publishPut(ctx, a, b, key, ct, meta, &etag, publish.Object{Root: staged.Root, Size: staged.Size,
-		ContentHash: staged.ContentHash, ProofRoot: staged.ProofRoot, Closure: publish.StoreClosure{Store: s.store, Manifest: staged.Manifest}})
+		ContentHash: staged.ContentHash, ProofRoot: staged.ProofRoot, Closure: publish.StoreClosure{Store: s.store, Manifest: staged.Manifest, Staged: true}})
 	if e != nil {
 		return e
 	}

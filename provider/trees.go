@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/bsv-blockchain/go-sdk/script"
 	"github.com/bsv-blockchain/go-sdk/transaction"
@@ -45,7 +46,7 @@ func (p *Provider) newTrees() {
 
 func (p *Provider) newPayer() *producer.Payer {
 	pay := &producer.Payer{Pool: p.pool, Keys: map[string]*bwallet.Signer{p.signer.IdentityHex(): p.signer},
-		Kept: p.kept, Settler: p.settler, Asset: p.asset, Fees: p.fees(), Note: p.libraryNote}
+		Kept: p.kept, Settler: p.settler, Asset: p.asset, Fees: p.fees(), Note: p.libraryNote, Poll: time.Second}
 	pay.Tip = p.lastTip.Load()
 	return pay
 }

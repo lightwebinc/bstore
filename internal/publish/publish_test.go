@@ -101,7 +101,7 @@ func TestPutDeliversAndRetries(t *testing.T) {
 		t.Fatal("the streamed closure is not the one built in memory")
 	}
 	f := Fields{Bucket: testBucket, ID: sha256.Sum256([]byte("id")), Key: "a/b", ContentType: "application/octet-stream"}
-	obj := Object{Root: st.Root, Size: st.Size, ContentHash: st.ContentHash, ProofRoot: st.ProofRoot, Closure: StoreClosure{store, st.Manifest}}
+	obj := Object{Root: st.Root, Size: st.Size, ContentHash: st.ContentHash, ProofRoot: st.ProofRoot, Closure: StoreClosure{Store: store, Manifest: st.Manifest}}
 	r, err := p.Put(ctx, f, obj, &Bounty{Satoshis: 1000, T: 1, K: 1, Retention: 3600, DeadlineBlocks: 10, CheckC: 30})
 	if err != nil || !r.Sent || r.Pieces != 4 || r.Entry.Hold == nil {
 		t.Fatalf("put: %v %+v", err, r)
@@ -135,8 +135,10 @@ func TestPutDeliversAndRetries(t *testing.T) {
 	if _, err := p.Put(ctx, Fields{Bucket: testBucket, ID: f.ID, Key: "a/c", ContentType: "text/plain"}, obj, nil); err == nil {
 		t.Fatal("a put whose pieces reached no target succeeded")
 	}
-	if p.Outbox().Pending() != 1 {
-		t.Fatalf("outbox holds %d", p.Outbox().Pending())
+	// Pieces are sent four at a time: the carriers in flight when the
+	// first failed stay in the outbox with it.
+	if n := p.Outbox().Pending(); n < 1 || n > 4 {
+		t.Fatalf("outbox holds %d", n)
 	}
 	// The host is down: the entry is minted, not sent; the outbox keeps it.
 	prov.down.Store(false)

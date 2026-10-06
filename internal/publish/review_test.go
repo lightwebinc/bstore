@@ -24,6 +24,7 @@ import (
 	"github.com/bsv-blockchain/go-sdk/transaction"
 	"github.com/bsv-blockchain/go-sdk/wallet"
 
+	"github.com/lightwebinc/bcommon/chirp"
 	"github.com/lightwebinc/bcommon/funding"
 	"github.com/lightwebinc/bcommon/pushdrop"
 
@@ -43,9 +44,13 @@ type fakeFront struct {
 	// 422 unknown-root.
 	lacks  func(seg uint64) bool
 	refuse bool
-	mu     sync.Mutex
-	seen   map[string]int // nonce -> requests
-	srv    *httptest.Server
+	// noRoute answers every request 404, as a host with no bstore routes;
+	// delay holds each answer.
+	noRoute bool
+	delay   time.Duration
+	mu      sync.Mutex
+	seen    map[string]int // nonce -> requests
+	srv     *httptest.Server
 }
 
 func newFakeFront(t *testing.T, content []byte) *fakeFront {
@@ -76,6 +81,10 @@ func newFakeFront(t *testing.T, content []byte) *fakeFront {
 			f.mu.Lock()
 			f.seen[hex.EncodeToString(q.Nonce[:])]++
 			f.mu.Unlock()
+			time.Sleep(f.delay)
+			if f.noRoute {
+				return auth104.Error(http.StatusNotFound, "ERR_ROUTE_NOT_FOUND", "no such route")
+			}
 			if f.refuse {
 				return auth104.JSON(422, map[string]string{"error": "unknown-root"})
 			}
@@ -144,7 +153,7 @@ func TestDrawsAreBounded(t *testing.T) {
 	}
 	for i := 0; i < 20 && c.Status != CandFailed && c.Status != CandPassed; i++ {
 		tip, _ := r.p.cfg.Asset.BestHeader(r.ctx)
-		r.p.challengeCand(r.ctx, race, c, blobs, tip.Height, RaceOptions{})
+		challengeAlone(r.ctx, r.p, race, c, blobs, tip.Height)
 	}
 	// A draw left unanswered three times is spent and the front is not
 	// asked again, its own derived front included: with no other front the
@@ -181,18 +190,18 @@ func TestThirdPartyFrontCannotFailAnAdvertiser(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.Pending = &PendingDraw{Request: hex.EncodeToString(raw), Front: hostile.srv.URL + "/store/bstore/v1", Answerer: hex.EncodeToString(hostile.identity())}
-	r.p.challengeCand(r.ctx, race, c, blobs, tip.Height, RaceOptions{})
+	challengeAlone(r.ctx, r.p, race, c, blobs, tip.Height)
 	if c.Status == CandFailed || len(c.BadFronts) != 1 || c.Draws != 1 {
 		t.Fatalf("a third party's refusal: %s %v %d", c.Status, c.BadFronts, c.Draws)
 	}
-	r.p.challengeCand(r.ctx, race, c, blobs, tip.Height, RaceOptions{})
+	challengeAlone(r.ctx, r.p, race, c, blobs, tip.Height)
 	if c.Status != CandPassed {
 		t.Fatalf("the advertiser's own front: %s %+v", c.Status, c.Attempts)
 	}
 	// The advertiser's own refusal fails it at once.
 	c2 := candAt(race, hostile)
 	c2.Advertiser = hex.EncodeToString(hostile.identity())
-	r.p.challengeCand(r.ctx, race, c2, blobs, tip.Height, RaceOptions{})
+	challengeAlone(r.ctx, r.p, race, c2, blobs, tip.Height)
 	if c2.Status != CandFailed {
 		t.Fatalf("the advertiser's own unknown-root: %s", c2.Status)
 	}
@@ -351,7 +360,7 @@ func TestUncertainPaymentReconciled(t *testing.T) {
 	if err := tx.Sign(); err != nil {
 		t.Fatal(err)
 	}
-	r.p.notePayment(tx, false)
+	r.p.notePayment(tx, false, false)
 	coin := fee.Tx.TxID().String()
 	has := func() bool {
 		for _, o := range r.p.wallet.Pool.Outputs() {
@@ -396,7 +405,7 @@ func TestAnswerBound(t *testing.T) {
 // After a kill nothing it retracted is sent again.
 func TestOutboxDrop(t *testing.T) {
 	dir := t.TempDir()
-	o, err := openOutbox(filepath.Join(dir, "outbox"), &Delivery{}, t.Logf, time.Now)
+	o, err := openOutbox(filepath.Join(dir, "outbox"), &Delivery{}, nil, t.Logf, time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -434,4 +443,10 @@ func TestSameEffect(t *testing.T) {
 func scriptOf(b []byte) *script.Script {
 	s := script.Script(b)
 	return &s
+}
+
+// challengeAlone is one candidate's step as judge runs it, alone.
+func challengeAlone(ctx context.Context, p *Publisher, race *Race, c *Cand, blobs []chirp.Child, tip uint32) {
+	p.challengeCand(ctx, race, c, blobs, tip, RaceOptions{}, func() error { return p.saveRace(race) },
+		func(n PublishedNote) { race.Outcomes = append(race.Outcomes, n) })
 }

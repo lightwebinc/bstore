@@ -45,6 +45,17 @@ import (
 //  6. the signed response [body, signature] under derive(answerer,
 //     "challenge").
 func (p *Provider) challenge(ctx context.Context, r *http.Request, body []byte, who *auth104.Caller) auth104.Reply {
+	var checked *paymentLine
+	rep := p.challengeAnswer(ctx, r, body, who, &checked)
+	// A refusal of a request whose payment passed the payment check and
+	// was not taken says so in a signed note (row C30).
+	if checked != nil && who != nil && rep.Status != http.StatusOK {
+		rep = p.withNotTaken(ctx, rep, checked.Txid, who.Hex, body)
+	}
+	return rep
+}
+
+func (p *Provider) challengeAnswer(ctx context.Context, r *http.Request, body []byte, who *auth104.Caller, checked **paymentLine) auth104.Reply {
 	var req struct {
 		Request string `json:"request"`
 		Entry   string `json:"entry"`
@@ -115,6 +126,7 @@ func (p *Provider) challenge(ctx context.Context, r *http.Request, body []byte, 
 			return *rep
 		}
 		pay = &paymentPending{pl: *pl}
+		*checked = &pay.pl
 	}
 	select {
 	case p.limits.work <- struct{}{}:
@@ -139,8 +151,10 @@ func (p *Provider) challenge(ctx context.Context, r *http.Request, body []byte, 
 	if pay != nil {
 		if _, rep := p.claimPayment(pay.pl, "challenge"); rep != nil {
 			p.metrics.inc("bstore_provider_payments_total", "result=refused")
+			*checked = nil // refused as used (409): no note
 			return *rep
 		}
+		*checked = nil
 		p.metrics.inc("bstore_provider_payments_total", "result=accepted")
 	}
 	if free {

@@ -125,7 +125,7 @@ func (p *Publisher) mintHolds(ctx context.Context, sats uint64, n int) error {
 	// A Payer of its own: a fill runs beside puts, and a Payer's
 	// reservations are its own.
 	pay := &producer.Payer{Pool: p.wallet.Pool, Keys: map[string]*bwallet.Signer{p.signer.IdentityHex(): p.signer},
-		Kept: p.kept, Settler: p.cfg.Settler, Asset: p.cfg.Asset, Fees: p.cfg.Fees, Note: p.note}
+		Kept: p.kept, Settler: p.cfg.Settler, Asset: p.cfg.Asset, Fees: p.cfg.Fees, Note: p.note, Poll: p.cfg.Poll}
 	if h, err := p.cfg.Asset.BestHeader(ctx); err == nil {
 		pay.Tip = h.Height
 	}

@@ -801,7 +801,7 @@ mutual authentication over BRC-104:
 
 | Route | Method | Body | Answer |
 | --- | --- | --- | --- |
-| `<front>/challenge` | POST | JSON `{"request": <base64 of the request encoding>, "entry": <txid, optional>}` | `200` with the signed response (`application/cbor`); `402` with BRC-105's headers when priced; `422` with `{"error": <label>}` for a request it refuses (`request`, `seed`, `unknown-root`) |
+| `<front>/challenge` | POST | JSON `{"request": <base64 of the request encoding>, "entry": <txid, optional>}` | `200` with the signed response (`application/cbor`); `402` with BRC-105's headers when priced; `422` with `{"error": <label>}` for a request it refuses (`request`, `seed`, `unknown-root`); a refusal of a request that came with a payment the front did not take carries `"notTaken"`, section 10.4 |
 | `<front>/renew` | POST | JSON `{"root": <64 hex>, "until": <Unix seconds>}` | `402` first; once paid, `200` with `{"advertisement": <BEEF base64>}` |
 | `<front>/settle` | POST | JSON BRC-29 remittance (below) | `200` once accepted; `400` if the output is not derivable for this key |
 | `<front>/terms` | GET | | JSON, informative (below) |
@@ -849,6 +849,53 @@ own renewal route (section 17) and answers with the incumbent's new
 advertisement. "Nobody has read this in a long time" is a provider's signal,
 not a protocol one: a provider MAY decline to renew, and an interested
 reader buys renewals.
+
+### 10.4 A payment not taken (clarification C30, pending)
+
+A buyer pays a priced challenge on the 402, and then the front may still
+refuse it: the seed has left its window, the root turned out damaged when
+the answer was read, or the front is busy. The payment was handed to the
+front and the front could broadcast it, so without more the buyer holds the
+payment's coin until its own node shows the payment was never broadcast.
+Under this clarification (frozen.md section 14, row C30, pending the owner's
+confirmation of these bytes) a front that refuses a `challenge` request
+that came with a BRC-105 payment, and did not take that payment, adds a
+signed **payment-not-taken note** to the refusal's JSON as `"notTaken"`:
+base64 of the signed note. A refusal that is about the payment itself
+having been used (`409`) or that asks for one (`402`) carries none.
+
+The note's body is a record (section 2) under the magic `stn` `0x01`, at
+most 512 bytes:
+
+| Key | Field | Value |
+| --- | --- | --- |
+| 0 | magic | `stn` `0x01` |
+| 1 | payment | 32 bytes: the payment's txid, hash byte order |
+| 2 | request | 32 bytes: SHA-256 of the request encoding the payment came with |
+| 3 | reason | text, 1 to 64 of `a` to `z`, `0` to `9` and `-`: the refusal's label (`seed`, `unknown-root`, `request`) or, for any other refusal, its error code without `ERR_`, lowercase, `-` for `_` (`busy`, `rate-limited`) |
+| 4 | time | unsigned, Unix seconds, `0` to `2^32 - 1`, the front's clock |
+| 5 | answerer | 33 bytes: the front's identity key (`request`'s `answerer`) |
+
+A key above 5 is refused. The **signed note** is the CBOR array
+`[body, signature]`, at most 512 bytes in all, the signature a strict low-S
+DER ECDSA signature over SHA-256 of the body (BRC-100 `createSignature`
+over the body) under `derive(answerer, "challenge")`, the key section 7.3's
+responses are signed under. A response's signature covers 64 bytes (two
+hashes) and a note's body is always longer, so neither can be taken for the
+other. Refusals: the record steps of section 2 for the body, then
+`unknown-key`, `missing`, `type`, `reason`, `time` and `identity`, in key
+order; then `too-large`, `shape` (not `[body, signature]` as byte strings)
+and `signature` for the signed note. Every refusal is `not-taken`, its
+rule the step (vectors `nottaken-v1.json`).
+
+A front that signs a note never takes that payment afterwards, across
+restarts. A buyer that receives a note that verifies, names its own
+payment's txid and the SHA-256 of the request it sent, and names the
+answerer it asked, which is also the peer its BRC-104 session
+authenticated, releases the
+payment's coin at once. Any other note is ignored: the payment stays held
+until the node shows it was never broadcast. A front that signed a note and
+broadcast the payment anyway has signed evidence against itself.
 
 ## 11. Lookup: `ls_bstore`
 
@@ -1751,4 +1798,5 @@ pin byte for byte the rows of frozen.md marked "vectors".
 | `transaction-v1.json` | carriers, tokens, advertisements, hold outputs and sweeps admitted and refused by each rule of section 12.1, and transactions that only spend held outputs, refused |
 | `query-v1.json` | every class and every value rule, admitted and refused |
 | `chirp-v1.json` | BRC-167's own vectors: bcommon's file of that name at the tag go.mod pins, read from that module by bstore's tests (signed clarification, frozen.md section 14, row C5) |
+| `nottaken-v1.json` | payment-not-taken notes as signed (section 10.4, row C30, pending), every step of the body's and the signed note's refusal order, and the buyer's check against its payment, request and answerer |
 | `closure-v1.json` | bstore's checks of a closure (section 5, rows C1 to C4): the root's rules, the closure's refusals as labels, the 2^43-byte bound, the proof root |

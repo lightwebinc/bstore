@@ -45,6 +45,7 @@ export const MagicOutcome = b(0x73, 0x74, 0x6f, 0x01)
 export const MagicFront = b(0x73, 0x74, 0x66, 0x01)
 export const MagicRequest = b(0x73, 0x74, 0x71, 0x01)
 export const MagicResponse = b(0x73, 0x74, 0x72, 0x01)
+export const MagicNotTaken = b(0x73, 0x74, 0x6e, 0x01)
 
 export const MaxSafe = Number.MAX_SAFE_INTEGER
 export const MinTime = 1
@@ -75,6 +76,8 @@ export const MaxRequest = 512
 export const MaxC = 1024
 export const NonceLen = 16
 export const MaxSignedResponse = 8388608
+export const MaxNotTaken = 512
+export const MaxNoteReason = 64
 export const MaxSatoshis = 2100000000000000
 export const MaxT = 16
 export const MaxU32 = 2 ** 32 - 1
@@ -113,6 +116,7 @@ export const OK = { magic: 0, bucket: 1, buyer: 2, created: 3, request: 4, outco
 export const FK = { magic: 0, bucket: 1, front: 2, advertiser: 3, url: 4, created: 5, last: 5 }
 export const QK = { magic: 0, root: 1, proofRoot: 2, size: 3, provider: 4, answerer: 5, seedHeight: 6, seedHash: 7, nonce: 8, c: 9, range: 10, last: 10 }
 export const RK = { magic: 0, request: 1, samples: 2, answerer: 3, last: 3 }
+export const NK = { magic: 0, payment: 1, request: 2, reason: 3, time: 4, answerer: 5, last: 5 }
 
 export const KindPut = 1
 export const KindDelete = 2

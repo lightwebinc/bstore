@@ -30,6 +30,9 @@ type Store struct {
 	// a stage wrote, or found already held, is never removed under it.
 	busy map[[32]byte]int
 	pins map[[32]byte]int
+	// staged counts the stages that wrote or found each object in this
+	// process: only those are read without hashing them again.
+	staged map[[32]byte]int
 }
 
 // orphanAge is how long an object no closure names is kept: what a put cut
@@ -58,7 +61,7 @@ func OpenStore(dir string) (*Store, error) {
 			_ = os.Remove(filepath.Join(dir, "tmp", e.Name()))
 		}
 	}
-	return &Store{dir: dir, busy: map[[32]byte]int{}, pins: map[[32]byte]int{}}, nil
+	return &Store{dir: dir, busy: map[[32]byte]int{}, pins: map[[32]byte]int{}, staged: map[[32]byte]int{}}, nil
 }
 
 func (s *Store) objectPath(h [32]byte) string {
@@ -72,11 +75,14 @@ func (s *Store) manifestPath(root [32]byte) string {
 
 // Put stores an object under its hash, durably; an object already held is
 // left alone.
-func (s *Store) Put(b []byte) ([32]byte, error) { return s.put(b, false) }
+func (s *Store) Put(b []byte) ([32]byte, error) {
+	h, _, err := s.put(b, false)
+	return h, err
+}
 
 // put stores an object and, with pin, pins it in the same step, so Trim
 // cannot remove an object a stage found already held.
-func (s *Store) put(b []byte, pin bool) ([32]byte, error) {
+func (s *Store) put(b []byte, pin bool) ([32]byte, bool, error) {
 	h := sha256.Sum256(b)
 	p := s.objectPath(h)
 	s.mu.Lock()
@@ -88,12 +94,33 @@ func (s *Store) put(b []byte, pin bool) ([32]byte, error) {
 	if err == nil {
 		now := time.Now()
 		_ = os.Chtimes(p, now, now)
-		return h, nil
+		return h, false, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-		return h, err
+		return h, false, err
 	}
-	return h, writeFileSync(filepath.Join(s.dir, "tmp"), p, b)
+	if err := writeFileSync(filepath.Join(s.dir, "tmp"), p, b); err != nil {
+		return h, false, err
+	}
+	if pin {
+		// Written by this stage from the bytes it hashed: read back
+		// without hashing again while the stage holds it.
+		s.mu.Lock()
+		s.staged[h]++
+		s.mu.Unlock()
+	}
+	return h, pin, nil
+}
+
+// unstage releases a stage's mark on the objects it wrote.
+func (s *Store) unstage(hs [][32]byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, h := range hs {
+		if s.staged[h]--; s.staged[h] <= 0 {
+			delete(s.staged, h)
+		}
+	}
 }
 
 // unpin releases a stage's pins.
@@ -134,6 +161,36 @@ func (s *Store) Get(h [32]byte) ([]byte, error) {
 		return nil, fmt.Errorf("publish: stored object %x does not hash to its name", h[:6])
 	}
 	return b, nil
+}
+
+// readStaged reads an object a stage of this process wrote or found and
+// still holds, without
+// holding it to its hash again: Stage hashed the bytes as it wrote them,
+// moments before. Anything else is read through Get.
+func (s *Store) readStaged(h [32]byte) ([]byte, error) {
+	s.mu.Lock()
+	fresh := s.staged[h] > 0
+	s.mu.Unlock()
+	if !fresh {
+		return s.Get(h)
+	}
+	return os.ReadFile(s.objectPath(h))
+}
+
+// pin keeps an object from Trim while something refers to it (an outbox
+// item that sends it by reference); unpinOne releases one pin.
+func (s *Store) pin(h [32]byte) {
+	s.mu.Lock()
+	s.pins[h]++
+	s.mu.Unlock()
+}
+
+func (s *Store) unpinOne(h [32]byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pins[h]--; s.pins[h] <= 0 {
+		delete(s.pins, h)
+	}
 }
 
 // Has reports whether an object is held.

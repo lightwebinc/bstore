@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -72,6 +73,10 @@ type ChallengeResult struct {
 	Why        string
 	Fetches    int
 	WholeBlobs int
+	// NotTaken is set when the answerer refused the request after a
+	// payment and signed that it did not take it (row C30): the payment's
+	// coin is already back in the pool.
+	NotTaken *storerec.NotTaken
 }
 
 // ErrNoTip is a buyer with no tip to seed a request from.
@@ -145,6 +150,9 @@ func (p *Publisher) Challenge(ctx context.Context, ch *Challenge, fetch *http.Cl
 		return res, nil
 	}
 	res.Status, res.Paid = call.Status, call.Paid
+	if call.Status != http.StatusOK && call.Payment != nil {
+		res.NotTaken = p.notTaken(call, raw, ch.Answerer)
+	}
 	switch call.Status {
 	case http.StatusOK:
 	case http.StatusPaymentRequired:
@@ -179,6 +187,37 @@ func (p *Publisher) Challenge(ctx context.Context, ch *Challenge, fetch *http.Cl
 		}
 	}
 	return res, nil
+}
+
+// notTaken reads a refusal's payment-not-taken note (row C30) and, when it
+// verifies and names this call's payment, its request and the answerer
+// asked, releases the payment's coin at once. Anything else leaves the
+// payment held, as one whose payee may still broadcast it.
+func (p *Publisher) notTaken(call *Call, request, answerer []byte) *storerec.NotTaken {
+	var m struct {
+		NotTaken string `json:"notTaken"`
+	}
+	if json.Unmarshal(call.Body, &m) != nil || m.NotTaken == "" {
+		return nil
+	}
+	signed, err := base64.StdEncoding.Strict().DecodeString(m.NotTaken)
+	if err != nil {
+		return nil
+	}
+	txid := call.Payment.TxID()
+	// The note must come from the party the session authenticated: the
+	// payee the payment went to.
+	if call.Peer != hex.EncodeToString(answerer) {
+		p.cfg.Logf("payment %s: a not-taken note from a session that is not the answerer's; the payment stays held", short(txid.String()))
+		return nil
+	}
+	n, err := storerec.CheckNotTaken(signed, [32]byte(txid[:]), request, answerer)
+	if err != nil {
+		p.cfg.Logf("payment %s: the refusal's not-taken note is not good (%v); the payment stays held", short(txid.String()), err)
+		return nil
+	}
+	p.ReleasePayment(txid.String())
+	return n
 }
 
 // OutcomeRecord is the outcome record of a result (spec section 8.1).

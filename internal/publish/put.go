@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bsv-blockchain/go-sdk/transaction"
@@ -192,56 +194,139 @@ func (p *Publisher) Delete(ctx context.Context, bucket string, id [32]byte, key 
 	return p.publishEntry(ctx, e, rec, nil)
 }
 
-// publishPieces mints one piece carrier per distinct object of the closure
-// and delivers each as it is made: memory holds one object and one
-// carrier. The tree outputs are recorded used before the first is signed.
+// publishPieces mints one piece carrier per distinct object of the
+// closure and delivers each as it is made, PieceWorkers at a time: memory
+// holds one object and one carrier a worker. The outputs of each tree
+// spent are recorded used before the first carrier on them is signed, and
+// each carrier is written to the outbox, synced, before it is sent. A put
+// spends what the current tree has left before it switches to the next,
+// minted ahead. A piece that reaches no target stops the put: the next one
+// would only add to the backlog; what was minted stays in the outbox and
+// is sent again.
 func (p *Publisher) publishPieces(ctx context.Context, bucket string, root [32]byte, c Closure) (int, error) {
 	objs := c.Objects()
 	targets := p.cfg.Delivery.pieceTargets(bucket)
 	if len(targets) == 0 {
 		return 0, errors.New("no facade and no provider to deliver pieces to")
 	}
-	params := carrierParams(storerec.PieceDerivation)
+	// A closure of the local store is kept in the outbox by reference.
+	byRef := false
+	if sc, ok := c.(StoreClosure); ok && sc.Store == p.cfg.Store && sc.Store != nil {
+		byRef = true
+	}
+	b, err := p.outbox.newBatch()
+	if err != nil {
+		return 0, err
+	}
+	defer b.close()
+	var minted atomic.Int64
 	done := 0
 	for done < len(objs) {
-		batch := min(len(objs)-done, p.cfg.PieceTree, mint.MaxFundingOutputs)
+		batch := min(len(objs)-done, mint.MaxFundingOutputs)
+		if room := int(p.pieceRoom()); room > 0 {
+			batch = min(batch, room)
+		} else {
+			batch = min(batch, p.cfg.PieceTree)
+		}
 		tree, vout, err := p.spend(ctx, kindPiece, uint32(batch))
 		if err != nil {
-			return done, err
+			return int(minted.Load()), err
 		}
-		for i := 0; i < batch; i++ {
-			h := objs[done+i]
-			data, err := c.Object(ctx, h)
-			if err != nil {
-				return done + i, fmt.Errorf("object %x: %w", h[:6], err)
-			}
-			pc := &storerec.Piece{Bucket: bucket, Writer: p.Identity(), Root: root, Piece: data}
-			rec, err := pc.Encode()
-			if err != nil {
-				return done + i, err
-			}
-			tx, err := carrier.Mint(ctx, p.wallet, p.wallet.Originator, params, rec, tree, vout+uint32(i))
-			if err != nil {
-				return done + i, err
-			}
-			beef, err := tx.AtomicBEEF(false)
-			if err != nil {
-				return done + i, err
-			}
-			it, err := p.outbox.add(tx.TxID().String(), "piece", beef, targets)
-			if err != nil {
-				return done + i, err
-			}
-			if ok, refused := p.outbox.sendAll(ctx, it, beef); len(ok)+len(refused) == 0 {
-				// Every target failed: the next put would only add to the
-				// backlog, so this one stops here. Its pieces stay in the
-				// outbox and are sent again.
-				return done + i + 1, fmt.Errorf("piece %s reached no target", short(it.ID))
-			}
+		if err := p.sendPieces(ctx, bucket, root, c, objs[done:done+batch], tree, vout, targets, b, byRef, &minted); err != nil {
+			return int(minted.Load()), err
 		}
 		done += batch
 	}
-	return done, nil
+	return int(minted.Load()), nil
+}
+
+// sendPieces mints and sends the carriers of objs on consecutive outputs of
+// tree from vout, PieceWorkers at a time, and returns the first failure
+// after every worker has stopped.
+func (p *Publisher) sendPieces(ctx context.Context, bucket string, root [32]byte, c Closure, objs [][32]byte,
+	tree *transaction.Transaction, vout uint32, targets []Target, b *outBatch, byRef bool, minted *atomic.Int64) error {
+	wctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	jobs := make(chan int)
+	var mu sync.Mutex
+	var first error
+	firstAt := len(objs)
+	var wg sync.WaitGroup
+	for w := 0; w < min(p.cfg.PieceWorkers, len(objs)); w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				// A carrier being sent is sent to the end: only new
+				// carriers stop after a failure.
+				err := p.sendPiece(ctx, bucket, root, c, objs[i], tree, vout+uint32(i), targets, b, byRef, minted)
+				if err != nil {
+					mu.Lock()
+					if i < firstAt {
+						first, firstAt = err, i
+					}
+					mu.Unlock()
+					cancel()
+				}
+			}
+		}()
+	}
+	for i := range objs {
+		if wctx.Err() != nil {
+			break
+		}
+		select {
+		case jobs <- i:
+		case <-wctx.Done():
+		}
+	}
+	close(jobs)
+	wg.Wait()
+	if first == nil && ctx.Err() != nil {
+		first = ctx.Err()
+	}
+	return first
+}
+
+// sendPiece mints one piece carrier, records it in the outbox and sends it.
+// Its transaction id is computed once and kept on the transaction, so the
+// BEEF and the outbox key hash the 4 MiB carrier no second time.
+func (p *Publisher) sendPiece(ctx context.Context, bucket string, root [32]byte, c Closure, h [32]byte,
+	tree *transaction.Transaction, out uint32, targets []Target, b *outBatch, byRef bool, minted *atomic.Int64) error {
+	data, err := c.Object(ctx, h)
+	if err != nil {
+		return fmt.Errorf("object %x: %w", h[:6], err)
+	}
+	pc := &storerec.Piece{Bucket: bucket, Writer: p.Identity(), Root: root, Piece: data}
+	rec, err := pc.Encode()
+	if err != nil {
+		return err
+	}
+	tx, err := carrier.Mint(ctx, p.wallet, p.wallet.Originator, carrierParams(storerec.PieceDerivation), rec, tree, out)
+	if err != nil {
+		return err
+	}
+	minted.Add(1)
+	txid := tx.TxID()
+	tx.SetTxHash(txid)
+	beef, err := tx.AtomicBEEF(false)
+	if err != nil {
+		return err
+	}
+	var it *outItem
+	if byRef {
+		it, err = p.outbox.addRef(b, txid.String(), "piece", beef, h, data, targets)
+	} else {
+		it, err = p.outbox.add(txid.String(), "piece", beef, targets)
+	}
+	if err != nil {
+		return err
+	}
+	data, rec = nil, nil
+	if ok, refused := p.outbox.sendAll(ctx, it, beef); len(ok)+len(refused) == 0 {
+		return fmt.Errorf("piece %s reached no target", short(it.ID))
+	}
+	return nil
 }
 
 // publishEntry mints the entry carrier on an entry tree output recorded

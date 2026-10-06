@@ -243,17 +243,7 @@ func cmdSettle(ctx context.Context, g *global, args []string) error {
 	return nil
 }
 
-func remitted(r *publish.Race) bool {
-	if r.Settlement == nil {
-		return true
-	}
-	for _, p := range r.Settlement.Payees {
-		if !p.Done() && r.Forwarder(p.Advertiser) == "" {
-			return false
-		}
-	}
-	return true
-}
+func remitted(r *publish.Race) bool { return r.Remitted() }
 
 const reclaimHelp = `usage: bstore reclaim [-entry TXID] [-unused]
 

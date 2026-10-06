@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -106,8 +107,10 @@ type Call struct {
 	Status int
 	Body   []byte
 	Paid   uint64
-	// Payment is the BRC-105 payment made, when one was.
+	// Payment is the BRC-105 payment made, when one was; Peer the
+	// identity key (hex) the BRC-104 session authenticated the answer as.
 	Payment *transaction.Transaction
+	Peer    string
 
 	retryAfter string
 }
@@ -120,15 +123,17 @@ var ErrOverBudget = errors.New("publish: the price is over the budget")
 // buyer's own state, never the answerer's failure.
 var ErrCannotPay = errors.New("publish: this identity cannot pay now")
 
-func (a *authClient) purse(ctx context.Context, maxPay uint64) *purse.Purse {
+// purse is the wallet of one call: it pays from pool, which is the
+// identity's pool or a payment pool of one small coin (paycoins.go).
+func (a *authClient) purse(ctx context.Context, maxPay uint64, pool *bwallet.Pool) *purse.Purse {
 	p := a.p
 	tip := uint32(0)
 	if h, err := p.cfg.Asset.BestHeader(ctx); err == nil {
 		tip = h.Height
 	}
 	newPayer := func() *producer.Payer {
-		return &producer.Payer{Pool: p.wallet.Pool, Tip: tip, Keys: map[string]*bwallet.Signer{p.signer.IdentityHex(): p.signer},
-			Kept: p.kept, Settler: p.cfg.Settler, Asset: p.cfg.Asset, Fees: p.cfg.Fees, Note: p.note}
+		return &producer.Payer{Pool: pool, Tip: tip, Keys: map[string]*bwallet.Signer{p.signer.IdentityHex(): p.signer},
+			Kept: p.kept, Settler: p.cfg.Settler, Asset: p.cfg.Asset, Fees: p.cfg.Fees, Note: p.note, Poll: p.cfg.Poll}
 	}
 	return &purse.Purse{Embedded: p.wallet, NewPayer: newPayer, Fees: p.cfg.Fees, MaxPay: maxPay,
 		Settler: p.cfg.Settler, Asset: p.cfg.Asset, Wait: 10 * time.Minute, Poll: 250 * time.Millisecond}
@@ -157,7 +162,23 @@ func (a *authClient) do(ctx context.Context, method, url string, headers map[str
 }
 
 func (a *authClient) once(ctx context.Context, method, url string, headers map[string]string, body []byte, maxPay uint64, max int64) (*Call, error) {
-	pu := a.purse(ctx, maxPay)
+	// A call that may pay takes a small coin of its own, when one is
+	// ready: a payment the payee refuses holds only that coin.
+	pool, done := a.p.wallet.Pool, func() {}
+	var coin *bwallet.Output
+	if maxPay > 0 {
+		pool, done, coin = a.p.payPool(ctx, maxPay)
+	}
+	defer done()
+	small := pool != a.p.wallet.Pool
+	if coin != nil {
+		// The coin's use is recorded before the call: a stop after a
+		// payment left and before it is recorded leaves this, and the coin
+		// is settled as an unanswered payment's would be.
+		a.p.noteIntent(*coin)
+		defer a.p.dropIntent(*coin)
+	}
+	pu := a.purse(ctx, maxPay, pool)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.af == nil {
@@ -172,7 +193,7 @@ func (a *authClient) once(ctx context.Context, method, url string, headers map[s
 		// coin comes back only once the node shows it unspent long after
 		// (ReconcilePayments).
 		if tx := pu.Settle(); tx != nil {
-			a.p.notePayment(tx, false)
+			a.p.notePayment(tx, false, small)
 		}
 		return nil, payErr(err)
 	}
@@ -181,12 +202,13 @@ func (a *authClient) once(ctx context.Context, method, url string, headers map[s
 		max = 1 << 20
 	}
 	b, rerr := io.ReadAll(io.LimitReader(res.Body, max+1))
-	c := &Call{Status: res.StatusCode, Body: b, retryAfter: res.Header.Get("Retry-After")}
+	c := &Call{Status: res.StatusCode, Body: b, retryAfter: res.Header.Get("Retry-After"),
+		Peer: strings.ToLower(res.Header.Get("x-bsv-auth-identity-key"))}
 	if rerr != nil || int64(len(b)) > max || res.StatusCode >= 400 {
 		// Not answered, or refused: a payment sent is still the payee's
 		// to broadcast, so it is kept as uncertain, never refunded.
 		if tx := pu.Settle(); tx != nil {
-			a.p.notePayment(tx, false)
+			a.p.notePayment(tx, false, small)
 			c.Payment = tx
 		}
 		if rerr != nil {
@@ -198,7 +220,7 @@ func (a *authClient) once(ctx context.Context, method, url string, headers map[s
 		return c, nil
 	}
 	if tx := pu.Settle(); tx != nil {
-		a.p.notePayment(tx, true)
+		a.p.notePayment(tx, true, small)
 		c.Payment = tx
 		if len(tx.Outputs) > 0 {
 			c.Paid = tx.Outputs[0].Satoshis
@@ -230,18 +252,54 @@ func payErr(err error) error {
 // Post sends a JSON body over BRC-104 to a front (a URL an advertisement
 // or a statement named), paying a 402 up to maxPay.
 func (p *Publisher) Post(ctx context.Context, url string, body []byte, maxPay uint64) (*Call, error) {
-	return p.frontAuth.do(ctx, http.MethodPost, url, map[string]string{"content-type": "application/json"}, body, maxPay, storerec.MaxSignedResponse)
+	return p.frontAuth.client(url).do(ctx, http.MethodPost, url, map[string]string{"content-type": "application/json"}, body, maxPay, storerec.MaxSignedResponse)
 }
 
 // Get sends a GET over BRC-104 and pays nothing.
 func (p *Publisher) Get(ctx context.Context, url string) (*Call, error) {
-	return p.frontAuth.do(ctx, http.MethodGet, url, nil, nil, 0, 1<<20)
+	return p.frontAuth.client(url).do(ctx, http.MethodGet, url, nil, nil, 0, 1<<20)
+}
+
+// authPool is one authClient per server (scheme and host): a client makes
+// its calls one at a time, and calls to different fronts (a race's
+// candidates) go at once.
+type authPool struct {
+	p  *Publisher
+	hc *http.Client
+	mu sync.Mutex
+	by map[string]*authClient
+}
+
+func newAuthPool(p *Publisher, hc *http.Client) *authPool {
+	return &authPool{p: p, hc: hc, by: map[string]*authClient{}}
+}
+
+// maxAuthClients bounds the servers kept; past it the pool starts again.
+const maxAuthClients = 256
+
+func (ap *authPool) client(raw string) *authClient {
+	key := raw
+	if u, err := neturl.Parse(raw); err == nil {
+		key = u.Scheme + "://" + u.Host
+	}
+	ap.mu.Lock()
+	defer ap.mu.Unlock()
+	if c := ap.by[key]; c != nil {
+		return c
+	}
+	if len(ap.by) >= maxAuthClients {
+		ap.by = map[string]*authClient{}
+	}
+	c := newAuthClient(ap.p, ap.hc)
+	ap.by[key] = c
+	return c
 }
 
 // CollectChange asks the node for the proof of every transaction whose
 // change the pool holds unproven (a payment this identity made), so that
 // change becomes spendable once it has mined.
 func (p *Publisher) CollectChange(ctx context.Context) {
+	p.proveCoins(ctx)
 	for _, txid := range p.wallet.Pool.UnprovenTxids() {
 		mp, height, err := p.cfg.Asset.Proof(ctx, txid)
 		if err != nil {
@@ -259,13 +317,16 @@ type PaymentRecord struct {
 	Coin     bwallet.Output `json:"coin"`
 	At       int64          `json:"at"`
 	Answered bool           `json:"answered,omitempty"`
+	// Small marks a fee coin taken from the payment coins, where it goes
+	// back.
+	Small bool `json:"small,omitempty"`
 }
 
 // paymentWait is how long a payment the node does not know is waited for
 // before its coin, when the node shows it unspent, goes back to the pool.
 const paymentWait = time.Hour
 
-func (p *Publisher) notePayment(tx *transaction.Transaction, answered bool) {
+func (p *Publisher) notePayment(tx *transaction.Transaction, answered, small bool) {
 	if len(tx.Inputs) == 0 || tx.Inputs[0].SourceTransaction == nil {
 		return
 	}
@@ -273,7 +334,7 @@ func (p *Publisher) notePayment(tx *transaction.Transaction, answered bool) {
 	coin := coinOf(mint.Input{Tx: in.SourceTransaction, Vout: in.SourceTxOutIndex})
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.st.Payments = append(p.st.Payments, PaymentRecord{Txid: tx.TxID().String(), Coin: coin, At: p.cfg.Now().Unix(), Answered: answered})
+	p.st.Payments = append(p.st.Payments, PaymentRecord{Txid: tx.TxID().String(), Coin: coin, At: p.cfg.Now().Unix(), Answered: answered, Small: small})
 	_ = p.saveLocked()
 }
 
@@ -283,36 +344,128 @@ func (p *Publisher) notePayment(tx *transaction.Transaction, answered bool) {
 // one whose coin something else spent is forgotten. It returns how many
 // are still open.
 func (p *Publisher) ReconcilePayments(ctx context.Context) int {
+	p.reconcileIntents(ctx)
 	p.mu.Lock()
 	pays := slices.Clone(p.st.Payments)
 	p.mu.Unlock()
-	var keep []PaymentRecord
+	settled := map[string]bool{}
 	for _, r := range pays {
 		if mp, height, err := p.cfg.Asset.Proof(ctx, r.Txid); err == nil {
 			_, _ = p.wallet.Pool.Prove(r.Txid, funding.BumpHex(mp), height)
+			settled[r.Txid] = true
 			continue
 		}
 		if p.cfg.Now().Sub(time.Unix(r.At, 0)) < paymentWait {
-			keep = append(keep, r)
 			continue
 		}
 		free, by, err := p.unspent(ctx, r.Coin.TxID, r.Coin.Vout)
 		switch {
 		case err != nil || (!free && by == r.Txid):
-			keep = append(keep, r)
 		case free:
+			// The coin goes back before the record goes: a stop between
+			// the two finds the record and returns the coin again, which
+			// the pool takes once.
 			p.dropChange(r.Txid)
-			_ = p.wallet.Pool.Return(r.Coin)
+			p.returnCoin(r.Coin, r.Small)
+			settled[r.Txid] = true
 			p.cfg.Logf("payment %s: never broadcast; its coin is back in the pool", short(r.Txid))
 		default:
 			p.dropChange(r.Txid)
+			settled[r.Txid] = true
 		}
 	}
+	// Only the records settled here go: one noted meanwhile stays.
 	p.mu.Lock()
+	defer p.mu.Unlock()
+	keep := p.st.Payments[:0:0]
+	for _, r := range p.st.Payments {
+		if !settled[r.Txid] {
+			keep = append(keep, r)
+		}
+	}
 	p.st.Payments = keep
 	_ = p.saveLocked()
-	p.mu.Unlock()
 	return len(keep)
+}
+
+// noteIntent records a payment coin taken for a call, before the call.
+func (p *Publisher) noteIntent(c bwallet.Output) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.st.Intents = append(p.st.Intents, PaymentRecord{Coin: c, At: p.cfg.Now().Unix(), Small: true})
+	_ = p.saveLocked()
+}
+
+// dropIntent forgets the record once the call has ended and any payment
+// is recorded.
+func (p *Publisher) dropIntent(c bwallet.Output) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.st.Intents = slices.DeleteFunc(p.st.Intents, func(r PaymentRecord) bool { return r.Coin.Outpoint() == c.Outpoint() })
+	_ = p.saveLocked()
+}
+
+// reconcileIntents settles the coins of calls a stop cut short, an hour
+// on: one the node shows unspent goes back to the payment coins; one spent
+// is forgotten.
+func (p *Publisher) reconcileIntents(ctx context.Context) {
+	p.mu.Lock()
+	ins := slices.Clone(p.st.Intents)
+	p.mu.Unlock()
+	done := map[string]bool{}
+	for _, r := range ins {
+		if p.cfg.Now().Sub(time.Unix(r.At, 0)) < paymentWait {
+			continue
+		}
+		free, _, err := p.unspent(ctx, r.Coin.TxID, r.Coin.Vout)
+		if err != nil {
+			continue
+		}
+		if free {
+			p.returnCoin(r.Coin, true)
+		}
+		done[r.Coin.Outpoint()] = true
+	}
+	if len(done) == 0 {
+		return
+	}
+	p.mu.Lock()
+	p.st.Intents = slices.DeleteFunc(p.st.Intents, func(r PaymentRecord) bool { return done[r.Coin.Outpoint()] })
+	_ = p.saveLocked()
+	p.mu.Unlock()
+}
+
+// ReleasePayment gives back the coin of a payment recorded as not
+// answered, at once: its payee signed a note that it did not take it (row
+// C30). The payment's change goes, and its fee coin returns to the pool.
+// It reports whether a payment was released.
+func (p *Publisher) ReleasePayment(txid string) bool {
+	p.mu.Lock()
+	var rec *PaymentRecord
+	for i := range p.st.Payments {
+		if p.st.Payments[i].Txid == txid {
+			r := p.st.Payments[i]
+			rec = &r
+			break
+		}
+	}
+	p.mu.Unlock()
+	if rec == nil {
+		return false
+	}
+	// The coin back first: a stop before the record goes returns it again,
+	// and the pool takes an outpoint once.
+	p.dropChange(txid)
+	p.returnCoin(rec.Coin, rec.Small)
+	p.mu.Lock()
+	p.st.Payments = slices.DeleteFunc(p.st.Payments, func(r PaymentRecord) bool { return r.Txid == txid })
+	err := p.saveLocked()
+	p.mu.Unlock()
+	if err != nil {
+		p.cfg.Logf("payment %s: %v", short(txid), err)
+	}
+	p.cfg.Logf("payment %s: its payee signed that it did not take it; its coin is back in the pool", short(txid))
+	return true
 }
 
 // dropChange removes from the pool the outputs of txid it holds.

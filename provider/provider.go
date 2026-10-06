@@ -161,6 +161,13 @@ type Provider struct {
 
 	hmu    sync.Mutex
 	hcache map[uint64]headerEntry
+	// noteMu orders a payment-not-taken note against taking the same
+	// payment: notTaken are the payments a note was signed for, refused
+	// from then on (row C30).
+	noteMu   sync.Mutex
+	notTaken map[string]bool
+	notesBy  map[string]int
+	notesDay string
 	// lastTip is the node's tip as last read; the Payer's Tip is set from
 	// it under mintMu only.
 	lastTip atomic.Uint32
@@ -261,6 +268,9 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 	var refused []string
 	for _, u := range st.Unsettleable {
 		refused = append(refused, u.Txid)
+	}
+	if p.notTaken, err = loadNotTaken(cfg.Data); err != nil {
+		return nil, fmt.Errorf("nottaken.jsonl: %w", err)
 	}
 	if p.ledger, err = openLedger(cfg.Data, opts.Now, refused); err != nil {
 		return nil, err

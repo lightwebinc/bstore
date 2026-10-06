@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lightwebinc/bcommon/chaintoken"
@@ -568,18 +569,38 @@ type frontAt struct {
 }
 
 // judge challenges, in rank order, every candidate still to be judged,
-// until K have passed.
+// until K have passed. The candidates are taken in waves: as many of the
+// best ranked still to be judged as passes are missing, challenged at
+// once; a wave whose candidates do not all pass is followed by the next.
+// No candidate is challenged while K better ranked ones could still pass,
+// so the race pays no more challenges than one at a time would; it only
+// waits less.
 func (p *Publisher) judge(ctx context.Context, r *Race, tip uint32, o RaceOptions) error {
 	e := r.entry
 	var blobs []chirp.Child
-	for _, c := range r.Ranked() {
-		if uint64(len(r.Passed())) >= e.Hold.K {
+	tried := map[*Cand]bool{}
+	for {
+		need := int(e.Hold.K) - len(r.Passed())
+		if need <= 0 {
 			return nil
 		}
-		switch c.Status {
-		case CandSeen, CandWaiting, CandPriced:
-		default:
-			continue
+		var wave []*Cand
+		for _, c := range r.Ranked() {
+			switch c.Status {
+			case CandSeen, CandWaiting, CandPriced:
+			default:
+				continue
+			}
+			if tried[c] {
+				continue
+			}
+			wave = append(wave, c)
+			if len(wave) == need {
+				break
+			}
+		}
+		if len(wave) == 0 {
+			return nil
 		}
 		if blobs == nil {
 			b, err := p.closureBlobs(ctx, e)
@@ -588,12 +609,53 @@ func (p *Publisher) judge(ctx context.Context, r *Race, tip uint32, o RaceOption
 			}
 			blobs = b
 		}
-		p.challengeCand(ctx, r, c, blobs, tip, o)
-		if err := p.saveRace(r); err != nil {
-			return err
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		var saveErr error
+		for _, c := range wave {
+			tried[c] = true
+			wg.Add(1)
+			go func(orig *Cand) {
+				defer wg.Done()
+				// The candidate is judged on a copy; the race is touched,
+				// and saved, only under mu.
+				mine := orig.clone()
+				sync := func() error {
+					mu.Lock()
+					defer mu.Unlock()
+					*orig = *mine.clone()
+					return p.saveRace(r)
+				}
+				outcome := func(n PublishedNote) {
+					mu.Lock()
+					r.Outcomes = append(r.Outcomes, n)
+					mu.Unlock()
+				}
+				p.challengeCand(ctx, r, mine, blobs, tip, o, sync, outcome)
+				if err := sync(); err != nil {
+					mu.Lock()
+					saveErr = err
+					mu.Unlock()
+				}
+			}(c)
+		}
+		wg.Wait()
+		if saveErr != nil {
+			return saveErr
 		}
 	}
-	return nil
+}
+
+// clone is a deep copy of a candidate.
+func (c *Cand) clone() *Cand {
+	d := *c
+	d.Attempts = slices.Clone(c.Attempts)
+	d.BadFronts = slices.Clone(c.BadFronts)
+	if c.Pending != nil {
+		pd := *c.Pending
+		d.Pending = &pd
+	}
+	return &d
 }
 
 // closureBlobs are the entry's blob references: from the local store's
@@ -652,9 +714,28 @@ type PendingDraw struct {
 	Tries    int    `json:"tries"`
 }
 
-func (p *Publisher) challengeCand(ctx context.Context, r *Race, c *Cand, blobs []chirp.Child, tip uint32, o RaceOptions) {
+// challengeCand gives a candidate its next draw. A front that answers the
+// draw with no challenge route (404, 410) has answered it: the draw counts
+// (row C23: only no response, a server error, a price or a seed refusal
+// leaves a draw unanswered), the front is not asked again, and the next
+// draw goes at once to the next front, within the same step. save records
+// the candidate in the race, durably; outcome notes an outcome record
+// published.
+func (p *Publisher) challengeCand(ctx context.Context, r *Race, c *Cand, blobs []chirp.Child, tip uint32, o RaceOptions,
+	save func() error, outcome func(PublishedNote)) {
 	ctx, cancel := context.WithTimeout(ctx, candBudget)
 	defer cancel()
+	for range maxDraws + maxFronts {
+		if !p.drawOnce(ctx, r, c, blobs, tip, o, save, outcome) {
+			return
+		}
+	}
+}
+
+// drawOnce makes or resends one draw and reports whether the next front
+// should be asked at once.
+func (p *Publisher) drawOnce(ctx context.Context, r *Race, c *Cand, blobs []chirp.Child, tip uint32, o RaceOptions,
+	save func() error, outcome func(PublishedNote)) bool {
 	e := r.entry
 	adv, _ := hex.DecodeString(c.Advertiser)
 	note := func(a Attempt) {
@@ -679,7 +760,7 @@ func (p *Publisher) challengeCand(ctx context.Context, r *Race, c *Cand, blobs [
 	if c.Draws >= maxDraws {
 		c.Status = CandFailed
 		note(Attempt{Outcome: "failed", Why: fmt.Sprintf("no pass in %d draws", maxDraws)})
-		return
+		return false
 	}
 	var f frontAt
 	if pd := c.Pending; pd != nil {
@@ -689,7 +770,7 @@ func (p *Publisher) challengeCand(ctx context.Context, r *Race, c *Cand, blobs [
 		fronts := p.fronts(ctx, r, c)
 		if len(fronts) == 0 {
 			note(Attempt{Outcome: "waiting", Why: "no front to answer for the advertiser"})
-			return
+			return false
 		}
 		f = fronts[0]
 	}
@@ -702,12 +783,12 @@ func (p *Publisher) challengeCand(ctx context.Context, r *Race, c *Cand, blobs [
 	if t.MinAge > 1 && depth < int64(t.MinAge) && o.Budget == 0 {
 		c.Status = CandWaiting
 		note(Attempt{Front: f.url, Outcome: "waiting", Why: fmt.Sprintf("the hold output is %d deep, the provider's minAge is %d", depth, t.MinAge)})
-		return
+		return false
 	}
 	if t.Known && e.Hold.Satoshis < t.MinBounty && o.Budget == 0 {
 		c.Status = CandPriced
 		note(Attempt{Front: f.url, Outcome: "priced", Why: fmt.Sprintf("the bounty is below the provider's minimum of %d", t.MinBounty)})
-		return
+		return false
 	}
 	n := min(e.Hold.CheckC, t.FreeC)
 	ch := &Challenge{Bucket: r.Bucket, Root: e.Root, ProofRoot: e.ProofRoot, Size: e.Size, Entry: r.Entry,
@@ -721,15 +802,15 @@ func (p *Publisher) challengeCand(ctx context.Context, r *Race, c *Cand, blobs [
 		_, raw, err := p.NewRequest(ctx, ch)
 		if err != nil {
 			note(Attempt{Front: f.url, Outcome: "not asked", Why: err.Error()})
-			return
+			return false
 		}
 		ch.Request = raw
 		// The draw is recorded before it is sent: a run that stops after
 		// sending sends the same request again, never a fresh one.
 		c.Pending = &PendingDraw{Request: hex.EncodeToString(raw), Front: f.url, Answerer: hex.EncodeToString(f.answerer)}
-		if err := p.saveRace(r); err != nil {
+		if err := save(); err != nil {
 			c.Pending = nil
-			return
+			return false
 		}
 	}
 	res, err := p.Challenge(ctx, ch, o.Fetch)
@@ -739,11 +820,11 @@ func (p *Publisher) challengeCand(ctx context.Context, r *Race, c *Cand, blobs [
 		at.Outcome, at.Why = "priced", "the provider's price is over the budget"
 		note(at)
 		c.Status = CandPriced
-		return
+		return false
 	case err != nil:
 		at.Outcome, at.Why = "not asked", err.Error()
 		note(at)
-		return
+		return false
 	}
 	at.Outcome, at.Why, at.Paid = OutcomeName(res.Outcome), res.Why, res.Paid
 	note(at)
@@ -753,7 +834,19 @@ func (p *Publisher) challengeCand(ctx context.Context, r *Race, c *Cand, blobs [
 	switch {
 	case res.Status == http.StatusPaymentRequired:
 		c.Status = CandPriced
-		return
+		return false
+	case res.Status == http.StatusNotFound || res.Status == http.StatusGone:
+		// The front has no challenge route: an answer, final for this
+		// front. The draw counts and the next front is asked now.
+		c.BadFronts = append(c.BadFronts, f.url)
+		spend(fmt.Sprintf("the front answered %d: it has no challenge route", res.Status))
+		if c.Draws >= maxDraws {
+			c.Status = CandFailed
+			note(Attempt{Outcome: "failed", Why: fmt.Sprintf("no pass in %d draws", maxDraws)})
+			return false
+		}
+		c.Status = CandSeen
+		return true
 	case !answered:
 		// Not answered: the same request goes again later.
 		c.Pending.Tries++
@@ -768,7 +861,7 @@ func (p *Publisher) challengeCand(ctx context.Context, r *Race, c *Cand, blobs [
 		if c.Status != CandFailed {
 			c.Status = CandSeen
 		}
-		return
+		return false
 	}
 	c.Pending = nil
 	c.Draws++
@@ -776,7 +869,7 @@ func (p *Publisher) challengeCand(ctx context.Context, r *Race, c *Cand, blobs [
 	case res.Outcome == storerec.OutcomePass:
 		c.Status, c.Front, c.Answerer = CandPassed, f.url, hex.EncodeToString(f.answerer)
 		p.cfg.Logf("race %s: advertiser %s passed its settlement challenge (c = %d)", short(r.Entry), short(c.Advertiser), ch.C)
-		return
+		return false
 	case res.Outcome == storerec.OutcomeUnretrievable || own:
 		// An unretrievable sample is about the advertiser's URL, whoever
 		// answered; any other failure is the answerer's, here the
@@ -797,10 +890,11 @@ func (p *Publisher) challengeCand(ctx context.Context, r *Race, c *Cand, blobs [
 	if o.Publish && res.Status == http.StatusOK {
 		if rec := res.OutcomeRecord(r.Bucket); rec != nil {
 			if txid, err := p.PublishOutcome(ctx, rec); err == nil {
-				r.Outcomes = append(r.Outcomes, PublishedNote{Advertiser: c.Advertiser, Outcome: at.Outcome, Txid: txid})
+				outcome(PublishedNote{Advertiser: c.Advertiser, Outcome: at.Outcome, Txid: txid})
 			} else {
 				p.cfg.Logf("race %s: the outcome was not published: %v", short(r.Entry), err)
 			}
 		}
 	}
+	return false
 }
