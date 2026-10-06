@@ -47,7 +47,7 @@ spending one mined funding output.
 | A piece carrier | the blob plus about 1.2 KB and 49 bytes per output of its funding tree: about 4.3 KB over the blob on the default 64-output piece tree, so a 100 MiB put delivers about 0.1 % above its content to each provider | contract arithmetic |
 | The hold output's transaction | 240 and 241 bytes, 495 satoshis of fee, for one hold output (up to 16 a transaction when minted ahead) | measured |
 | The bounty | the writer's choice; the test runs used 30,000 satoshis, `t = 3`, `K = 3` | set by the writer |
-| A 100 MiB `PutObject` through the gateway | 19.4 to 26.1 s from the first byte to the `200` in four runs with hold outputs and funding trees ready; 41.0 and 56.9 s in two runs where the gateway minted a funding tree during the put (a block) | measured (6 runs) |
+| A 100 MiB `PutObject` through the gateway | 9.8 s from the first byte to the `200`, with no block wait (hold outputs and funding trees minted ahead) | measured (v0.3.0) |
 
 ## The hold race and the bounty
 
@@ -57,7 +57,7 @@ spending one mined funding output.
 | Payout shares | rank `i` of `k` paid gets `floor(R * sqrt(k - i + 1) / S)`, the remainder to rank 1, summing to exactly the hold output | contract |
 | Shares measured | 12,533 / 10,232 / 7,235 of 30,000 for three ranks (also 11,716 / 8,284 of 20,000 for two in the end-to-end test) | measured |
 | The settlement transaction | 406 and 407 bytes, 446 satoshis of fee, three payees; the fee from another coin, never the hold output | measured |
-| The race, three advertisers seen in one look, each passing a free settlement challenge of `c = 30` | 7.9 s for `holds -watch` to close it; `settle` 13.3 s including its block | measured |
+| The race, three advertisers seen in one look, each passing a free settlement challenge of `c = 30` | 0.9 s for `holds -watch`, the race already judged in the background by the gateway; `settle` 18.9 s, one block wait | measured (v0.3.0) |
 | A settlement challenge's `c` | `min(checkC, freeC)`; 30 when a provider's terms cannot be read | contract (C19) |
 | Draws | two per candidate over the whole race, each sent again unchanged until its seed leaves the window | contract (C23) |
 | Race window | `race_window_seconds`, default 3,600 | set |
@@ -118,14 +118,14 @@ every host.
 | A token | 65,536 bytes encoded, 16 writers, 1,024 changes and 1,024 consumed; `anchor` splits a larger interval | contract |
 | A token on chain | 616 to 727 bytes, 620 to 731 satoshis | measured (4 tokens) |
 | Cadence | when the owner runs `anchor`, at most one token a block: each spends the last and is minted only once the last is mined in the owner's headers. Until then a put is pending: readable at the writing gateway, and as a claim by `pending` | contract |
-| An anchoring run | 22.0 s for one change, 32.1 s for a delete (each a block and both hosts) | measured |
+| An anchoring run | 19.7 s for one change (v0.3.0), 32.1 s for a delete (each a block and both hosts) | measured |
 | Its walk | 16,384 `unanchored` pages a writer and host, ten minutes in all | set |
 
 ## Reading
 
 | What | Value | Kind |
 | --- | --- | --- |
-| A 100 MiB `GetObject` at a gateway with no copy, every blob held to its hash before it is sent | 3.6 s | measured |
+| A 100 MiB `GetObject` at a gateway with no copy, every blob held to its hash before it is sent | 3.4 s | measured (v0.3.0) |
 | `bstore get -proof-root` of the same object | 3.7 s | measured |
 | `HeadObject`, `ListObjectsV2` at that gateway | 1.7 s, 1.6 s (the chain walked and proven each time) | measured |
 | Advertisers asked per root | 256 (four pages); one serving wrong bytes, failing or hanging is named and asked last | set |
