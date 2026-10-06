@@ -73,7 +73,10 @@ topics tm_bstore_photos_hmqzvtkwrx tm_bstoreblob_photos_hmqzvtkwrx
 of one output under `derive(owner, "chain")` and the first token spending
 it, naming the writers, and adds the chain to `config.json`. Each is
 recorded before it is sent; a run that stops part way is finished by running
-`bucket new` again with the identifier it printed. The `served` line is what
+`bucket new` again with the identifier it printed. A mined first token a
+host has not taken yet (it does not carry the bucket's topic yet) exits 3
+and is delivered by `sync`; one a host refuses exits 1 and is never sent
+there again, since a refusal of the same bytes is final. The `served` line is what
 a host's operator adds to its served chains. `bucket add BUCKET -owner KEY
 -id HEX` names a chain someone else owns, to read it or write to it.
 
@@ -217,7 +220,11 @@ the same bytes and never builds a second settlement for the hold output.
 Once it mines, each payee's remittance goes, unicast, to the `settle` route
 of the advertiser's own front, derived from its advertisement, never to a
 front that answered for it; `settle` again resends any a payee has not
-taken. A settlement that can never mine (a fee coin spent elsewhere) is set
+taken. A payee whose output the node shows spent has its share and is owed
+nothing more, remitted or not. A payee that passed at a front other than
+its own (a bridge in front of an incumbent UHRP host) has no settle route
+of its own: the front forwards the settlement to it (C28), so its
+remittance is reported as forwarded and not counted as owed. A settlement that can never mine (a fee coin spent elsewhere) is set
 aside and the next `settle` builds another; a settlement a miner re-encoded
 is taken as the one sent. A settlement is made only
 while the tip is below the deadline.
@@ -314,7 +321,11 @@ advertisement; 1 an answer that does not check; 2 a price over the budget.
 - `due` lists what is owed, and exits 3 when anything is: undelivered
   objects, open races with the blocks left to their deadline, settlements
   not mined or not remitted, bounties to reclaim, entries no token has
-  named, tokens recorded and not published.
+  named, tokens recorded and not published. It asks the node about each
+  unremitted payee's output first: a spent one is done. A forwarded
+  payee's share (above) is listed and not owed. A claim by an incumbent's
+  operator (`bstore-bridge claim`) is not visible from here: it changes
+  nothing on chain until the incumbent's wallet spends the output.
 
 ## The kill switch
 
@@ -347,6 +358,9 @@ Everything printed that someone else wrote (keys, URLs, a host's or a
 provider's words) is filtered for the terminal (bcommon `termsafe`).
 
 ## Limits
+
+Every bound, what each operation costs and the known limits are in
+[limits.md](limits.md); the command line's own:
 
 | What | Bound |
 | --- | --- |

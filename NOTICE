@@ -1,0 +1,33 @@
+bstore
+Copyright 2026 Lightweb Inc. (https://lightweb.net)
+
+=========================================================================
+
+bstore is object storage as a market on the BSV blockchain's overlay
+hosts. A writer publishes an object once, as a CHIRP closure, with a
+signed entry on its bucket's records topic; storage providers receive
+the same bytes, advertise what they hold with UHRP advertisements, and
+race for a hold bounty paid by rank to the first that pass a possession
+challenge. A bucket's owner keeps a chain of mined tokens committing to
+the whole key map, so a reader proves what a key names, that a key is
+absent and that a listing page is complete. Readers speak S3 through a
+gateway that verifies every byte before it is sent.
+
+=========================================================================
+Third-Party Standards
+
+  BRC-22:  Overlay Network Data Synchronization
+  BRC-24:  Overlay Network Lookup Services
+  BRC-26:  Universal Hash Resolution Protocol
+  BRC-29:  Simple Authenticated BSV P2PKH Payment Protocol
+  BRC-42:  BSV Key Derivation Scheme (BKDS)
+  BRC-62:  Background Evaluation Extended Format (BEEF) Transactions
+  BRC-103: Peer-to-Peer Mutual Authentication and Certificate Exchange Protocol
+  BRC-104: HTTP Transport for BRC-103 Mutual Authentication
+  BRC-105: HTTP Service Monetization Framework
+  BRC-167: Chunked, Hashed, Interleaved Resolution Protocol (CHIRP)
+  BRC-178: Race-Settled Collection Markets for Overlay Lookups and Message Boxes
+
+Third-party software is listed, with its licence text, in
+LICENSE-THIRD-PARTY (Go) and in host/package-lock.json (the host module,
+which inlines bcommon and imports the host's own @bsv/sdk).

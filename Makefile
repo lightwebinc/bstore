@@ -8,12 +8,19 @@
 #
 #	make verify NODE=/path/to/node24
 
-.PHONY: verify test go-test go-oracle ts-test ts-check ts-build module module-test e2e provider-e2e s3-e2e publisher-e2e node-check vet fmt-check deps-check vectors vectors-check fuzz
+.PHONY: verify test go-test go-oracle ts-test ts-check ts-build module module-test e2e provider-e2e s3-e2e publisher-e2e node-check vet fmt-check deps-check vectors vectors-check fuzz bstore bstore-provider devchain licences licences-update docker-build docker-build-host docker-smoke docker-smoke-host quickstart-check
 
 NODE ?= node
 TSC := $(NODE) node_modules/typescript/bin/tsc
 
-verify: fmt-check vet deps-check ts-check vectors-check test
+IMAGE          ?= ghcr.io/lightwebinc/bstore
+PROVIDER_IMAGE ?= ghcr.io/lightwebinc/bstore-provider
+DEVCHAIN_IMAGE ?= ghcr.io/lightwebinc/bstore-devchain
+HOST_IMAGE     ?= ghcr.io/lightwebinc/bstore-host
+
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
+verify: fmt-check vet deps-check licences ts-check vectors-check test
 
 # Go and TypeScript. Both read the Go-generated vectors under
 # testdata/vectors: the TypeScript tests decode, re-encode, refuse, fold,
@@ -35,6 +42,26 @@ vet:
 
 fmt-check:
 	@test -z "$$(gofmt -l .)" || { echo "gofmt:"; gofmt -l .; exit 1; }
+
+# The commands, into bin/, stamped with the version.
+bstore:
+	GOWORK=off go build -ldflags "-X main.version=$(VERSION)" -o bin/bstore ./cmd/bstore
+
+bstore-provider:
+	GOWORK=off go build -ldflags "-X main.version=$(VERSION)" -o bin/bstore-provider ./cmd/bstore-provider
+
+# The local stand-in chain the quickstart runs on.
+devchain:
+	GOWORK=off go build -ldflags "-X main.version=$(VERSION)" -o bin/devchain ./cmd/devchain
+
+# LICENSE-THIRD-PARTY is generated from what the binaries link: every
+# module's licence text travels with a binary or an image built here.
+# licences fails when the file is stale.
+licences:
+	GOWORK=off python3 scripts/gen-third-party-licenses.py . --check
+
+licences-update:
+	GOWORK=off python3 scripts/gen-third-party-licenses.py .
 
 # The direct dependencies, asserted rather than intended:
 #  - go.mod and go.sum are tidy, and no module is replaced;
@@ -160,3 +187,63 @@ publisher-e2e: module
 	@test -n "$(REFERENCE_HOST)" || { echo "set REFERENCE_HOST=/path/to/reference-host"; exit 1; }
 	BSTORE_E2E_REFHOST=$(abspath $(REFERENCE_HOST)) BSTORE_E2E_NODE=$(abspath $(shell command -v $(NODE))) \
 		GOWORK=off go test -count=1 -timeout 45m -run '^TestPublisherE2E$$' -v ./cmd/bstore/
+
+# The images, built and tagged locally, each as $(VERSION) and latest.
+# Nothing here pushes. docker-build makes the command and gateway image, the
+# provider image and the local chain; the host image adds the bstore module
+# to a reference overlay host image:
+#
+#	make docker-build-host REFERENCE_HOST_IMAGE=<reference overlay host image>
+docker-build:
+	docker build --build-arg VERSION=$(VERSION) -t $(IMAGE):$(VERSION) -t $(IMAGE):latest .
+	docker build --build-arg VERSION=$(VERSION) --target provider -t $(PROVIDER_IMAGE):$(VERSION) -t $(PROVIDER_IMAGE):latest .
+	docker build --build-arg VERSION=$(VERSION) --target devchain -t $(DEVCHAIN_IMAGE):$(VERSION) -t $(DEVCHAIN_IMAGE):latest .
+	@docker image ls --format '{{.Repository}}:{{.Tag}}  {{.Size}}' | grep -E '^($(IMAGE)|$(PROVIDER_IMAGE)|$(DEVCHAIN_IMAGE)):$(VERSION) '
+
+docker-build-host:
+	@test -n "$(REFERENCE_HOST_IMAGE)" || { echo "set REFERENCE_HOST_IMAGE to the reference overlay host image the module is added to"; exit 1; }
+	docker build -f host/Dockerfile --build-arg REFERENCE_HOST_IMAGE=$(REFERENCE_HOST_IMAGE) -t $(HOST_IMAGE):$(VERSION) -t $(HOST_IMAGE):latest .
+	@docker image ls --format '{{.Repository}}:{{.Tag}}  {{.Size}}' | grep -E '^$(HOST_IMAGE):$(VERSION) '
+
+# The images with no network at all: each command's stamped version and
+# help, a first run of each in a fresh named volume mounted where the
+# documentation says, and a provider that refuses a configuration with an
+# unknown key.
+docker-smoke: docker-build
+	@set -eu; id=bstore-smoke-$$$$; \
+	docker volume create $$id-home >/dev/null; docker volume create $$id-prov >/dev/null; \
+	trap 'docker volume rm -f $$id-home $$id-prov >/dev/null' EXIT; \
+	echo "== versions"; \
+	out=$$(docker run --rm --network none $(IMAGE):$(VERSION) -version); echo "$$out"; [ "$$out" = "bstore $(VERSION)" ]; \
+	out=$$(docker run --rm --network none $(PROVIDER_IMAGE):$(VERSION) version); echo "$$out"; [ "$$out" = "bstore-provider $(VERSION)" ]; \
+	out=$$(docker run --rm --network none $(DEVCHAIN_IMAGE):$(VERSION) -version); echo "$$out"; [ "$$out" = "devchain $(VERSION)" ]; \
+	echo "== help"; docker run --rm --network none $(IMAGE):$(VERSION) help | head -1; \
+	docker run --rm --network none $(IMAGE):$(VERSION) s3d -h 2>&1 | head -1; \
+	docker run --rm --network none $(PROVIDER_IMAGE):$(VERSION) -h | head -1; \
+	echo "== init in a named volume"; \
+	docker run --rm --network none -v $$id-home:/home/nonroot/.bstore $(IMAGE):$(VERSION) init -network regtest \
+		-node http://192.0.2.1 -settle rpc:http://192.0.2.1/rpc -headers http://192.0.2.1 -hosts http://192.0.2.1 | grep -E '^(identity|config) '; \
+	docker run --rm --network none -v $$id-prov:/var/lib/bstore-provider $(PROVIDER_IMAGE):$(VERSION) init -data /var/lib/bstore-provider | grep '^identity '; \
+	echo "== a provider configuration with an unknown key is refused"; \
+	rc=0; out=$$(printf '{"data":"/var/lib/bstore-provider","nope":1}' | docker run --rm -i --network none --entrypoint /usr/local/bin/bstore-provider \
+		$(PROVIDER_IMAGE):$(VERSION) run -config /dev/stdin 2>&1) || rc=$$?; echo "$$out"; \
+	[ "$$rc" = 2 ] || { echo "docker-smoke: want exit 2, got $$rc"; exit 1; }; \
+	echo "docker-smoke: ok"
+
+# The host image loads the module with the host's own @bsv/sdk, and refuses
+# to start with no bucket configured.
+docker-smoke-host:
+	@set -eu; img=$(HOST_IMAGE):$(VERSION); \
+	echo "== the module imports from the host's node_modules"; \
+	docker run --rm --network none --entrypoint node $$img -e \
+		"import('/app/modules/bstore/bstore-module.js').then(m => { if (typeof m.default !== 'function') process.exit(1); console.log('bstore module: default export is the factory') })"; \
+	echo "== no BSTORE_BUCKETS: exit 64 with the reason"; \
+	rc=0; out=$$(docker run --rm --network none $$img 2>&1) || rc=$$?; echo "$$out"; \
+	[ "$$rc" = 64 ] && echo "$$out" | grep -q 'BSTORE_BUCKETS is empty' || { echo "docker-smoke-host: want exit 64, got $$rc"; exit 1; }; \
+	echo "docker-smoke-host: ok ($$img)"
+
+# QUICKSTART.md, run as written, in a throwaway copy of the quickstart
+# compose project. Needs this repository's four images (docker-build,
+# docker-build-host) and the AWS CLI v2 (aws) on PATH.
+quickstart-check:
+	scripts/quickstart-check.sh

@@ -1,0 +1,5 @@
+.git
+bin
+host/node_modules
+host/dist
+**/*.test

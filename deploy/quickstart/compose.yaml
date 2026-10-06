@@ -1,0 +1,261 @@
+# The quickstart: bstore on one machine, in minutes, with no coin. A local
+# chain stands in for the network; two overlay hosts run the bstore module
+# over one MySQL, host-a with a terms route that prices the bulk questions;
+# two storage providers hold the objects and race for the bounty; an S3
+# gateway writes and reads for S3 clients; and the bstore command runs
+# beside them as the bucket's owner and a reader, in unicast mode, so every
+# record goes to both hosts and every piece to both providers.
+# QUICKSTART.md walks through it.
+#
+# The chain (bstore-devchain) has no proof of work and no peers, and nothing
+# it mines is money: it is for trying bstore, never for a network. The
+# certificates are a throwaway CA's, and every password and secret here is
+# a throwaway meant to be seen.
+#
+# Optional: BSTORE_IMAGE, BSTORE_PROVIDER_IMAGE, BSTORE_HOST_IMAGE and
+# DEVCHAIN_IMAGE name the images (default: the published ones, tag latest).
+
+name: bstore-quickstart
+
+x-host: &host
+  image: ${BSTORE_HOST_IMAGE:-ghcr.io/lightwebinc/bstore-host:latest}
+  depends_on:
+    db:
+      condition: service_healthy
+    chain:
+      condition: service_started
+  restart: unless-stopped
+
+x-provider: &provider
+  image: ${BSTORE_PROVIDER_IMAGE:-ghcr.io/lightwebinc/bstore-provider:latest}
+  command: ["run", "-config", "/etc/bstore/provider.json"]
+  restart: unless-stopped
+
+# Every command line tool reaches the providers by their https URLs, signed
+# by the quickstart's CA, at private addresses.
+x-cli: &cli
+  image: ${BSTORE_IMAGE:-ghcr.io/lightwebinc/bstore:latest}
+  profiles: [cli]
+
+services:
+  chain:
+    image: ${DEVCHAIN_IMAGE:-ghcr.io/lightwebinc/bstore-devchain:latest}
+    volumes:
+      - chain:/var/lib/devchain
+    restart: unless-stopped
+
+  # A throwaway CA and a certificate for each provider (an advertised URL
+  # must be https), written once into the `certs` volume.
+  certs:
+    image: ${DEVCHAIN_IMAGE:-ghcr.io/lightwebinc/bstore-devchain:latest}
+    profiles: [cli]
+    entrypoint: ["/usr/local/bin/devchain", "certs", "-dir", "/certs", "-names", "provider-a,provider-b"]
+    volumes:
+      - certs:/certs
+
+  db:
+    image: mysql:9@sha256:30a0abfa7b502a496e12339b54cd07aaa70363396dc4b8e8a72a92804a505cd6
+    environment:
+      MYSQL_DATABASE: overlay_a
+      MYSQL_USER: overlay
+      MYSQL_PASSWORD: quickstart
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+    command:
+      - --innodb-buffer-pool-size=128M
+      - --performance-schema=OFF
+    configs:
+      - source: second-database
+        target: /docker-entrypoint-initdb.d/second-database.sql
+    volumes:
+      - db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uoverlay -pquickstart --silent"]
+      interval: 3s
+      timeout: 5s
+      retries: 60
+    restart: unless-stopped
+
+  # host-a sells the bulk questions on its terms route (port 8094), paid to
+  # BSTORE_PAYEE_KEY. Both hosts carry the bucket's records topic and serve
+  # its chain.
+  host-a:
+    <<: *host
+    environment:
+      BSTORE_BUCKETS: ${BSTORE_BUCKETS:-}
+      BSTORE_SERVED: ${BSTORE_SERVED:-}
+      BSTORE_LISTEN: 0.0.0.0:8094
+      BSTORE_PRICES: history=5,chain=10,export=20,outcome-history=3,outcome-history-of=4
+      BSTORE_PAYEE_KEY: ${BSTORE_PAYEE_KEY:-}
+      OVERLAY_KNEX_URL: mysql://overlay:quickstart@db:3306/overlay_a
+      OVERLAY_CHAIN_TRACKER_URL: http://chain:8080
+    volumes:
+      - state-a:/var/lib/bstore
+    ports:
+      - "127.0.0.1:8591:8080"
+      - "127.0.0.1:8594:8094"
+
+  host-b:
+    <<: *host
+    environment:
+      BSTORE_BUCKETS: ${BSTORE_BUCKETS:-}
+      BSTORE_SERVED: ${BSTORE_SERVED:-}
+      OVERLAY_KNEX_URL: mysql://overlay:quickstart@db:3306/overlay_b
+      OVERLAY_CHAIN_TRACKER_URL: http://chain:8080
+    volumes:
+      - state-b:/var/lib/bstore
+    ports:
+      - "127.0.0.1:8592:8080"
+
+  # Two storage providers. `docker compose run --rm provider-a init -data
+  # /var/lib/bstore-provider` makes each identity first.
+  provider-a:
+    <<: *provider
+    configs:
+      - source: provider-a
+        target: /etc/bstore/provider.json
+    volumes:
+      - provider-a:/var/lib/bstore-provider
+      - certs:/certs:ro
+
+  provider-b:
+    <<: *provider
+    configs:
+      - source: provider-b
+        target: /etc/bstore/provider.json
+    volumes:
+      - provider-b:/var/lib/bstore-provider
+      - certs:/certs:ro
+
+  # The S3 gateway, on 127.0.0.1:9000 (BSTORE_S3_PORT): access key QUICKSTARTACCESSKEY,
+  # secret quickstart-secret-not-secret, writing as the identity `gw`.
+  gateway:
+    <<: *cli
+    profiles: []
+    command: ["s3d", "run", "-config", "/etc/bstore/gateway.json"]
+    configs:
+      - source: gateway
+        target: /etc/bstore/gateway.json
+    volumes:
+      - gateway:/var/lib/bstore-s3d
+      - certs:/certs:ro
+    ports:
+      - "127.0.0.1:${BSTORE_S3_PORT:-9000}:9000"
+    restart: unless-stopped
+
+  # The bstore command, run with `docker compose run --rm -T bstore
+  # <command>`. Its homes (identities, coin pools, races, state) are in the
+  # named volume `home`, one directory each, named by BSTORE_HOME.
+  bstore:
+    <<: *cli
+    volumes:
+      - home:/home/nonroot/.bstore
+      - certs:/certs:ro
+
+  # The bstore command on the gateway's identity, for its hold races: run
+  # with the gateway stopped (`docker compose stop gateway`), since one
+  # process uses an identity at a time.
+  gw:
+    <<: *cli
+    entrypoint: ["/usr/local/bin/bstore", "-home", "/var/lib/bstore-s3d/identities/gw"]
+    configs:
+      - source: gw-home
+        target: /var/lib/bstore-s3d/identities/gw/config.json
+    volumes:
+      - gateway:/var/lib/bstore-s3d
+      - certs:/certs:ro
+
+configs:
+  second-database:
+    content: |
+      CREATE DATABASE IF NOT EXISTS overlay_b;
+      GRANT ALL PRIVILEGES ON overlay_b.* TO 'overlay'@'%';
+
+  provider-a:
+    content: |
+      {
+        "data": "/var/lib/bstore-provider",
+        "listen": "0.0.0.0:8095",
+        "tls_cert": "/certs/provider-a.pem",
+        "tls_key": "/certs/provider-a-key.pem",
+        "public_url": "https://provider-a:8095/store",
+        "node": "http://chain:8080",
+        "settle": "rpc:http://chain:8080/rpc",
+        "headers": "http://chain:8080",
+        "hosts": ["http://host-a:8080", "http://host-b:8080"],
+        "buckets": [{"bucket": "${BSTORE_BUCKETS:-none}"}],
+        "tree_count": 8,
+        "terms": {"challenge_base": 10, "challenge_per_sample": 1, "free_c": 30, "min_bounty": 1000, "renew_per_gib_day": 100, "renew_minimum": 300},
+        "limits": {"handshakes_per_addr_per_sec": 50, "handshake_addr_burst": 100, "challenge_burst": 20,
+                   "object_reads_per_addr_per_sec": 1000, "object_read_burst": 1000, "submits_per_addr_per_sec": 1000, "submit_burst": 2000}
+      }
+
+  provider-b:
+    content: |
+      {
+        "data": "/var/lib/bstore-provider",
+        "listen": "0.0.0.0:8095",
+        "tls_cert": "/certs/provider-b.pem",
+        "tls_key": "/certs/provider-b-key.pem",
+        "public_url": "https://provider-b:8095/store",
+        "node": "http://chain:8080",
+        "settle": "rpc:http://chain:8080/rpc",
+        "headers": "http://chain:8080",
+        "hosts": ["http://host-a:8080", "http://host-b:8080"],
+        "buckets": [{"bucket": "${BSTORE_BUCKETS:-none}"}],
+        "tree_count": 8,
+        "terms": {"challenge_base": 12, "challenge_per_sample": 1, "free_c": 30, "min_bounty": 1000, "renew_per_gib_day": 120, "renew_minimum": 300},
+        "limits": {"handshakes_per_addr_per_sec": 50, "handshake_addr_burst": 100, "challenge_burst": 20,
+                   "object_reads_per_addr_per_sec": 1000, "object_read_burst": 1000, "submits_per_addr_per_sec": 1000, "submit_burst": 2000}
+      }
+
+  gateway:
+    content: |
+      {
+        "data": "/var/lib/bstore-s3d",
+        "listen": "0.0.0.0:9000",
+        "node": "http://chain:8080",
+        "settle": "rpc:http://chain:8080/rpc",
+        "headers": "http://chain:8080",
+        "hosts": ["http://host-a:8080", "http://host-b:8080"],
+        "quorum": 2,
+        "providers": ["https://provider-a:8095", "https://provider-b:8095"],
+        "ca": "/certs/ca.pem",
+        "fetch_private": true,
+        "identities": ["gw"],
+        "access_keys": [{"id": "QUICKSTARTACCESSKEY", "secret": "quickstart-secret-not-secret", "identity": "gw"}],
+        "buckets": [{"bucket": "${BSTORE_BUCKETS:-none}", "owner": "${BSTORE_OWNER:-}", "id": "${BSTORE_ID:-}"}],
+        "bounty": {"satoshis": 3000, "t": 2, "k": 2, "retention_seconds": 86400, "deadline_blocks": 600, "check_c": 30},
+        "hold_ahead": 2,
+        "piece_tree": 8,
+        "entry_tree": 8
+      }
+
+  # The gateway identity's home configuration, for `bstore holds` and
+  # `settle` run on it while the gateway is stopped.
+  gw-home:
+    content: |
+      {
+        "network": "regtest",
+        "node": "http://chain:8080",
+        "settle": "rpc:http://chain:8080/rpc",
+        "headers": "http://chain:8080",
+        "hosts": ["http://host-a:8080", "http://host-b:8080"],
+        "providers": ["https://provider-a:8095", "https://provider-b:8095"],
+        "quorum": 2,
+        "ca": "/certs/ca.pem",
+        "fetch_private": true,
+        "race_window_seconds": 300,
+        "buckets": [{"bucket": "${BSTORE_BUCKETS:-none}", "owner": "${BSTORE_OWNER:-}", "id": "${BSTORE_ID:-}"}],
+        "bucket": "${BSTORE_BUCKETS:-none}"
+      }
+
+volumes:
+  certs:
+  chain:
+  db:
+  gateway:
+  home:
+  provider-a:
+  provider-b:
+  state-a:
+  state-b:
