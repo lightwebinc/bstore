@@ -242,6 +242,7 @@ $ bstore-provider init -data /var/lib/bstore-provider
 $ bstore-provider address -config provider.json      # pay the fund address
 $ bstore-provider rescan -config provider.json -from <height>
 $ bstore-provider run -config provider.json
+$ bstore-provider doctor -config provider.json       # reads only: does everything answer
 ```
 
 The configuration names the public `https` URL the routes are reached at,

@@ -9,6 +9,8 @@
 //	bstore-provider fund -config FILE -blocks N
 //	                                     a test network only: mine N blocks to the fund address
 //	bstore-provider run -config FILE     serve until interrupted
+//	bstore-provider doctor -config FILE [-ca FILE]
+//	                                     what the provider holds and whether everything answers; reads only
 //	bstore-provider version              print the version
 package main
 
@@ -54,6 +56,9 @@ commands:
   fund -config FILE -blocks N    a test network only: mine N blocks to the fund address
                                  through the node's RPC (settle rpc:<url>) and pool the coinbase
   run -config FILE               serve until interrupted
+  doctor -config FILE [-ca FILE] the identity, the pool, the store, and whether the node, the header
+                                 source, the hosts and the provider's own front answer; reads only
+                                 (-ca: a PEM file trusted for the front's certificate)
   version                        print the version
 
 docs/provider.md is the operator's guide: the configuration file, the
@@ -79,6 +84,7 @@ func run(args []string) error {
 	from := fs.Uint("from", 0, "first block height to rescan")
 	to := fs.Uint("to", 0, "last block height to rescan (default the tip)")
 	blocks := fs.Int("blocks", 0, "blocks to mine (fund)")
+	caFile := fs.String("ca", "", "a PEM file trusted for the front's certificate (doctor)")
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -96,7 +102,7 @@ func run(args []string) error {
 		}
 		fmt.Println("identity", id)
 		return nil
-	case "address", "rescan", "fund", "run":
+	case "address", "rescan", "fund", "run", "doctor":
 	default:
 		return usageError{fmt.Errorf("unknown command %q\n%s", args[0], usage)}
 	}
@@ -108,6 +114,8 @@ func run(args []string) error {
 		return usageError{err}
 	}
 	switch args[0] {
+	case "doctor":
+		return provider.Doctor(ctx, cfg, *caFile, os.Stdout)
 	case "address":
 		w, err := bwallet.Open(provider.WalletDir(cfg.Data), provider.Profile)
 		if err != nil {

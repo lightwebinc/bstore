@@ -438,7 +438,13 @@ to take it into the pool. On a test network whose node mines on request,
 
 ```console
 $ ./bstore-provider run -config provider.json
+$ ./bstore-provider doctor -config provider.json   # reads only
 ```
+
+`doctor` prints the identity, the pool, what the store holds, and whether
+the node, the header source, the hosts, the facade and the provider's own
+front answer (`-ca FILE` trusts a private CA for the front). It changes
+nothing and may run beside the provider.
 
 Behind a TLS proxy, route to the provider:
 
