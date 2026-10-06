@@ -415,12 +415,23 @@ func (p *Publisher) resumeSettlement(ctx context.Context, r *Race) error {
 				p.cfg.Logf("settlement %s was mined re-encoded as %s", short(s.Txid), short(cf.By.TxID().String()))
 				tx = cf.By
 				s.Txid, s.Raw = tx.TxID().String(), hex.EncodeToString(tx.Bytes())
+				if r.State == RaceRemitted {
+					// The payees were told the old txid: each is told again,
+					// with the transaction that mined.
+					for i := range s.Payees {
+						s.Payees[i].Remitted, s.Payees[i].Last = false, ""
+					}
+				}
 				if err := p.saveRace(r); err != nil {
 					return err
 				}
 			case cf != nil && cf.Input == 0:
 				// Another transaction spent the hold output: this
-				// settlement never mines and nobody was told of it.
+				// settlement never mines (its payees were told of it when it
+				// was remitted before mining; their providers find it lost).
+				if r.State == RaceRemitted {
+					p.cfg.Logf("race %s: settlement %s was remitted before mining and will never mine", short(r.Entry), short(s.Txid))
+				}
 				s.Abandoned = "the hold output was spent by " + cf.By.TxID().String()
 				r.State, r.Note = RaceSpent, s.Abandoned
 				p.ReturnCoin(ctx, s.Fee)
@@ -431,6 +442,9 @@ func (p *Publisher) resumeSettlement(ctx context.Context, r *Race) error {
 				// coin; both spend the one hold output, so at most one of
 				// them ever pays.
 				s.Abandoned = "its fee input was spent by " + cf.By.TxID().String()
+				if r.State == RaceRemitted {
+					p.cfg.Logf("race %s: settlement %s was remitted before mining and will never mine; its payees are remitted the one built next", short(r.Entry), short(s.Txid))
+				}
 				r.Abandoned = append(r.Abandoned, *s)
 				r.Settlement, r.State = nil, RaceOpen
 				r.Closing = true
@@ -441,6 +455,9 @@ func (p *Publisher) resumeSettlement(ctx context.Context, r *Race) error {
 			default:
 				if err := p.cfg.Settler.Submit(ctx, tx); err != nil && !strings.Contains(strings.ToLower(err.Error()), "already") {
 					p.cfg.Logf("settlement %s: sent again: %v", short(s.Txid), err)
+				}
+				if done, err := p.remitUnmined(ctx, r, tx); done {
+					return err
 				}
 			}
 			pay := p.newPayer(ctx)
@@ -511,7 +528,9 @@ func (p *Publisher) remit(ctx context.Context, r *Race, tx *transaction.Transact
 		switch {
 		case err != nil:
 			py.Last = firstLine(err.Error())
-		case call.Status == http.StatusOK:
+		case call.Status == http.StatusOK || call.Status == http.StatusAccepted:
+			// 202: the payee holds it for confirmation, and takes it once
+			// the settlement mines; nothing more is owed it.
 			py.Remitted, py.Last = true, ""
 		case call.Status == http.StatusBadRequest:
 			py.Refused = firstLine(string(call.Body))
@@ -585,7 +604,7 @@ func (p *Publisher) Reclaim(ctx context.Context, r *Race) (*ReclaimRecord, error
 		return nil, fmt.Errorf("publish: race %s has a settlement (%s); it is not reclaimed", short(r.Entry), short(r.Settlement.Txid))
 	}
 	switch r.State {
-	case RaceSettled, RaceSettling, RaceReclaimd:
+	case RaceSettled, RaceSettling, RaceRemitted, RaceReclaimd:
 		return nil, fmt.Errorf("publish: race %s is %s", short(r.Entry), r.State)
 	}
 	tip, err := p.cfg.Asset.BestHeader(ctx)

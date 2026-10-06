@@ -64,6 +64,7 @@ func (p *Provider) background(ctx context.Context) {
 		_, _ = p.tip(ctx)
 		p.collectChange(ctx)
 		p.waitPending(ctx)
+		p.confirmHeld(ctx)
 		p.makeOwed(ctx)
 		p.recheckDamaged(ctx)
 		p.publishOutbox(ctx)

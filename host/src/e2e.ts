@@ -29,6 +29,7 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createServer, request, type Server } from 'node:http'
+import { TestNetwork, serveNetwork } from './testnetwork.js'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -70,12 +71,15 @@ function stage(dir: string): { file: string; root: string; clock: string } {
   return { file, root, clock }
 }
 
-async function headers(chain: Chain): Promise<Server> {
+async function headers(chain: Chain, net: TestNetwork): Promise<Server> {
   const server = createServer((req, res) => {
-    const m = /^\/v1\/root\/(\d+)$/.exec(req.url ?? '')
-    const body = req.url === '/v1/tip' ? { height: chain.tip } : m !== null && chain.roots.has(Number(m[1])) ? { merkleRoot: chain.roots.get(Number(m[1])) } : undefined
-    res.writeHead(body === undefined ? 404 : 200, { 'content-type': 'application/json' })
-    res.end(JSON.stringify(body ?? {}))
+    void serveNetwork(net, req, res).then((served) => {
+      if (served) return
+        const m = /^\/v1\/root\/(\d+)$/.exec(req.url ?? '')
+        const body = req.url === '/v1/tip' ? { height: chain.tip } : m !== null && chain.roots.has(Number(m[1])) ? { merkleRoot: chain.roots.get(Number(m[1])) } : undefined
+        res.writeHead(body === undefined ? 404 : 200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify(body ?? {}))
+    })
   })
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
   return server
@@ -142,6 +146,8 @@ async function startHost(dir: string, staged: ReturnType<typeof stage>, p: Ports
       BSTORE_LISTEN: `127.0.0.1:${p.terms}`,
       BSTORE_PRICES: prices,
       BSTORE_PAYEE_KEY: payeeKey,
+      BSTORE_ARCADE_URL: `http://127.0.0.1:${p.headers}/arcade`,
+      BSTORE_ASSET_URL: `http://127.0.0.1:${p.headers}`,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -280,7 +286,8 @@ async function main(): Promise<void> {
   // Records are dated now, so the classes that never answer a future one do.
   const now = Date.now()
   const nowS = Math.floor(now / 1000)
-  const hdr = await headers(chain)
+  const net = new TestNetwork(chain)
+  const hdr = await headers(chain, net)
   const db = await mysql()
   const ports: Ports = { db: db.port, headers: (hdr.address() as AddressInfo).port, host: await freePort(), terms: await freePort() }
   const staged = stage(dir)
@@ -390,8 +397,14 @@ async function main(): Promise<void> {
     expect('outcome-history, paid', (await paid({ bucket, 'outcome-history': prov.hex, before: `${now + day}:${'f'.repeat(64)}` })).map((o) => o.txid), [o1.txid])
     expect('outcome-history-of, paid', (await paid({ bucket, 'outcome-history-of': prov.hex, before: `${now + day}:${'f'.repeat(64)}` })).map((o) => o.txid), [o2.txid, o1.txid])
     expect('the payee was paid for five questions', paidTotal, 5 + 10 + 20 + 3 + 4)
+    {
+      const lines = readFileSync(join(staged.root, 'state', 'payments.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { txid: string; decision?: string })
+      expect('every payment was taken fast', lines.every((l) => l.decision === 'fast'), true)
+      expect('the host broadcast every payment before answering', lines.every((l) => net.sent.includes(l.txid)), true)
+    }
     const ledger = (): string[] => readFileSync(join(staged.root, 'state', 'payments.jsonl'), 'utf8').trim().split('\n')
-    expect('each payment is a line of the shared payee ledger, version 2, keys in its order', ledger().map((l) => Object.keys(JSON.parse(l) as object).join(',')), Array<string>(5).fill('txid,beef,outputIndex,satoshis,derivationPrefix,derivationSuffix,senderIdentityKey,class,inputs,at'))
+    // The payee's keys in its order, then the host's decision, which a payee reader passes over.
+    expect('each payment is a line of the shared payee ledger, version 2, keys in its order', ledger().map((l) => Object.keys(JSON.parse(l) as object).join(',')), Array<string>(5).fill('txid,beef,outputIndex,satoshis,derivationPrefix,derivationSuffix,senderIdentityKey,class,inputs,at,decision,reason'))
 
     // Hardening: a handshake flood is refused before any signature; a replayed request 401; a coin pays once.
     const flood = await Promise.all(Array.from({ length: 30 }, () => shake(host!.terms)))

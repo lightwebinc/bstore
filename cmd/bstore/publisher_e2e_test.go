@@ -204,6 +204,7 @@ func TestPublisherE2E(t *testing.T) {
 	pb := e.pubProvider("b", portB, bucket)
 	for _, p := range []*proc{pa, pb} {
 		e.run(e.pbin, "fund", "-config", p.config, "-blocks", "104")
+		arcadeAfterFund(e.t, p.config, e.cs.URL)
 		p.start(e.rig, p.direct+"/healthz")
 	}
 	e.ok("two providers run")
@@ -506,4 +507,27 @@ func blobHashes(t *testing.T, content []byte) [][32]byte {
 		out = append(out, sha256.Sum256(content[i:min(i+storerec.BlobSize, len(content))]))
 	}
 	return out
+}
+
+// arcadeAfterFund moves a provider's configuration from the chain's RPC
+// leg (which fund needs, to mine its coins) to the chain's arcade leg,
+// where a payment can be taken on the network's acceptance.
+func arcadeAfterFund(t *testing.T, path, chain string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg["settle"] != "rpc:"+chain+"/rpc" {
+		return
+	}
+	cfg["settle"] = "arcade:" + chain + "/arcade"
+	raw, _ = json.MarshalIndent(cfg, "", "  ")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
 }

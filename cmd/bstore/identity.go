@@ -570,6 +570,8 @@ func cmdDue(ctx context.Context, g *global, args []string) error {
 			note("race %s (%s): open, %d of K = %d passed, %d block(s) to the deadline (bstore holds, then settle)", short(r.Entry), e.Key, len(r.Passed()), e.Hold.K, left)
 		case publish.RaceSettling:
 			note("race %s: settlement %s not yet seen mined (bstore settle)", short(r.Entry), short(r.Settlement.Txid))
+		case publish.RaceRemitted:
+			note("race %s: settlement %s remitted on the network's acceptance, not yet seen mined (bstore settle collects its proof)", short(r.Entry), short(r.Settlement.Txid))
 		case publish.RaceSettled:
 			if err := h.pub.CheckPayouts(ctx, r); err != nil {
 				g.say("race %s: %v", short(r.Entry), err)

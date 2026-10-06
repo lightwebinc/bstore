@@ -159,11 +159,14 @@ the current expiry and at most `max_renew_seconds` ahead; one root is
 renewed at most `renewals_per_root_per_hour`, a budget spent only by a
 payment the ledger has not seen; a root whose advertisement is not mined
 yet is answered `409` before any payment, and a payment spending a coin a
-taken payment spent is refused before the root's budget is spent. A
-payment must be taken by the network before it is recorded, and the
-renewal is recorded as owed before it is made: when it
-cannot be made at once the answer is `202` and the provider makes it as
-soon as it can.
+taken payment spent is refused before the root's budget is spent. The
+provider broadcasts the payment and holds it to
+[payment acceptance](#payment-acceptance) before it is recorded, and the
+renewal is recorded as owed before it is made: when it cannot be made at
+once the answer is `202` and the provider makes it as soon as it can. A
+renewal paid above the threshold, or without the network's clear word,
+answers `202` with `"held": true` and is made once the payment mines (and
+not at all if the payment is double-spent first).
 
 ### Challenges
 
@@ -249,9 +252,12 @@ follows from an entry the provider holds for: the prefix is base64 of the
 entry's commitment, the suffix base64 of the two-byte rank (1 to the
 entry's `K`), the sender is the entry's writer, the transaction spends the
 entry's hold output, and the named output pays the key BRC-29 derives for
-this provider, verifying against the provider's headers. It answers `200`
-once the payment is in the ledger (the same payment again is `200` and
-recorded once) and `400` otherwise; one address sends at most one a second
+this provider, verifying against the provider's headers, and it passes
+[payment acceptance](#payment-acceptance) on this provider's own output.
+It answers `200` once the payment is in the ledger (the same payment again
+is `200` and recorded once), `202` with `"held": true` when the output is
+above the threshold and the settlement is not mined yet (the payout scan
+takes it once it mines), and `400` otherwise; one address sends at most one a second
 (burst 16). A provider that never got its
 remittance finds its payout from public data: for each entry it holds
 with a bounty, it asks the node who spent the hold output, derives its key
@@ -260,6 +266,37 @@ entry at most once a minute. A remittance whose transaction the network
 refuses for good (a settlement never broadcast, beaten by the one that
 spent the hold output) frees the coins it claimed, and the payout is looked
 for again.
+
+### Payment acceptance
+
+Every payment the provider is offered (a paid challenge, a renewal, a
+remittance) is held to bcommon's acceptance rule (package `acceptance`):
+checked (its output pays this provider's derived key, it is final, its
+outputs do not exceed its inputs, SPV against the provider's headers),
+**broadcast by the provider**, and decided on value:
+
+- at or below `accept_threshold_sats`, within the payer's and the total
+  limits, and with arcade's word that the network took it (no
+  `DOUBLE_SPEND_ATTEMPTED`, no competing transaction) and the node's spend
+  view showing each input unspent or spent by it: **fast**, taken and
+  answered at once, and watched until it mines;
+- above the threshold, over a limit, from a flagged payer, or without that
+  word within 10 s: **held**, taken once its proof verifies against the
+  provider's headers;
+- refused by the network, or spending an input another transaction spent:
+  **refused**.
+
+A paid challenge held is taken (the payment is broadcast and the payee
+collects it) and answered `402` `ERR_PAYMENT_HELD`, with no BRC-105 headers
+so a client does not pay again; the same payment sent again once mined buys
+its answer. A challenge refused on the fast path is answered `400`
+`ERR_PAYMENT_REFUSED` with a payment-not-taken note (row C30). Without an
+arcade settlement leg (`settle = arcade:<url>`) nothing is fast. Each fast
+payment is watched on the background tick until it mines; one that is
+double-spent or refused is recorded unsettleable and logged, and its payer
+is held for confirmation from then on, across restarts (the payers of the
+book's unsettleable payments are held again when the provider starts).
+Nothing is clawed back.
 
 Every payment the provider takes (settlements, paid challenges, renewals)
 goes to `payments.jsonl` in the data directory, the shared payee ledger's
@@ -432,6 +469,10 @@ A JSON file; an unknown key is refused. The required keys:
 | `mainnet` | false | mainnet addresses |
 | `trusted_proxies` | none | CIDRs of proxies whose `X-Forwarded-For` names the client, for every per-address budget |
 | `metrics_listen` | none | where `/metrics` is served; it is served nowhere else |
+| `accept_threshold_sats` | 25000000 | the largest payment taken on the network's acceptance; above it, held until mined; 0 holds every payment |
+| `accept_payer_limit`, `accept_total_limit` | one and ten thresholds | satoshis taken fast and not yet mined, per payer and in all |
+| `accept_window_seconds` | 3600 | how long a fast payment counts against the limits unless it mines first |
+| `accept_watch_seconds` | 0 | how long to watch for a conflict after the network's acceptance |
 
 ### Fund
 
@@ -471,7 +512,10 @@ the proxy's address to every per-address budget. `/healthz` answers `ok`.
 `/metrics` (Prometheus text) is served on `metrics_listen` only: `bstore_provider_handshake_total`,
 `bstore_provider_request_total`, `bstore_provider_session_evicted_total`,
 `bstore_provider_submits_total`, `bstore_provider_challenges_total`,
-`bstore_provider_payments_total`, `bstore_provider_advertisements_total`,
+`bstore_provider_payments_total{decision,reason}` (`requested`, `fast`,
+`hold` or `refuse`, with the acceptance reason),
+`bstore_provider_payment_events_total{kind}` (`confirmed`, `double-spent`,
+`refused`, `unmined`), `bstore_provider_advertisements_total`,
 `bstore_provider_renewals_total`, `bstore_provider_payouts_total`,
 `bstore_provider_objects_served_total`, `bstore_provider_damaged_total`,
 `bstore_provider_evicted_total`, `bstore_provider_refused_total`, and the

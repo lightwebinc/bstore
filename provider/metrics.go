@@ -27,6 +27,15 @@ func (m *metrics) inc(name string, labels ...string) {
 	m.counters[series(name, labels)]++
 }
 
+// preset makes a counter series exist at zero, so a scrape sees it.
+func (m *metrics) preset(name string, labels ...string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.counters[series(name, labels)]; !ok {
+		m.counters[series(name, labels)] = 0
+	}
+}
+
 func (m *metrics) set(name string, v float64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

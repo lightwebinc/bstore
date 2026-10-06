@@ -37,6 +37,9 @@ import { BoundedSessions, LedgerReceiver, LookupFront, MemoryReceiver, PaymentPr
 import { Chain, OwnerSim, Party, PayingWallet, Provider, Buyer, Writer, T0, fromNowhere } from './testmint.js'
 import { Clock, bucket, config, engineOf, topic } from './testhost.js'
 import { FakeHost, MemoryStorage } from './testutil.js'
+import { ArcadeHttp, BroadcastRefused, PaymentGate, isFinal, overspends } from './accept.js'
+import { TestNetwork } from './testnetwork.js'
+import { defaultAcceptancePolicy, type AcceptancePolicy } from '@lightwebinc/bcommon'
 import { readPage } from './testworld.js'
 
 const payee = PrivateKey.fromHex('11'.repeat(32))
@@ -59,6 +62,8 @@ interface Rig {
   outcomes: string[]
   front: LookupFront
   host: FakeHost
+  net: TestNetwork
+  gate: PaymentGate
   /** Signatures the payee's wallet made. */
   signatures: () => number
 }
@@ -69,7 +74,7 @@ after(() => {
 })
 
 /** A module serving one chain of three tokens, the second anchoring three entries, with outcomes, its engine, and its terms route on a free port. */
-async function rig(prices: string, sessions?: { max: number; ttlSeconds: number }, budget?: BudgetConfig, responses?: ResponseBudgetConfig): Promise<Rig> {
+async function rig(prices: string, sessions?: { max: number; ttlSeconds: number }, budget?: BudgetConfig, responses?: ResponseBudgetConfig, policy: Partial<AcceptancePolicy> = {}, networked = true): Promise<Rig> {
   const host = new FakeHost()
   const chain = new Chain(95000)
   const owner = new OwnerSim(bucket, 'paid owner', chain)
@@ -96,7 +101,9 @@ async function rig(prices: string, sessions?: { max: number; ttlSeconds: number 
     signatures++
     return await sign(args)
   }
-  const front = new LookupFront({ ls: m.ls, host, prices: parsePrices(prices), wallet, receiver, headers: chain.tracker, sessions, budget, responses })
+  const net = new TestNetwork(chain)
+  const gate = new PaymentGate({ app: 'bstore', host, headers: chain.tracker, policy: { ...defaultAcceptancePolicy(), ...policy }, arcade: networked ? net : undefined, node: networked ? net : undefined, waitMs: 200, pollMs: 10 })
+  const front = new LookupFront({ ls: m.ls, host, prices: parsePrices(prices), wallet, receiver, headers: chain.tracker, sessions, budget, responses, gate })
   const server = await front.listen(0, '127.0.0.1')
   servers.push(server)
   return {
@@ -113,6 +120,8 @@ async function rig(prices: string, sessions?: { max: number; ttlSeconds: number 
     outcomes: os.map((o) => o.txid).reverse(),
     front,
     host,
+    net,
+    gate,
     signatures: () => signatures,
   }
 }
@@ -235,8 +244,8 @@ test('each of the five priceable classes is answered 402 over BRC-104 with the p
     assert.deepEqual(txids((await paid.json()) as never), want, cls)
   }
   assert.deepEqual(r.receiver.payments.map((p) => [p.class, p.satoshis]), [['history', 5], ['chain', 10], ['export', 20], ['outcome-history', 3], ['outcome-history-of', 4]])
-  assert.equal(r.host.count('bstore_payments_total', { result: 'requested' }), 5)
-  assert.equal(r.host.count('bstore_payments_total', { result: 'accepted' }), 5)
+  assert.equal(r.host.count('bstore_payments_total', { decision: 'requested', reason: 'no-payment' }), 5)
+  assert.equal(r.host.count('bstore_payments_total', { decision: 'fast', reason: 'at-or-below-threshold' }), 5)
 })
 
 test('the terms route answers as the engine does: an export page carries the token context and each entry context, and checks', async () => {
@@ -328,7 +337,7 @@ test('one coin pays once: conflicting unbroadcast payments that spend it buy one
   assert.deepEqual(statuses, [200, 409, 409, 409])
   assert.deepEqual(codes, [undefined, 'ERR_PAYMENT_CONFLICT', 'ERR_PAYMENT_CONFLICT', 'ERR_PAYMENT_CONFLICT'])
   assert.equal(r.receiver.payments.length, 1)
-  assert.equal(r.host.count('bstore_payments_total', { result: 'replayed' }), 3)
+  assert.equal(r.host.count('bstore_payments_total', { decision: 'refuse', reason: 'conflict' }), 3)
 })
 
 test('the payment ledger keeps every accepted payment across a restart and refuses its txids, and coins it spent, again', () => {
@@ -554,4 +563,245 @@ test('a forged request on a live session is charged to the session before any ve
   }
   assert.deepEqual([statuses[0], statuses.slice(1).every((s) => s === 429)], [401, true], 'the one left in the budget is verified and refused; the rest are not verified')
   assert.equal(verifies - before, 1)
+})
+
+/** The priced question the acceptance tests ask. */
+const paidQuery = (r: Rig, _who: Party): Record<string, string> => historyQ(r)
+
+/** Asks one priced question with wallet, paying as AuthFetch does; a held answer (402, no BRC-105 headers) throws in the SDK and is status 0. */
+async function asker(r: Rig, who: Party = r.client, wallet: PayingWallet = r.wallet): Promise<() => Promise<number>> {
+  const af = new AuthFetch(wallet as unknown as WalletInterface)
+  return async () => {
+    try {
+      return (await quietly(async () => await af.fetch(`${r.url}/lookup`, post({ service: 'ls_bstore', query: paidQuery(r, who) })))).status
+    } catch {
+      return 0
+    }
+  }
+}
+
+const last = (r: Rig): ReceivedPayment => r.receiver.payments[r.receiver.payments.length - 1]!
+
+test('acceptance: a small paid lookup is broadcast by the host, then answered; the watch releases it once mined', async () => {
+  const r = await rig('history=5')
+  const ask = await asker(r)
+  assert.equal(await ask(), 200)
+  const p = last(r)
+  assert.deepEqual(r.net.sent, [p.txid], 'broadcast before the answer')
+  assert.equal(p.decision, 'fast')
+  assert.equal(r.host.count('bstore_payments_total', { decision: 'fast', reason: 'at-or-below-threshold' }), 1)
+  assert.deepEqual(r.gate.watching, [p.txid])
+  assert.equal(r.gate.exposure.unmined(r.client.hex).payer, 5)
+  assert.deepEqual(await r.gate.sweep(), [], 'nothing to report while unmined')
+  r.net.mine(p.txid)
+  assert.deepEqual((await r.gate.sweep()).map((e) => e.kind), ['confirmed'])
+  assert.deepEqual(r.gate.watching, [])
+  assert.equal(r.gate.exposure.unmined(r.client.hex).total, 0)
+  assert.equal(r.host.count('bstore_payment_events_total', { kind: 'confirmed' }), 1)
+})
+
+test('acceptance: a payment above the threshold is broadcast and held 402 until it mines, then the same payment is answered', async () => {
+  const r = await rig('history=5', undefined, undefined, undefined, { thresholdSats: 4 })
+  const ask = await asker(r)
+  assert.equal(await ask(), 0, 'held: 402 without BRC-105 headers, so the client pays nothing more')
+  const p = last(r)
+  assert.equal(p.decision, 'hold')
+  assert.equal(p.reason, 'above-threshold')
+  // AuthFetch sends the request again after a 402 it cannot pay; a held payment offered again is held again, once in the ledger.
+  assert.deepEqual([...new Set(r.net.sent)], [p.txid], 'a held payment is broadcast too')
+  assert.equal(new Set(r.receiver.payments.map((x) => x.txid)).size, 1)
+  assert.ok(r.host.count('bstore_payments_total', { decision: 'hold', reason: 'above-threshold' }) >= 1)
+  const header = JSON.stringify({ derivationPrefix: p.derivationPrefix, derivationSuffix: p.derivationSuffix, transaction: Utils.toBase64(Uint8Array.from(p.beef)) })
+  const af = new AuthFetch(r.wallet as unknown as WalletInterface)
+  const again = async (): Promise<number> => {
+    try {
+      return (await af.fetch(`${r.url}/lookup`, post({ service: 'ls_bstore', query: paidQuery(r, r.client) }, { 'x-bsv-payment': header }))).status
+    } catch {
+      return 0
+    }
+  }
+  assert.equal(await again(), 0, 'still held before it mines')
+  r.net.mine(p.txid)
+  assert.equal(await again(), 200)
+  assert.equal(last(r).decision, 'mined')
+  assert.equal(await again(), 409, 'and answered once')
+})
+
+test('acceptance: arcade answers DOUBLE_SPEND_ATTEMPTED: held, and nothing charged', async () => {
+  const r = await rig('history=5')
+  r.net.mode = 'double-spend'
+  assert.equal(await (await asker(r))(), 0)
+  assert.equal(last(r).reason, 'double-spend-attempted')
+  assert.ok(r.host.count('bstore_payments_total', { decision: 'hold', reason: 'double-spend-attempted' }) >= 1)
+  assert.equal(r.gate.exposure.unmined(r.client.hex).total, 0)
+})
+
+test('acceptance: a refusal, an unknown spend view, a silent network and a broadcast that fails', async () => {
+  const r = await rig('history=5')
+  const ask = await asker(r)
+  r.net.mode = 'reject'
+  assert.equal(await ask(), 400)
+  assert.equal(r.host.count('bstore_payments_total', { decision: 'refuse', reason: 'network-refused' }), 1)
+  r.net.mode = 'refuse-http'
+  assert.equal(await ask(), 400)
+  assert.equal(r.host.count('bstore_payments_total', { decision: 'refuse', reason: 'network-refused' }), 2)
+  r.net.mode = 'silent'
+  assert.equal(await ask(), 0)
+  assert.equal(last(r).reason, 'no-network-verdict')
+  r.net.mode = 'down'
+  assert.equal(await ask(), 0)
+  assert.equal(last(r).reason, 'broadcast-unconfirmed')
+  r.net.mode = 'accept'
+  r.net.spendUnknown = true
+  assert.equal(await ask(), 0)
+  assert.equal(last(r).reason, 'spend-view-unknown')
+  assert.equal(r.gate.exposure.unmined(r.client.hex).total, 0, 'every demotion released its charge')
+})
+
+test('acceptance: a host with no arcade or no node holds every payment', async () => {
+  const r = await rig('history=5', undefined, undefined, undefined, {}, false)
+  assert.equal(await (await asker(r))(), 0)
+  assert.equal(last(r).reason, 'no-broadcast-leg')
+  assert.deepEqual(r.net.sent, [])
+})
+
+test('acceptance: a payer whose fast payment was double-spent is flagged; its later payments are held, others are not', async () => {
+  const r = await rig('history=5')
+  const ask = await asker(r)
+  assert.equal(await ask(), 200)
+  const p = last(r)
+  r.net.spendElsewhere(p.inputs[0]!)
+  const events = await r.gate.sweep()
+  assert.deepEqual(events.map((e) => [e.kind, e.payer]), [['double-spent', r.client.hex]])
+  assert.ok(r.host.lines.some((l) => l.msg.includes('fast payment lost')))
+  assert.equal(r.host.count('bstore_payment_events_total', { kind: 'double-spent' }), 1)
+  assert.equal(await ask(), 0)
+  assert.equal(last(r).reason, 'payer-flagged')
+  const bob = new Party('bob')
+  assert.equal(await (await asker(r, bob, new PayingWallet(bob.key, r.chain)))(), 200, 'another payer is still fast')
+})
+
+test('acceptance: fast payments are bounded per payer and in total until they mine', async () => {
+  const r = await rig('history=5', undefined, undefined, undefined, { payerLimit: 10, totalLimit: 15 })
+  const ask = await asker(r)
+  assert.equal(await ask(), 200)
+  assert.equal(await ask(), 200)
+  assert.equal(await ask(), 0)
+  assert.equal(last(r).reason, 'payer-limit')
+  const bob = new Party('bob')
+  const bobAsk = await asker(r, bob, new PayingWallet(bob.key, r.chain))
+  assert.equal(await bobAsk(), 200)
+  assert.equal(await bobAsk(), 0)
+  assert.equal(last(r).reason, 'total-limit')
+  r.net.mine(r.receiver.payments[0]!.txid)
+  await r.gate.sweep()
+  assert.equal(await bobAsk(), 200, 'a mined payment leaves the sum')
+})
+
+test('acceptance: finality and conservation', async () => {
+  const chain = new Chain(97000)
+  const w = new PayingWallet(PrivateKey.fromRandom(), chain)
+  const tx = await w.pay([{ satoshis: 5, lockingScript: new P2PKH().lock(payee.toAddress()).toHex() }])
+  assert.equal(isFinal(tx), true)
+  assert.equal(overspends(tx), undefined)
+  tx.lockTime = 500
+  assert.equal(isFinal(tx), true, 'every input final')
+  tx.inputs[0]!.sequence = 1
+  assert.equal(isFinal(tx), false)
+  tx.outputs[0]!.satoshis = 200000
+  assert.match(overspends(tx)!, /outputs .* inputs/)
+  tx.inputs[0]!.sourceTransaction = undefined
+  assert.match(overspends(tx)!, /no source/)
+})
+
+test('acceptance: held and fast lines survive a restart; a lost payment is written to unsettleable.jsonl', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bstore-accept-'))
+  try {
+    const chain = new Chain(98000)
+    const w = new PayingWallet(PrivateKey.fromRandom(), chain)
+    const tx = await w.pay([{ satoshis: 5, lockingScript: new P2PKH().lock(payee.toAddress()).toHex() }])
+    const base: ReceivedPayment = { txid: tx.id('hex'), beef: tx.toAtomicBEEF(), outputIndex: 0, satoshis: 5, derivationPrefix: 'AA==', derivationSuffix: 'AQ==', senderIdentityKey: payeeKey, class: 'history', inputs: spentOutpoints(tx) }
+    const a = new LedgerReceiver(dir)
+    assert.equal(a.claim({ ...base, decision: 'hold' }), 'accepted')
+    assert.equal(a.claim({ ...base, decision: 'hold' }), 'accepted', 'held again, not written twice')
+    a.close()
+    const b = new LedgerReceiver(dir)
+    assert.equal(b.refusal(base), undefined, 'a held payment can still be answered')
+    assert.equal(b.claim({ ...base, decision: 'mined' }), 'accepted')
+    assert.equal(b.claim({ ...base, decision: 'mined' }), 'replayed')
+    const fast = await w.pay([{ satoshis: 5, lockingScript: new P2PKH().lock(payee.toAddress()).toHex() }])
+    assert.equal(b.claim({ ...base, txid: fast.id('hex'), beef: fast.toAtomicBEEF(), inputs: spentOutpoints(fast), decision: 'fast' }), 'accepted')
+    b.close()
+    const c = new LedgerReceiver(dir)
+    assert.equal(c.fast.length, 1)
+    c.close()
+    const host = new FakeHost()
+    const net = new TestNetwork(chain)
+    const gate = new PaymentGate({ app: 'bstore', host, headers: chain.tracker, policy: defaultAcceptancePolicy(), arcade: net, node: net, stateDir: dir })
+    const f = c.fast[0]!
+    gate.restore(Transaction.fromAtomicBEEF(Utils.toArray(f.beef, 'base64')), f.senderIdentityKey, f.satoshis, f.at)
+    assert.deepEqual(gate.watching, [fast.id('hex')])
+    assert.equal(gate.exposure.unmined(payeeKey).payer, 5)
+    net.spendElsewhere(spentOutpoints(fast)[0]!)
+    await gate.sweep()
+    const lines = readFileSync(join(dir, 'unsettleable.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { kind: string; txid: string })
+    assert.deepEqual(lines.map((l) => [l.kind, l.txid]), [['double-spent', fast.id('hex')]])
+    assert.equal(gate.exposure.isFlagged(payeeKey), true)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('acceptance: flags outlive a restart, restored lines are watched a day and charged an hour, a partial network still broadcasts, the watch is bounded', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bstore-accept-'))
+  try {
+    const chain = new Chain(99500)
+    const w = new PayingWallet(PrivateKey.fromRandom(), chain)
+    const lock = new P2PKH().lock(payee.toAddress()).toHex()
+    writeFileSync(join(dir, 'unsettleable.jsonl'), JSON.stringify({ kind: 'double-spent', txid: 'ab'.repeat(32), payer: '02cd', sats: 5 }) + '\n')
+    const host = new FakeHost()
+    const net = new TestNetwork(chain)
+    const gate = new PaymentGate({ app: 'bstore', host, headers: chain.tracker, policy: defaultAcceptancePolicy(), arcade: net, node: net, stateDir: dir, maxWatched: 2, waitMs: 200, pollMs: 10 })
+    assert.equal(gate.exposure.isFlagged('02cd'), true, 'flagged again from unsettleable.jsonl')
+    const old = await w.pay([{ satoshis: 5, lockingScript: lock }])
+    gate.restore(old, '02ef', 5, Date.now() - 2 * 3_600_000)
+    assert.deepEqual(gate.watching, [old.id('hex')], 'watched: under a day old')
+    assert.equal(gate.exposure.unmined('02ef').payer, 0, 'not charged: past the window')
+    const ancient = await w.pay([{ satoshis: 5, lockingScript: lock }])
+    gate.restore(ancient, '02ef', 5, Date.now() - 2 * 86_400_000)
+    assert.equal(gate.watching.length, 1, 'over a day old: not watched')
+    assert.equal((await gate.accept(await w.pay([{ satoshis: 5, lockingScript: lock }]), '02aa', 5)).decision, 'fast')
+    assert.deepEqual(await gate.accept(await w.pay([{ satoshis: 5, lockingScript: lock }]), '02aa', 5), { decision: 'hold', reason: 'watch-limit', detail: 'too many fast payments are waiting to mine' })
+    // arcade alone: broadcast, and held, since no node can show it mined.
+    const half = new PaymentGate({ app: 'bstore', host: new FakeHost(), headers: chain.tracker, policy: defaultAcceptancePolicy(), arcade: net })
+    const p = await w.pay([{ satoshis: 5, lockingScript: lock }])
+    assert.equal((await half.accept(p, '02aa', 5)).reason, 'no-broadcast-leg')
+    assert.ok(net.sent.includes(p.id('hex')), 'broadcast even so')
+    net.mode = 'reject'
+    assert.equal((await half.accept(await w.pay([{ satoshis: 5, lockingScript: lock }]), '02aa', 5)).decision, 'refuse')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('acceptance: arcade over HTTP: a refusal code refuses, "already known" is no verdict, "already spent" is never accepted', async () => {
+  const replies: Array<[number, string]> = [
+    [465, '{"title":"input already spent"}'],
+    [409, '{"title":"txn-already-known"}'],
+    [400, '{"title":"missing inputs or already spent"}'],
+    [200, '{"txid":"x","txStatus":"SEEN_ON_NETWORK"}'],
+  ]
+  const server = createServer((req, res) => {
+    req.resume()
+    const [status, body] = replies.shift()!
+    res.writeHead(status, { 'content-type': 'application/json' })
+    res.end(body)
+  })
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
+  servers.push(server)
+  const a = new ArcadeHttp(`http://127.0.0.1:${(server.address() as AddressInfo).port}`)
+  await assert.rejects(a.submit(Uint8Array.of(1)), BroadcastRefused)
+  assert.deepEqual(await a.submit(Uint8Array.of(1)), { txStatus: 'RECEIVED', extraInfo: 'already known' })
+  await assert.rejects(a.submit(Uint8Array.of(1)), (e: unknown) => !(e instanceof BroadcastRefused))
+  assert.equal((await a.submit(Uint8Array.of(1))).txStatus, 'SEEN_ON_NETWORK')
 })

@@ -197,8 +197,7 @@ not do, stated so that nobody finds it by accident.
 5. **A refused paid challenge without a note holds a coin for an hour.**
    The buyer builds its payment on the provider's 402; a provider that then
    refuses (`unknown-root`) takes nothing. This version's providers say so
-   in a signed payment-not-taken note (spec section 10.4, row C30, pending
-   the owner's confirmation of its bytes), and the buyer releases the coin
+   in a signed payment-not-taken note (spec section 10.4, row C30), and the buyer releases the coin
    at once. A provider that sends no note leaves the client keeping the
    payment as possibly broadcast, since the payee could still broadcast it,
    and giving the coin back only when the node has not seen it in an hour.

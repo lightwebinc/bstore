@@ -40,6 +40,7 @@ import (
 	"github.com/bsv-blockchain/go-sdk/script"
 	"github.com/bsv-blockchain/go-sdk/transaction"
 
+	"github.com/lightwebinc/bcommon/acceptance"
 	"github.com/lightwebinc/bcommon/bwallet"
 	"github.com/lightwebinc/bcommon/carrier"
 	"github.com/lightwebinc/bcommon/funding"
@@ -87,6 +88,12 @@ type Config struct {
 	Asset   *nodeapi.Asset
 	Settler bpub.Settler
 	Fees    mint.Fees
+	// Accept is the payment acceptance rule a settlement is remitted by:
+	// one whose largest payout is at or below its threshold is remitted on
+	// Status's word that the network took it, before it mines. With no
+	// Status (or the zero Accept) every settlement waits for its block.
+	Accept  acceptance.Policy
+	Status  acceptance.StatusSource
 	Mainnet bool
 	// PieceTree and EntryTree are the outputs of a new piece or entry
 	// funding tree (spec section 19.2: small trees cost less per piece).

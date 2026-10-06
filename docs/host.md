@@ -60,6 +60,13 @@ by replay (below).
 | `BSTORE_HANDSHAKE_ADDR_BURST` | 4 | the most handshakes one remote address is answered at once |
 | `BSTORE_RESPONSES_PER_SEC` | 5 | signed responses a second one BRC-104 session is given |
 | `BSTORE_RESPONSE_BURST` | 20 | the most signed responses one session is given at once |
+| `BSTORE_ARCADE_URL` | none | arcade, which the host broadcasts each payment through before it answers (`POST /tx`, `GET /tx/<txid>`) |
+| `BSTORE_ASSET_URL` | none | the node's asset service: the spend view of a payment's inputs and the proof of a held or watched payment. Without both URLs every payment is held until it mines |
+| `BSTORE_ACCEPT_THRESHOLD_SATS` | 25000000 | the largest payment answered on the network's acceptance; above it a payment is held until it mines |
+| `BSTORE_ACCEPT_PAYER_LIMIT` | the threshold | satoshis one payer may have answered fast and not yet mined; past it, held |
+| `BSTORE_ACCEPT_TOTAL_LIMIT` | ten thresholds | the same across every payer |
+| `BSTORE_ACCEPT_WINDOW` | `1h` | how long a fast payment counts against the limits unless it mines first (`ms`, `s`, `m`, `h`) |
+| `BSTORE_ACCEPT_WATCH` | `0s` | how long the host keeps watching for a conflict after arcade's acceptance before it answers |
 
 Any `BSTORE_PRICES` entry needs `BSTORE_LISTEN`, and a price above 0 also
 needs `BSTORE_PAYEE_KEY`. Any mistake stops the host before its port opens.
@@ -313,6 +320,53 @@ across restarts. `testdata/host/payments-v2.jsonl` is a golden line the
 TypeScript ledger writes byte for byte and bcommon's `payee` reads and
 writes back byte for byte.
 
+
+## Payment acceptance
+
+A paid question is answered only after the payment is held to bcommon's
+acceptance rule (package `acceptance`, the same rule for every layer):
+
+1. the route's own checks (prefix, output 0 pays the derived key, SPV
+   against the host's headers, a txid and coins never used before);
+2. finality (lock time 0, or every input final) and conservation (every
+   input carries its source, and the outputs do not exceed the inputs);
+3. the value: at or below `BSTORE_ACCEPT_THRESHOLD_SATS`, and within the
+   payer's and the total limits, it is fast; otherwise it is held;
+4. the host broadcasts it through `BSTORE_ARCADE_URL`, unmined ancestors first,
+   held or fast: this is how the payee collects;
+5. on the fast path the host answers only once arcade reports the network
+   took it (`SEEN_ON_NETWORK`, `ACCEPTED_BY_NETWORK`, ...), with no
+   `DOUBLE_SPEND_ATTEMPTED` and no competing transaction, and the node shows
+   every input unspent or spent by this payment.
+
+A refusal (arcade `REJECTED`, a definitive HTTP refusal, an input spent by
+another transaction, a payment that is not final or spends more than it
+holds) is answered 400 `ERR_PAYMENT_REFUSED`. Anything else that is not
+fast (above the threshold, a limit reached, a conflict reported, no
+verdict within 10 s, a spend view that cannot say) is answered 402
+`ERR_PAYMENT_HELD` with the reason and no BRC-105 headers, so a client
+does not pay again. The held payment is recorded in `payments.jsonl` with
+`"decision":"hold"`, keeps its coins, and the same payment sent again is
+answered once the node serves its proof and that proof verifies against the
+host's headers. A host with no arcade or no node holds every payment (with
+arcade alone it still broadcasts, and with the node alone it answers a
+payment the node shows mined). At most 100,000 fast payments are watched at
+once; past that a payment is held (`watch-limit`).
+
+Every fast payment is watched on the host's background tick (every 30 s,
+the 500 least recently checked each time) until it mines. One whose input
+another transaction spent, that arcade refuses, or that has not mined
+within a day, is written to `unsettleable.jsonl` in the state directory,
+logged, and counted; its payer is then held for confirmation on every
+later payment. Flags outlive a restart: the host reads `unsettleable.jsonl`
+when it starts, so an operator unflags a payer by removing its lines and
+restarting. Nothing is clawed back: the answer was given. A restart
+watches the fast lines of the last day again, and counts those of the last
+window against the limits.
+
+The ledger line carries `decision` (`fast`, `hold` or `mined`) and
+`reason`; `bstore payee settle` reads it as before.
+
 ## Metrics
 
 Counters: `bstore_admitted_total{kind}`, `bstore_admitted_repeats_total{kind}`,
@@ -320,8 +374,12 @@ Counters: `bstore_admitted_total{kind}`, `bstore_admitted_repeats_total{kind}`,
 `bstore_retractions_total`, `bstore_dropped_total{why}` (`retracted`,
 `retention`, `second-carrier`, `unmatched-sweep`),
 `bstore_lookups_total{class}`, `bstore_handshakes_total{result}`,
-`bstore_requests_total{result}`, `bstore_payments_total{result}`,
-`bstore_sessions_evicted_total{why}`. Gauges: `bstore_buckets`,
+`bstore_requests_total{result}`, `bstore_payments_total{decision,reason}`
+(paid questions by what the host did: `requested`, `fast`, `hold` or
+`refuse`, with the reason; [Payment acceptance](#payment-acceptance)),
+`bstore_payment_events_total{kind}` (`confirmed`, `double-spent`, `refused`,
+`unmined`), `bstore_sessions_evicted_total{why}`. Gauges:
+`bstore_payments_unmined`, `bstore_buckets`,
 `bstore_tokens`, `bstore_tokens_pending`, `bstore_entries`,
 `bstore_outcomes`, `bstore_fronts`, `bstore_advertisements`,
 `bstore_hold_outputs`, `bstore_sweeps`, `bstore_sweep_outpoints`,

@@ -40,6 +40,15 @@
  *   BSTORE_RESPONSES_PER_SEC, BSTORE_RESPONSE_BURST
  *                             the signed responses a second one session is
  *                             given, and at once; default 5 and 20
+ *   BSTORE_ARCADE_URL, BSTORE_ASSET_URL
+ *                            arcade, which the host broadcasts payments
+ *                            through, and the node's asset service (spend
+ *                            view, proofs); without both every payment is
+ *                            held until mined (accept.ts)
+ *   BSTORE_ACCEPT_THRESHOLD_SATS, BSTORE_ACCEPT_PAYER_LIMIT,
+ *   BSTORE_ACCEPT_TOTAL_LIMIT, BSTORE_ACCEPT_WINDOW, BSTORE_ACCEPT_WATCH
+ *                            the acceptance rule; default 25000000, one
+ *                            and ten thresholds, 1h, 0s
  *
  * Every `tm_bstore_` and `tm_bstoreblob_` topic in OVERLAY_TOPICS must be a
  * configured bucket's, because a bstore topic left to the host's default
@@ -49,7 +58,9 @@
 import { isAbsolute } from 'node:path'
 import type { Server } from 'node:http'
 import { PrivateKey, ProtoWallet, type ChainTracker } from '@bsv/sdk'
+import { Transaction, Utils } from '@bsv/sdk'
 import type { Module, ModuleHost, TopicManager } from '@lightwebinc/bcommon'
+import { gateFor, parseAcceptConfig, type AcceptConfig } from './accept.js'
 import { DefaultBudget, DefaultResponseBudget, type BudgetConfig, type ResponseBudgetConfig } from './budget.js'
 import { HeaderTracker, isNativeSource } from './headers.js'
 import { FileJournal, type Journal } from './journal.js'
@@ -85,6 +96,8 @@ export interface Config {
   sessions: { max: number; ttlSeconds: number }
   handshakes: BudgetConfig
   responses: ResponseBudgetConfig
+  /** Payment acceptance; bcommon's DefaultPolicy with no arcade or node (every payment held) when unset. */
+  accept?: AcceptConfig
 }
 
 /** Parses BSTORE_BUCKETS. Throws on anything it cannot take exactly. */
@@ -176,6 +189,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): Config {
       perSec: rate('BSTORE_RESPONSES_PER_SEC', env['BSTORE_RESPONSES_PER_SEC'], DefaultResponseBudget.perSec),
       burst: integer('BSTORE_RESPONSE_BURST', env['BSTORE_RESPONSE_BURST'], DefaultResponseBudget.burst, 1),
     },
+    accept: parseAcceptConfig('BSTORE', env),
   }
   const listen = env['BSTORE_LISTEN']?.trim()
   if (listen !== undefined && listen !== '') {
@@ -234,7 +248,6 @@ export function storeModule(host: ModuleHost, c: Config, overlayTopics?: readonl
   for (const status of TokenStatuses) host.metrics.preset('bstore_token_status_total', { status })
   for (const why of DropReasons) host.metrics.preset('bstore_dropped_total', { why })
   for (const why of ['cap', 'idle']) host.metrics.preset('bstore_sessions_evicted_total', { why })
-  for (const result of ['requested', 'accepted', 'refused', 'replayed']) host.metrics.preset('bstore_payments_total', { result })
   for (const result of RequestResults) host.metrics.preset('bstore_requests_total', { result })
   for (const result of HandshakeResults) host.metrics.preset('bstore_handshakes_total', { result })
   host.metrics.preset('bstore_retractions_total')
@@ -275,14 +288,27 @@ export function storeModule(host: ModuleHost, c: Config, overlayTopics?: readonl
   const mountedBlobs = named.filter((t) => blobs.has(t))
   for (const t of mountedBlobs) topics[t] = new BlobTopicManager(t, host)
   let front: LookupFront | undefined
+  const accept = c.accept ?? parseAcceptConfig('BSTORE', {})
+  const receiver = c.listen !== undefined && priced.size > 0 ? new LedgerReceiver(c.stateDir) : undefined
+  const gate = receiver !== undefined && tracker !== undefined ? gateFor('bstore', host, tracker, accept, c.stateDir) : undefined
+  if (gate !== undefined && receiver !== undefined) {
+    for (const f of receiver.fast) {
+      try {
+        gate.restore(Transaction.fromAtomicBEEF(Utils.toArray(f.beef, 'base64')), f.senderIdentityKey, f.satoshis, f.at)
+      } catch {
+        // a line whose BEEF does not parse was never answered fast
+      }
+    }
+  }
   if (c.listen !== undefined) {
     front = new LookupFront({
       ls,
       host,
       prices: c.prices,
       wallet: c.payeeKey === undefined ? undefined : new ProtoWallet(c.payeeKey),
-      receiver: priced.size > 0 ? new LedgerReceiver(c.stateDir) : undefined,
+      receiver,
       headers: tracker,
+      gate,
       sessions: c.sessions,
       budget: c.handshakes,
       responses: c.responses,
@@ -301,7 +327,18 @@ export function storeModule(host: ModuleHost, c: Config, overlayTopics?: readonl
       ls.prune().catch((e: unknown) => host.log('ls_bstore retention failed', { err: String(e) }))
     }, PruneEvery * 1000)
     prune.unref()
+    let sweeping = false
+    let swept = 0
     const flush = setInterval(() => {
+      // The payment watch rides this tick, at most every 30 s.
+      if (gate !== undefined && !sweeping && Date.now() - swept >= 30_000) {
+        sweeping = true
+        swept = Date.now()
+        gate
+          .sweep()
+          .catch((e: unknown) => host.log('bstore payment watch failed', { err: String(e) }))
+          .finally(() => (sweeping = false))
+      }
       if (ls.restored && ls.pendingDrops > 0) ls.flush().catch((e: unknown) => host.log('ls_bstore drop failed', { err: String(e) }))
     }, FlushEvery * 1000)
     flush.unref()
@@ -323,6 +360,7 @@ export function storeModule(host: ModuleHost, c: Config, overlayTopics?: readonl
     sessions: c.listen === undefined ? 'none' : `${c.sessions.max}, idle ${c.sessions.ttlSeconds}s`,
     handshakes: c.listen === undefined ? 'none' : `${c.handshakes.perSec}/s burst ${c.handshakes.burst}, per address ${c.handshakes.perAddressPerSec}/s burst ${c.handshakes.addressBurst}`,
     responses: c.listen === undefined ? 'none' : `${c.responses.perSec}/s burst ${c.responses.burst} a session`,
+    payments: gate === undefined ? 'none' : gate.networked ? `fast to ${accept.policy.thresholdSats} sat, payer ${accept.policy.payerLimit}, total ${accept.policy.totalLimit}` : 'held until mined (no arcade or asset URL)',
     build,
   })
   return { module: { topics, lookups: { [LookupService]: ls } }, ls, front, start }

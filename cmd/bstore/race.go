@@ -189,7 +189,7 @@ func cmdSettle(ctx context.Context, g *global, args []string) error {
 	var left, hard []string
 	for _, r := range races {
 		switch r.State {
-		case publish.RaceOpen, publish.RaceSettling, publish.RaceSettled:
+		case publish.RaceOpen, publish.RaceSettling, publish.RaceRemitted, publish.RaceSettled:
 		default:
 			continue
 		}

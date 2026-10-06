@@ -56,6 +56,8 @@ An unknown key is refused.
 | `publish_outcomes` | true | publish failed settlement challenges and every challenge's outcome as outcome records |
 | `piece_tree`, `entry_tree` | 256, 16 | outputs of a new funding tree (outcome trees take `entry_tree`); the next tree of each kind is minted ahead, in the background, so a put of up to `piece_tree` pieces never waits for a block |
 | `fee_sat_per_byte`, `fee_floor` | 1, 250 | the fee policy |
+| `accept_threshold_sats` | 25000000 | a settlement whose largest payout is at or below it is remitted once arcade says the network took it and the node shows its inputs spent by it alone, before it mines (race state `remitted`); above it, remitted once mined. Needs `settle = arcade:<url>` |
+| `accept_payer_limit`, `accept_total_limit`, `accept_window_seconds`, `accept_watch_seconds` | one and ten thresholds, 3600, 0 | the rest of the acceptance rule, as for a provider ([provider.md](provider.md)) |
 | `buckets`, `bucket` | none | the chains this home reads and writes (`{"bucket", "owner", "id"}`), and the one used unless `-bucket` names another |
 
 ## The owner

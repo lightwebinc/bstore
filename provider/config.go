@@ -13,6 +13,7 @@ import (
 
 	"github.com/lightwebinc/bcommon/guard"
 
+	"github.com/lightwebinc/bstore/internal/acceptcfg"
 	"github.com/lightwebinc/bstore/storerec"
 )
 
@@ -84,6 +85,9 @@ type Config struct {
 	TrustedProxies []string `json:"trusted_proxies,omitempty"`
 	// MetricsListen, when set, serves /metrics there, and only there.
 	MetricsListen string `json:"metrics_listen,omitempty"`
+	// Accept is the payment acceptance rule (accept_threshold_sats and the
+	// other accept_ keys, docs/provider.md).
+	acceptcfg.Config
 }
 
 // BucketConfig is one bucket the provider subscribes to.

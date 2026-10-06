@@ -17,11 +17,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lightwebinc/bcommon/acceptance"
 	"github.com/lightwebinc/bcommon/headers"
 	"github.com/lightwebinc/bcommon/mint"
 	"github.com/lightwebinc/bcommon/nodeapi"
 	bpub "github.com/lightwebinc/bcommon/publish"
 
+	"github.com/lightwebinc/bstore/internal/acceptcfg"
 	"github.com/lightwebinc/bstore/internal/anchor"
 	"github.com/lightwebinc/bstore/internal/efleg"
 	"github.com/lightwebinc/bstore/internal/publish"
@@ -69,6 +71,9 @@ type Config struct {
 	EntryTree       int    `json:"entry_tree,omitempty"`
 	FeeRate         uint64 `json:"fee_sat_per_byte,omitempty"`
 	FeeFloor        uint64 `json:"fee_floor,omitempty"`
+	// The payment acceptance rule a settlement is remitted by (accept_threshold_sats
+	// and the other accept_ keys, docs/usage.md).
+	acceptcfg.Config
 	// Buckets are the chains this home reads and writes; Bucket the one a
 	// command uses unless -bucket names another.
 	Buckets []BucketRef `json:"buckets,omitempty"`
@@ -242,6 +247,7 @@ func (g *global) open(ctx context.Context) (*home, error) {
 	frontHC := &http.Client{Timeout: 2 * time.Minute, Transport: fetchTransport(pool, cfg.FetchPrivate),
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	pub, err := publish.Open(ctx, publish.Config{Dir: g.home, Asset: asset, Settler: settler, Fees: fees, Mainnet: cfg.Network == "main",
+		Accept: cfg.AcceptPolicy(), Status: statusOf(cfg),
 		PieceTree: cfg.PieceTree, EntryTree: cfg.EntryTree, HoldAhead: cfg.HoldAhead, Store: st, Delivery: d, Reader: rd, FrontHTTP: frontHC, Logf: g.logf})
 	if errors.Is(err, publish.ErrInUse) {
 		return nil, usage("%v: one process at a time uses a home; a running gateway (bstore s3d) holds its identities and judges, settles and reclaims their races itself, so stop it to run this command there", err)
@@ -275,6 +281,15 @@ func (h *home) chain() (reader.Chain, error) {
 		}
 	}
 	return reader.Chain{}, usage("bucket %s is not in config.json (bstore bucket add, or bucket new)", want)
+}
+
+// statusOf is arcade's status for a settlement remitted before it mines,
+// when the settlement leg is arcade; nil otherwise.
+func statusOf(c *Config) acceptance.StatusSource {
+	if kind, addr, _ := strings.Cut(c.Settle, ":"); kind == "arcade" {
+		return &bpub.Arcade{Base: addr, Key: c.ArcadeKey}
+	}
+	return nil
 }
 
 func settlerOf(c *Config) (bpub.Settler, error) {

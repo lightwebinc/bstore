@@ -15,6 +15,8 @@ import (
 	"github.com/lightwebinc/bcommon/guard"
 	"github.com/lightwebinc/bcommon/payee"
 
+	"github.com/lightwebinc/bcommon/acceptance"
+
 	"github.com/lightwebinc/bstore/auth104"
 	"github.com/lightwebinc/bstore/storerec"
 )
@@ -84,9 +86,26 @@ func (p *Provider) settle(ctx context.Context, r *http.Request, body []byte, _ *
 		return auth104.JSON(http.StatusOK, map[string]any{"accepted": true, "txid": in.Txid, "satoshis": sats})
 	}
 	pl := payment(in, beef, rm.OutputIndex, sats, rm.DerivationPrefix, rm.DerivationSuffix, ec.Writer, "settle")
+	// Held to acceptance on this provider's own output: a remittance of a
+	// settlement not yet mined is taken now when its output is at or below
+	// the threshold and the network has it; otherwise it is held and taken
+	// once mined, when the payout scan finds the hold output's spend.
+	v, ptx, err := p.acceptPayment(ctx, &pl, ec.Writer)
+	if err != nil {
+		return auth104.Error(http.StatusServiceUnavailable, "ERR_BUSY", "the remittance could not be checked now; try again later", "Retry-After", "10")
+	}
+	switch v.Decision {
+	case acceptance.Refuse:
+		return bad("the network refused the settlement: " + v.String())
+	case acceptance.Hold:
+		return auth104.JSON(http.StatusAccepted, map[string]any{"accepted": true, "held": true, "txid": in.Txid, "satoshis": sats, "reason": string(v.Reason),
+			"description": "held for confirmation; taken once the settlement mines"})
+	}
 	if _, rep := p.claimPayment(pl, "settle"); rep != nil {
+		p.forgetFast(pl.Txid)
 		return *rep
 	}
+	p.watchFast(v, ptx, &pl, ec.Writer)
 	p.notePayout(ec.C, in.Txid, rm.Rank, sats, "remittance")
 	return auth104.JSON(http.StatusOK, map[string]any{"accepted": true, "txid": in.Txid, "satoshis": sats})
 }

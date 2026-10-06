@@ -17,6 +17,7 @@ import (
 
 	"github.com/bsv-blockchain/go-sdk/wallet"
 
+	"github.com/lightwebinc/bcommon/acceptance"
 	"github.com/lightwebinc/bcommon/cbor"
 	"github.com/lightwebinc/bcommon/commit"
 	"github.com/lightwebinc/bcommon/pushdrop"
@@ -122,7 +123,7 @@ func (p *Provider) challengeAnswer(ctx context.Context, r *http.Request, body []
 		}
 		pl, rep := p.checkPayment(ctx, h, who, price)
 		if rep != nil {
-			p.metrics.inc("bstore_provider_payments_total", "result=refused")
+			p.metrics.inc("bstore_provider_payments_total", "decision=refuse", "reason=malformed")
 			return *rep
 		}
 		pay = &paymentPending{pl: *pl}
@@ -149,13 +150,9 @@ func (p *Provider) challengeAnswer(ctx context.Context, r *http.Request, body []
 		return auth104.Error(http.StatusInternalServerError, "ERR_INTERNAL", "the response could not be signed")
 	}
 	if pay != nil {
-		if _, rep := p.claimPayment(pay.pl, "challenge"); rep != nil {
-			p.metrics.inc("bstore_provider_payments_total", "result=refused")
-			*checked = nil // refused as used (409): no note
-			return *rep
+		if rep, done := p.challengePayment(ctx, &pay.pl, who.Hex, checked); done {
+			return rep
 		}
-		*checked = nil
-		p.metrics.inc("bstore_provider_payments_total", "result=accepted")
 	}
 	if free {
 		// The reservation stands, saved before the answer leaves: it counts.
@@ -175,6 +172,58 @@ func (p *Provider) challengeAnswer(ctx context.Context, r *http.Request, body []
 }
 
 type paymentPending struct{ pl paymentLine }
+
+// challengePayment holds a challenge's checked payment to acceptance once
+// its answer is signed and before it is sent. done is set when the reply
+// is the route's answer instead: a refusal, which keeps *checked so the
+// buyer is signed a not-taken note (row C30, the fast path's refusal
+// included), or a hold, which takes the payment (it was broadcast and is
+// collected once mined) and answers 402 with no note. A held payment sent
+// again is answered once its proof verifies.
+func (p *Provider) challengePayment(ctx context.Context, pl *paymentLine, payer string, checked **paymentLine) (auth104.Reply, bool) {
+	if p.isHeld(pl.Txid) {
+		*checked = nil
+		if !p.minedNow(ctx, pl.Txid) {
+			v := acceptance.Verdict{Decision: acceptance.Hold, Reason: acceptance.ReasonAboveThreshold}
+			p.countPayment(v)
+			return heldReply(pl.Txid, v), true
+		}
+		if !p.takeHeld(pl.Txid) {
+			return auth104.Error(http.StatusConflict, "ERR_PAYMENT_REPLAYED", "this payment was already used"), true
+		}
+		p.countPayment(acceptance.Verdict{Decision: acceptance.Fast, Reason: acceptance.ReasonMined})
+		return auth104.Reply{}, false
+	}
+	v, tx, err := p.acceptPayment(ctx, pl, payer)
+	if err != nil {
+		*checked = nil
+		return auth104.Error(http.StatusServiceUnavailable, "ERR_BUSY", "the payment could not be checked now; try again later", "Retry-After", "10"), true
+	}
+	switch v.Decision {
+	case acceptance.Refuse:
+		if !noteable(v) {
+			*checked = nil
+		}
+		return auth104.Error(http.StatusBadRequest, "ERR_PAYMENT_REFUSED", "the payment is refused: "+v.String()), true
+	case acceptance.Hold:
+		*checked = nil
+		if _, rep := p.claimPayment(*pl, "challenge"); rep != nil {
+			return *rep, true
+		}
+		if err := p.hold(pl.Txid, "challenge"); err != nil {
+			return auth104.Error(http.StatusInternalServerError, "ERR_INTERNAL", "the payment could not be recorded"), true
+		}
+		return heldReply(pl.Txid, v), true
+	}
+	if _, rep := p.claimPayment(*pl, "challenge"); rep != nil {
+		*checked = nil // refused as used (409): no note
+		p.forgetFast(pl.Txid)
+		return *rep, true
+	}
+	p.watchFast(v, tx, pl, payer)
+	*checked = nil
+	return auth104.Reply{}, false
+}
 
 func refuse422(label string) auth104.Reply {
 	return auth104.JSON(http.StatusUnprocessableEntity, map[string]string{"error": label})

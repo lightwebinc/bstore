@@ -29,6 +29,7 @@ import (
 	"github.com/bsv-blockchain/go-sdk/transaction"
 	"github.com/bsv-blockchain/go-sdk/wallet"
 
+	"github.com/lightwebinc/bcommon/acceptance"
 	"github.com/lightwebinc/bcommon/bwallet"
 	"github.com/lightwebinc/bcommon/funding"
 	"github.com/lightwebinc/bcommon/guard"
@@ -72,6 +73,9 @@ type Options struct {
 	// Front, when set, makes the provider a front for another advertiser
 	// (configuration backend "bridge"): see Front.
 	Front *Front
+	// Accept, when set, adjusts the payment verifier once it is built
+	// (tests: a broadcaster or a status source of their own).
+	Accept func(*acceptance.Verifier)
 }
 
 // Front makes a provider the market front of spec section 17 for an
@@ -134,9 +138,14 @@ type Provider struct {
 	asset   *nodeapi.Asset
 	settler publish.Settler
 	arcade  *publish.Arcade
-	hc      *headers.Client
-	hosts   []*publish.Facade
-	facade  *publish.Facade
+	// acc decides every payment offered; mon watches the fast ones until
+	// they mine (accept.go).
+	acc    *acceptance.Verifier
+	mon    *acceptance.Monitor
+	reflag sync.Once
+	hc     *headers.Client
+	hosts  []*publish.Facade
+	facade *publish.Facade
 
 	store  *backend.Native
 	be     backend.Backend
@@ -237,6 +246,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 	if opts.Settler != nil {
 		p.settler = opts.Settler
 	}
+	p.setupAcceptance()
 	store, err := backend.OpenNative(filepath.Join(cfg.Data, "store"), cfg.PublicURL)
 	if err != nil {
 		return nil, err

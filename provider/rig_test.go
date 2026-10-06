@@ -87,7 +87,7 @@ func (r *rig) config(dir string) *Config {
 	port := ln.Addr().(*net.TCPAddr).Port
 	ln.Close()
 	c := &Config{Data: dir, Listen: fmt.Sprintf("127.0.0.1:%d", port), TLSCert: r.cert, TLSKey: r.key,
-		PublicURL: fmt.Sprintf("https://127.0.0.1:%d/store", port), Node: r.srv.URL, Settle: "rpc:" + r.srv.URL + "/rpc",
+		PublicURL: fmt.Sprintf("https://127.0.0.1:%d/store", port), Node: r.srv.URL, Settle: "arcade:" + r.srv.URL + "/arcade",
 		Headers: r.srv.URL, Buckets: []BucketConfig{{Bucket: testBucket}}, TreeCount: 4,
 		Limits: Limits{ChallengeBurst: 20},
 		Terms:  Terms{ChallengeBase: 10, ChallengePerSample: 1, FreeC: 30, MinBounty: 1000, MinAge: 1, RenewPerGiBDay: 100, RenewMinimum: 300}}

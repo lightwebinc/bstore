@@ -12,6 +12,7 @@ import (
 
 	"github.com/lightwebinc/bcommon/guard"
 
+	"github.com/lightwebinc/bstore/internal/acceptcfg"
 	"github.com/lightwebinc/bstore/internal/publish"
 
 	"github.com/lightwebinc/bstore/storerec"
@@ -76,6 +77,9 @@ type Config struct {
 	FeeRate   uint64 `json:"fee_sat_per_byte"`
 	FeeFloor  uint64 `json:"fee_floor"`
 	Mainnet   bool   `json:"mainnet"`
+	// The payment acceptance rule a settlement is remitted by (accept_
+	// keys, docs/s3.md).
+	acceptcfg.Config
 	// PieceWorkers is how many piece carriers a put mints and sends at once
 	// (default 4); PieceAhead how few outputs left on a piece tree start the
 	// next one in the background (default piece_tree: one always ready).

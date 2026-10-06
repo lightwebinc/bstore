@@ -45,6 +45,7 @@ const (
 	RaceClosed   = "closed"   // the window ended with fewer than t passed: nothing is paid
 	RaceSettling = "settling" // a settlement is signed and recorded, not yet seen mined
 	RaceSettled  = "settled"  // the settlement mined
+	RaceRemitted = "remitted" // the settlement taken by the network and remitted, not yet seen mined
 	RaceLapsed   = "lapsed"   // the deadline came with nothing settled
 	RaceSpent    = "spent"    // the hold output was spent by something this race did not make
 	RaceReclaim  = "reclaiming"

@@ -11,6 +11,7 @@ import (
 	"github.com/bsv-blockchain/go-sdk/auth/utils"
 	"github.com/bsv-blockchain/go-sdk/wallet"
 
+	"github.com/lightwebinc/bcommon/acceptance"
 	"github.com/lightwebinc/bcommon/guard"
 	"github.com/lightwebinc/bcommon/payee"
 
@@ -52,20 +53,14 @@ func (p *Provider) requirePayment(ctx context.Context, r *http.Request, who *aut
 			rep := auth104.Error(http.StatusInternalServerError, "ERR_INTERNAL", "no derivation prefix")
 			return nil, &rep
 		}
-		p.metrics.inc("bstore_provider_payments_total", "result=requested")
+		p.metrics.inc("bstore_provider_payments_total", "decision=requested", "reason=no-payment")
 		rep := auth104.JSON(http.StatusPaymentRequired, map[string]any{"status": "error", "code": "ERR_PAYMENT_REQUIRED",
 			"satoshisRequired": price, "description": fmt.Sprintf("%s costs %d satoshis", class, price)},
 			"x-bsv-payment-version", paymentVersion, "x-bsv-payment-satoshis-required", strconv.FormatUint(price, 10),
 			"x-bsv-payment-derivation-prefix", prefix)
 		return nil, &rep
 	}
-	pd, rep := p.takePayment(ctx, raw, who, price, class)
-	if rep != nil {
-		p.metrics.inc("bstore_provider_payments_total", "result=refused")
-		return nil, rep
-	}
-	p.metrics.inc("bstore_provider_payments_total", "result=accepted")
-	return pd, nil
+	return p.takeAccepted(ctx, raw, who, price, class)
 }
 
 // checkPayment checks a payment header without taking it: what a route
@@ -93,7 +88,7 @@ func (p *Provider) checkPayment(ctx context.Context, raw string, who *auth104.Ca
 	// A payment taken before is refused before any proof is checked.
 	if _, _, txid, err := guard.ParseBEEF(beef, maxPaymentBEEF); err != nil || txid == nil {
 		return bad(http.StatusBadRequest, "ERR_INVALID_PAYMENT", "the payment is not a BEEF with its subject")
-	} else if p.ledger.has(txid.String()) {
+	} else if p.ledger.has(txid.String()) && !p.isHeld(txid.String()) {
 		return bad(http.StatusConflict, "ERR_PAYMENT_REPLAYED", "this payment was already used")
 	}
 	in, err := p.incoming(ctx, beef, 0, pm.DerivationPrefix, pm.DerivationSuffix, who.Hex)
@@ -107,19 +102,41 @@ func (p *Provider) checkPayment(ctx context.Context, raw string, who *auth104.Ca
 	pl := payment(in, beef, 0, sats, pm.DerivationPrefix, pm.DerivationSuffix, who.Hex, "")
 	// A payment spending a coin a taken payment spent is refused here,
 	// before any budget is spent on it.
-	if c := p.ledger.refusal(pl.Txid, pl.Inputs); c != payee.Accepted {
+	if c := p.ledger.refusal(pl.Txid, pl.Inputs); c != payee.Accepted && !p.isHeld(pl.Txid) {
 		return bad(http.StatusConflict, "ERR_PAYMENT_CONFLICT", "this payment, or a coin it spends, was already used")
 	}
 	return &pl, nil
 }
 
-// takePayment checks and takes a payment.
-func (p *Provider) takePayment(ctx context.Context, raw string, who *auth104.Caller, price uint64, class string) (*paid, *auth104.Reply) {
+// takeAccepted checks and takes a payment, held to acceptance first: a
+// route that takes a payment at once (no work before it) answers only on
+// Fast.
+func (p *Provider) takeAccepted(ctx context.Context, raw string, who *auth104.Caller, price uint64, class string) (*paid, *auth104.Reply) {
 	pl, rep := p.checkPayment(ctx, raw, who, price)
 	if rep != nil {
+		p.metrics.inc("bstore_provider_payments_total", "decision=refuse", "reason=malformed")
 		return nil, rep
 	}
-	return p.claimPayment(*pl, class)
+	v, tx, err := p.acceptPayment(ctx, pl, who.Hex)
+	if err != nil {
+		rep := auth104.Error(http.StatusServiceUnavailable, "ERR_BUSY", "the payment could not be checked now; try again later")
+		return nil, &rep
+	}
+	switch v.Decision {
+	case acceptance.Refuse:
+		rep := auth104.Error(http.StatusBadRequest, "ERR_PAYMENT_REFUSED", "the payment is refused: "+v.String())
+		return nil, &rep
+	case acceptance.Hold:
+		rep := heldReply(pl.Txid, v)
+		return nil, &rep
+	}
+	pd, rep := p.claimPayment(*pl, class)
+	if rep != nil {
+		p.forgetFast(pl.Txid)
+		return nil, rep
+	}
+	p.watchFast(v, tx, pl, who.Hex)
+	return pd, nil
 }
 
 // claimPayment writes a checked payment to the ledger. A payment this

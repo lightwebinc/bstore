@@ -53,7 +53,7 @@ func (p *Publisher) RaceTick(ctx context.Context, o RaceOptions) int {
 			case r.State == RaceLapsed || r.State == RaceClosed:
 				p.reclaimQuiet(ctx, r)
 			}
-		case RaceSettling:
+		case RaceSettling, RaceRemitted:
 			p.settleQuiet(ctx, r)
 		case RaceSettled:
 			if !r.Remitted() {
@@ -63,7 +63,7 @@ func (p *Publisher) RaceTick(ctx context.Context, o RaceOptions) int {
 			p.reclaimQuiet(ctx, r)
 		}
 		switch r.State {
-		case RaceOpen, RaceSettling, RaceReclaim, RaceClosed, RaceLapsed:
+		case RaceOpen, RaceSettling, RaceRemitted, RaceReclaim, RaceClosed, RaceLapsed:
 			left++
 		case RaceSettled:
 			if !r.Remitted() {

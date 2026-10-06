@@ -47,6 +47,9 @@ type State struct {
 	Payouts map[string]*Payout `json:"payouts"`
 	// Owed are renewals paid for and not made yet.
 	Owed []Owed `json:"owed,omitempty"`
+	// Held are challenge payments taken and held for confirmation, by
+	// txid, with their class: sent again once mined, each buys its answer.
+	Held map[string]HeldRec `json:"held,omitempty"`
 	// Fundings are the funding outpoints carriers were taken on, and the
 	// carrier each paid for (its commitment, hex).
 	Fundings map[string]*Funding `json:"fundings"`
@@ -186,6 +189,16 @@ type Owed struct {
 	Root    string `json:"root"`
 	Until   uint64 `json:"until"`
 	Payment string `json:"payment"`
+	// Held is a renewal whose payment is held for confirmation: made once
+	// the payment's proof verifies, dropped if it is double-spent first.
+	Held bool `json:"held,omitempty"`
+}
+
+// HeldRec is a challenge payment held for confirmation: its class and
+// when it was taken (Unix seconds).
+type HeldRec struct {
+	Class string `json:"class"`
+	At    int64  `json:"at"`
 }
 
 // Funding is the carrier a funding outpoint paid for.

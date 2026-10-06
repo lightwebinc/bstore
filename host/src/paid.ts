@@ -17,7 +17,9 @@
  * price, the derivation prefix; the payee is the server's identity key in
  * the authentication headers), and with one that pays the price to the key
  * BRC-29 derives for that prefix, suffix and asker, and that verifies
- * against the host's headers, it is answered. One payment buys one
+ * against the host's headers, it is held to acceptance (accept.ts): the host
+ * broadcasts it, and answers at once when it is small and the network took
+ * it, or 402 "held for confirmation" until it mines. One payment buys one
  * question, which is one answer page.
  *
  * The overlay host's own /lookup refuses a class the host prices (ls_bstore
@@ -44,11 +46,12 @@ import {
   type Transport,
   type WalletInterface,
 } from '@bsv/sdk'
-import type { LookupQuestion, ModuleHost } from '@lightwebinc/bcommon'
+import { defaultAcceptancePolicy, type LookupQuestion, type ModuleHost } from '@lightwebinc/bcommon'
 import { DefaultBudget, DefaultResponseBudget, HandshakeBudget, KeyedBudget, SeenRequests, type BudgetConfig, type ResponseBudgetConfig } from './budget.js'
 import { bytesEqual } from '@lightwebinc/bcommon'
 import { strictBase64, toBase64 } from './hostutil.js'
 import type { StoreLookupService } from './ls_bstore.js'
+import { PaymentGate } from './accept.js'
 import { Classes } from './query.js'
 import { LookupService as ServiceName, SettleProtocol } from './storerec.js'
 import { concat, fromHex } from './util.js'
@@ -124,6 +127,9 @@ export interface ReceivedPayment {
   class: string
   /** Every outpoint the payment spends, `<txid>.<index>`, txid in display order. */
   inputs: string[]
+  /** What the host did: fast and mined are answered, hold is not (accept.ts). */
+  decision?: 'fast' | 'hold' | 'mined'
+  reason?: string
 }
 
 /** Every outpoint a transaction spends, `<txid>.<index>`. */
@@ -135,25 +141,35 @@ export function spentOutpoints(tx: Transaction): string[] {
 export type Claim = 'accepted' | 'replayed' | 'conflict'
 
 /**
- * The payments a receiver took, by txid and by the coins they spend. A
- * payment is unbroadcast when it is offered, so two transactions spending
- * one coin both verify, and at most one can ever be settled: the second is
- * a conflict, whatever its txid.
+ * The payments a receiver took, by txid and by the coins they spend. Two
+ * transactions spending one coin can both verify, and at most one can ever
+ * be settled: the second is a conflict, whatever its txid. A payment held
+ * for confirmation keeps its coins, and is answered once, when it mines.
  */
 export class TakenPayments {
-  private readonly txids = new Set<string>()
-  private readonly coins = new Set<string>()
+  private readonly answered = new Set<string>()
+  private readonly held = new Set<string>()
+  private readonly coins = new Map<string, string>()
 
   /** Why p cannot be taken, or undefined. */
   refusal(p: Pick<ReceivedPayment, 'txid' | 'inputs'>): Exclude<Claim, 'accepted'> | undefined {
-    if (this.txids.has(p.txid)) return 'replayed'
-    if (p.inputs.length === 0 || p.inputs.some((i) => this.coins.has(i))) return 'conflict'
+    if (this.answered.has(p.txid)) return 'replayed'
+    if (p.inputs.length === 0 || p.inputs.some((i) => (this.coins.get(i) ?? p.txid) !== p.txid)) return 'conflict'
     return undefined
   }
 
-  take(p: Pick<ReceivedPayment, 'txid' | 'inputs'>): void {
-    this.txids.add(p.txid)
-    for (const i of p.inputs) this.coins.add(i)
+  take(p: Pick<ReceivedPayment, 'txid' | 'inputs' | 'decision'>): void {
+    if (p.decision === 'hold') {
+      this.held.add(p.txid)
+    } else {
+      this.held.delete(p.txid)
+      this.answered.add(p.txid)
+    }
+    for (const i of p.inputs) this.coins.set(i, p.txid)
+  }
+
+  isHeld(txid: string): boolean {
+    return this.held.has(txid)
   }
 }
 
@@ -164,6 +180,8 @@ export class TakenPayments {
  * question, and one coin pays once.
  */
 export interface PaymentReceiver {
+  /** Why p cannot be taken, before it is broadcast; undefined when it can. */
+  refusal(p: Pick<ReceivedPayment, 'txid' | 'inputs'>): Exclude<Claim, 'accepted'> | undefined
   claim(p: ReceivedPayment): Claim
 }
 
@@ -171,6 +189,9 @@ export interface PaymentReceiver {
 export class MemoryReceiver implements PaymentReceiver {
   readonly payments: ReceivedPayment[] = []
   private readonly taken = new TakenPayments()
+  refusal(p: Pick<ReceivedPayment, 'txid' | 'inputs'>): Exclude<Claim, 'accepted'> | undefined {
+    return this.taken.refusal(p)
+  }
   claim(p: ReceivedPayment): Claim {
     const no = this.taken.refusal(p)
     if (no !== undefined) return no
@@ -195,6 +216,8 @@ export class LedgerReceiver implements PaymentReceiver {
   readonly path: string
   private readonly taken = new TakenPayments()
   private fd: number | undefined
+  /** The fast lines read at start, newest last: watched again until they mine. */
+  readonly fast: Array<{ beef: string; senderIdentityKey: string; satoshis: number; at: number }> = []
 
   constructor(
     dir: string,
@@ -210,7 +233,7 @@ export class LedgerReceiver implements PaymentReceiver {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e
     }
     for (const l of text.split('\n')) {
-      let v: { txid?: unknown; inputs?: unknown; beef?: unknown }
+      let v: { txid?: unknown; inputs?: unknown; beef?: unknown; decision?: unknown; senderIdentityKey?: unknown; satoshis?: unknown; at?: unknown }
       try {
         v = JSON.parse(l) as typeof v
       } catch {
@@ -228,7 +251,10 @@ export class LedgerReceiver implements PaymentReceiver {
           // the txid alone is claimed
         }
       }
-      this.taken.take({ txid: v.txid, inputs })
+      this.taken.take({ txid: v.txid, inputs, decision: v.decision === 'hold' ? 'hold' : undefined })
+      if (v.decision === 'fast' && typeof v.beef === 'string' && typeof v.senderIdentityKey === 'string' && typeof v.satoshis === 'number' && typeof v.at === 'number') {
+        this.fast.push({ beef: v.beef, senderIdentityKey: v.senderIdentityKey, satoshis: v.satoshis, at: v.at * 1000 })
+      }
     }
     if (text.length > 0 && !text.endsWith('\n')) this.write('\n')
   }
@@ -239,10 +265,16 @@ export class LedgerReceiver implements PaymentReceiver {
     fdatasyncSync(this.fd)
   }
 
+  refusal(p: Pick<ReceivedPayment, 'txid' | 'inputs'>): Exclude<Claim, 'accepted'> | undefined {
+    return this.taken.refusal(p)
+  }
+
   claim(p: ReceivedPayment): Claim {
     const no = this.taken.refusal(p)
     if (no !== undefined) return no
+    const again = this.taken.isHeld(p.txid) && p.decision === 'hold'
     this.taken.take(p)
+    if (again) return 'accepted'
     this.write(ledgerLine(p, Math.floor(this.now() / 1000)))
     return 'accepted'
   }
@@ -266,6 +298,8 @@ export function ledgerLine(p: ReceivedPayment, at: number): string {
     class: p.class,
     inputs: p.inputs,
     at,
+    // What the host decided (accept.ts); a line without it is the payee's own line, byte for byte.
+    ...(p.decision === undefined ? {} : { decision: p.decision, reason: p.reason }),
   }
   return JSON.stringify(line) + '\n'
 }
@@ -530,6 +564,8 @@ export interface FrontOptions {
   headers?: ChainTracker
   /** The bound on BRC-104 sessions: the most kept, and how long one idle is kept. */
   sessions?: { max: number; ttlSeconds: number }
+  /** Payment acceptance (accept.ts); without one every payment is held for confirmation. */
+  gate?: PaymentGate
   /** The handshake budget (budget.ts); DefaultBudget when unset. */
   budget?: BudgetConfig
   /** The budget of signed responses for each session (budget.ts); DefaultResponseBudget when unset. */
@@ -555,6 +591,8 @@ export class LookupFront {
   readonly seen = new SeenRequests()
   /** Requests whose signature is being checked now. */
   private readonly verifying = new Set<string>()
+  /** Payment acceptance. */
+  readonly gate: PaymentGate | undefined
 
   constructor(private readonly o: FrontOptions) {
     for (const [name, price] of o.prices) {
@@ -562,6 +600,8 @@ export class LookupFront {
         throw new Error(`bstore: ${name} has a price, which needs a payee wallet, a payment receiver and a header source`)
       }
     }
+    if (o.gate !== undefined) this.gate = o.gate
+    else if (o.headers !== undefined && [...o.prices.values()].some((p) => p > 0)) this.gate = new PaymentGate({ app: 'bstore', host: o.host, headers: o.headers, policy: defaultAcceptancePolicy() })
     const bound = o.sessions ?? { max: DefaultMaxSessions, ttlSeconds: DefaultSessionTTL }
     this.sessions = new BoundedSessions(bound.max, bound.ttlSeconds * 1000, Date.now, (why) => o.host.metrics.inc('bstore_sessions_evicted_total', { why }))
     o.host.metrics.gauge('bstore_sessions', () => this.sessions.size)
@@ -775,7 +815,7 @@ export class LookupFront {
       if (identity === undefined) return failure(401, 'ERR_AUTH_REQUIRED', `${cls} is priced; ask it over BRC-104 authentication`)
       const raw = header(headers, 'x-bsv-payment')
       if (raw === undefined) {
-        this.o.host.metrics.inc('bstore_payments_total', { result: 'requested' })
+        this.gate?.count('requested', 'no-payment')
         const prefix = await createNonce(this.o.wallet as WalletInterface)
         return json(
           402,
@@ -784,7 +824,6 @@ export class LookupFront {
         )
       }
       const paid = await this.pay(raw, identity, price, cls)
-      this.o.host.metrics.inc('bstore_payments_total', { result: paid.ok ? 'accepted' : paid.reply.status === 409 ? 'replayed' : 'refused' })
       if (!paid.ok) return paid.reply
       extra['x-bsv-payment-satoshis-paid'] = String(paid.satoshis)
     }
@@ -804,7 +843,10 @@ export class LookupFront {
    * accepted payment already spent.
    */
   private async pay(raw: string, identity: string, price: number, cls: string): Promise<{ ok: true; satoshis: number } | { ok: false; reply: Reply }> {
-    const bad = (status: number, code: string, d: string) => ({ ok: false as const, reply: failure(status, code, d) })
+    const bad = (status: number, code: string, d: string, reason = 'malformed') => {
+      this.gate?.count('refuse', reason)
+      return { ok: false as const, reply: failure(status, code, d) }
+    }
     const wallet = this.o.wallet!
     let p: { derivationPrefix?: unknown; derivationSuffix?: unknown; transaction?: unknown }
     try {
@@ -835,7 +877,7 @@ export class LookupFront {
     if (out === undefined || (out.satoshis ?? 0) < price) return bad(400, 'ERR_INVALID_PAYMENT', `output 0 does not hold ${price} satoshis`)
     const { publicKey } = await wallet.getPublicKey({ protocolID: PaymentProtocol, keyID: `${prefix} ${suffix}`, counterparty: identity, forSelf: true })
     if (!bytesEqual(Uint8Array.from(out.lockingScript.toBinary()), p2pkh(fromHex(publicKey)))) {
-      return bad(400, 'ERR_INVALID_PAYMENT', "output 0 does not pay the key derived for this prefix, suffix and asker")
+      return bad(400, 'ERR_INVALID_PAYMENT', "output 0 does not pay the key derived for this prefix, suffix and asker", 'wrong-script')
     }
     let verified = false
     try {
@@ -843,7 +885,7 @@ export class LookupFront {
     } catch {
       verified = false
     }
-    if (!verified) return bad(400, 'ERR_PAYMENT_SPV', "the payment does not verify against this host's headers")
+    if (!verified) return bad(400, 'ERR_PAYMENT_SPV', "the payment does not verify against this host's headers", 'spv-failed')
     const accepted: ReceivedPayment = {
       txid: tx.id('hex'),
       beef: Array.from(beef),
@@ -855,10 +897,36 @@ export class LookupFront {
       class: cls,
       inputs: spentOutpoints(tx),
     }
+    const replayed = () => bad(409, 'ERR_PAYMENT_REPLAYED', 'this payment was already used', 'replayed')
+    const conflict = () => bad(409, 'ERR_PAYMENT_CONFLICT', 'this payment spends a coin an earlier payment spent', 'conflict')
+    // Refused before the host broadcasts it: a conflicting payment is never sent.
+    const before = this.o.receiver!.refusal(accepted)
+    if (before === 'replayed') return replayed()
+    if (before === 'conflict') return conflict()
+    const v = await this.gate!.accept(tx, identity, accepted.satoshis)
+    if (v.decision === 'refuse') {
+      this.o.host.log('bstore payment refused', { txid: accepted.txid, reason: v.reason, detail: v.detail ?? '' })
+      return { ok: false, reply: failure(400, 'ERR_PAYMENT_REFUSED', `the payment is refused (${v.reason})${v.detail === undefined ? '' : `: ${v.detail}`}`) }
+    }
+    accepted.decision = v.decision === 'hold' ? 'hold' : v.reason === 'mined' ? 'mined' : 'fast'
+    accepted.reason = v.reason
     const claim = this.o.receiver!.claim(accepted)
-    if (claim === 'replayed') return bad(409, 'ERR_PAYMENT_REPLAYED', 'this payment was already used')
-    if (claim === 'conflict') return bad(409, 'ERR_PAYMENT_CONFLICT', 'this payment spends a coin an earlier payment spent')
-    this.o.host.log('bstore payment accepted', { txid: accepted.txid, satoshis: accepted.satoshis, class: cls })
+    // Taken fast and then not taken: nothing is owed, so nothing is charged or watched.
+    if (claim !== 'accepted' && v.decision === 'fast') this.gate!.forget(accepted.txid)
+    if (claim === 'replayed') return replayed()
+    if (claim === 'conflict') return conflict()
+    if (v.decision === 'hold') {
+      this.o.host.log('bstore payment held for confirmation', { txid: accepted.txid, satoshis: accepted.satoshis, class: cls, reason: v.reason })
+      return {
+        ok: false,
+        reply: json(
+          402,
+          // No BRC-105 headers: a client would answer them with a second payment.
+          { status: 'error', code: 'ERR_PAYMENT_HELD', txid: accepted.txid, reason: v.reason, description: `the payment is held for confirmation (${v.reason}); send it again once it is mined` },
+        ),
+      }
+    }
+    this.o.host.log('bstore payment accepted', { txid: accepted.txid, satoshis: accepted.satoshis, class: cls, decision: accepted.decision })
     return { ok: true, satoshis: accepted.satoshis }
   }
 }

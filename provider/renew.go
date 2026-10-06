@@ -11,6 +11,8 @@ import (
 
 	"github.com/bsv-blockchain/go-sdk/transaction"
 
+	"github.com/lightwebinc/bcommon/acceptance"
+
 	"github.com/lightwebinc/bstore/auth104"
 )
 
@@ -80,27 +82,39 @@ func (p *Provider) renew(ctx context.Context, r *http.Request, body []byte, who 
 	if ok, retry := p.limits.roots.Take(req.Root); !ok {
 		return auth104.Error(http.StatusTooManyRequests, "ERR_RATE_LIMITED", "this root was renewed often lately; try again later", "Retry-After", itoa(uint64(retry)))
 	}
-	// The payment reaches the network before the renewal is made: a payer
-	// cannot take its coin back once the renewal costs the provider a fee.
-	tx, err := paymentTx(pl)
+	// The payment reaches the network before the renewal is made (the
+	// provider broadcasts it): a payer cannot take its coin back once the
+	// renewal costs the provider a fee. Held to acceptance: at or below the
+	// threshold, with the network's word, the renewal is made now; above
+	// it, it is owed once the payment mines (202).
+	v, ptx, err := p.acceptPayment(ctx, pl, who.Hex)
 	if err != nil {
-		return auth104.Error(http.StatusBadRequest, "ERR_INVALID_PAYMENT", "the payment does not read")
+		return auth104.Error(http.StatusServiceUnavailable, "ERR_BUSY", "the payment could not be checked now; try again later", "Retry-After", "10")
 	}
-	if err := p.send(ctx, tx); err != nil {
-		p.logf("renewal payment %s: %v", short(pl.Txid), err)
-		return auth104.Error(http.StatusBadRequest, "ERR_PAYMENT_REFUSED", "the network did not take the payment; no renewal is made")
+	if v.Decision == acceptance.Refuse {
+		p.logf("renewal payment %s: %s", short(pl.Txid), v)
+		return auth104.Error(http.StatusBadRequest, "ERR_PAYMENT_REFUSED", "the network did not take the payment ("+string(v.Reason)+"); no renewal is made")
 	}
+	held := v.Decision == acceptance.Hold
 	if _, rep := p.claimPayment(*pl, "renew"); rep != nil {
+		p.forgetFast(pl.Txid)
 		return *rep
 	}
+	p.watchFast(v, ptx, pl, who.Hex)
 	// The renewal is owed from here: recorded before it is made, and made
-	// by the background when it cannot be now.
+	// by the background when it cannot be now (a held one once its payment
+	// mines).
 	p.mu.Lock()
-	p.st.Owed = append(p.st.Owed, Owed{Root: req.Root, Until: req.Until, Payment: pl.Txid})
+	p.st.Owed = append(p.st.Owed, Owed{Root: req.Root, Until: req.Until, Payment: pl.Txid, Held: held})
 	err = p.save()
 	p.mu.Unlock()
 	if err != nil {
 		return auth104.Error(http.StatusInternalServerError, "ERR_INTERNAL", "the renewal could not be recorded")
+	}
+	if held {
+		p.logf("root %s: renewal through %d paid (%s), held for confirmation (%s): made once it mines", short(req.Root), req.Until, short(pl.Txid), v.Reason)
+		return auth104.JSON(http.StatusAccepted, map[string]any{"pending": true, "held": true, "until": req.Until, "txid": pl.Txid, "reason": string(v.Reason),
+			"description": "paid and held for confirmation; the renewal is made once the payment mines, and the root's advertisement then answers it"})
 	}
 	ad, err := p.advertiseVia(ctx, [32]byte(root), req.Until)
 	if err != nil {
@@ -154,6 +168,9 @@ func (p *Provider) makeOwed(ctx context.Context) {
 	owed := slices.Clone(p.st.Owed)
 	p.mu.Unlock()
 	for _, o := range owed {
+		if o.Held {
+			continue // made once its payment mines (confirmHeld)
+		}
 		p.mu.Lock()
 		h := p.st.Holdings[o.Root]
 		gone := h == nil || h.Damaged || !h.Verified

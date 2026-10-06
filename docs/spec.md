@@ -850,15 +850,14 @@ advertisement. "Nobody has read this in a long time" is a provider's signal,
 not a protocol one: a provider MAY decline to renew, and an interested
 reader buys renewals.
 
-### 10.4 A payment not taken (clarification C30, pending)
+### 10.4 A payment not taken (clarification C30)
 
 A buyer pays a priced challenge on the 402, and then the front may still
 refuse it: the seed has left its window, the root turned out damaged when
 the answer was read, or the front is busy. The payment was handed to the
 front and the front could broadcast it, so without more the buyer holds the
 payment's coin until its own node shows the payment was never broadcast.
-Under this clarification (frozen.md section 14, row C30, pending the owner's
-confirmation of these bytes) a front that refuses a `challenge` request
+Under this clarification (frozen.md section 14, row C30) a front that refuses a `challenge` request
 that came with a BRC-105 payment, and did not take that payment, adds a
 signed **payment-not-taken note** to the refusal's JSON as `"notTaken"`:
 base64 of the signed note. A refusal that is about the payment itself
@@ -1798,5 +1797,5 @@ pin byte for byte the rows of frozen.md marked "vectors".
 | `transaction-v1.json` | carriers, tokens, advertisements, hold outputs and sweeps admitted and refused by each rule of section 12.1, and transactions that only spend held outputs, refused |
 | `query-v1.json` | every class and every value rule, admitted and refused |
 | `chirp-v1.json` | BRC-167's own vectors: bcommon's file of that name at the tag go.mod pins, read from that module by bstore's tests (signed clarification, frozen.md section 14, row C5) |
-| `nottaken-v1.json` | payment-not-taken notes as signed (section 10.4, row C30, pending), every step of the body's and the signed note's refusal order, and the buyer's check against its payment, request and answerer |
+| `nottaken-v1.json` | payment-not-taken notes as signed (section 10.4, row C30), every step of the body's and the signed note's refusal order, and the buyer's check against its payment, request and answerer |
 | `closure-v1.json` | bstore's checks of a closure (section 5, rows C1 to C4): the root's rules, the closure's refusals as labels, the 2^43-byte bound, the proof root |

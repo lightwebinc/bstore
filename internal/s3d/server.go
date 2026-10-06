@@ -25,6 +25,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lightwebinc/bcommon/acceptance"
 	"github.com/lightwebinc/bcommon/headers"
 	"github.com/lightwebinc/bcommon/mint"
 	"github.com/lightwebinc/bcommon/nodeapi"
@@ -135,6 +136,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Server, error) {
 	d := &publish.Delivery{Facade: cfg.Facade, Hosts: cfg.Hosts, Providers: cfg.Providers, HTTP: hostHTTP, Quorum: cfg.Quorum}
 	for _, name := range cfg.Identities {
 		p, err := publish.Open(ctx, publish.Config{Dir: cfg.IdentityDir(name), Asset: asset, Settler: settler,
+			Accept: cfg.AcceptPolicy(), Status: statusOf(cfg),
 			Fees: mint.Fees{SatPerByte: cfg.FeeRate, Floor: cfg.FeeFloor}, Mainnet: cfg.Mainnet,
 			PieceTree: cfg.PieceTree, EntryTree: cfg.EntryTree, PieceAhead: cfg.PieceAhead, PieceWorkers: cfg.PieceWorkers,
 			HoldAhead: cfg.HoldAhead, Store: s.store, Delivery: d, Reader: s.reader, FrontHTTP: fetchHTTP,
@@ -165,6 +167,15 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Server, error) {
 	}
 	s.signer = &signer{keys: keys, region: cfg.Region, now: opts.Now}
 	return s, nil
+}
+
+// statusOf is arcade's status for a settlement remitted before it mines,
+// when the settlement leg is arcade; nil otherwise.
+func statusOf(c *Config) acceptance.StatusSource {
+	if kind, addr, _ := strings.Cut(c.Settle, ":"); kind == "arcade" {
+		return &bpub.Arcade{Base: addr, Key: c.ArcadeKey}
+	}
+	return nil
 }
 
 func settlerOf(c *Config) (bpub.Settler, error) {

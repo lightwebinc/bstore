@@ -35,6 +35,19 @@ type ledger struct {
 	forgotten map[string]bool
 }
 
+// find is the ledger line of txid, or nil.
+func (l *ledger) find(txid string) *payee.Payment {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for i := range l.ps {
+		if l.ps[i].Txid == txid {
+			p := l.ps[i]
+			return &p
+		}
+	}
+	return nil
+}
+
 // forget lets a payment the network refused stop claiming its coins.
 func (l *ledger) forget(txid string) {
 	l.mu.Lock()

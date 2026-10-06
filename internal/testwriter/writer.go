@@ -452,7 +452,9 @@ func (w *Writer) Post(ctx context.Context, url string, body []byte, maxPay uint6
 	res, err := w.af.Fetch(ctx, url, &authhttp.SimplifiedFetchRequestOptions{Method: http.MethodPost,
 		Headers: map[string]string{"content-type": "application/json"}, Body: body})
 	if err != nil {
-		pu.Refund()
+		// A payment sent (a held 402 stops the client after it) is the
+		// payee's to broadcast: kept, as the publisher keeps it.
+		pu.Settle()
 		return nil, err
 	}
 	defer res.Body.Close()

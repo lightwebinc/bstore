@@ -182,8 +182,12 @@ $ bstore reclaim            # take back a bounty nobody won, after its deadline
 Each candidate gets a free settlement challenge of `min(checkC, freeC)`
 samples at its front; the first `K` that pass are paid, one transaction
 spending the hold output to each advertiser's derived key, and each
-provider is sent its remittance. `settle` resumes a settlement in flight
-and never builds a second. A payee that passed through a bridge is told by
+provider is sent its remittance. With an arcade settlement leg and every
+payout at or below `accept_threshold_sats` (25,000,000 sat by default), the
+remittances go out as soon as the network has taken the settlement, before
+it mines (the race shows `remitted`), and a later `settle` collects its
+proof; a larger settlement is remitted once mined. `settle` resumes a
+settlement in flight and never builds a second. A payee that passed through a bridge is told by
 the bridge, so its remittance is listed as forwarded and is not owed; any
 payee whose output the node shows spent has its share.
 

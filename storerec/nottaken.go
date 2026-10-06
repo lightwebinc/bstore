@@ -13,8 +13,7 @@ import (
 	"github.com/lightwebinc/bcommon/record"
 )
 
-// The "payment not taken" note (frozen.md section 14, row C30, pending the
-// owner's confirmation of its bytes): a provider that refuses a priced
+// The "payment not taken" note (frozen.md section 14, row C30): a provider that refuses a priced
 // challenge whose request came with a BRC-105 payment, and did not take
 // that payment, says so in a note signed under its challenge key,
 // derive(answerer, "challenge"). The buyer that holds such a note for its

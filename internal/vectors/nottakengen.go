@@ -166,7 +166,7 @@ func genNotTaken(files map[string][]byte) error {
 	add("a note that does not verify", sign(Carol, okBody), pay, req, Bob.Pub(), "not-taken", "signature")
 
 	return put(files, "nottaken-v1.json", map[string]any{
-		"note": "the payment-not-taken note (frozen.md row C30, pending the owner's confirmation of its bytes): notes as signed, " +
+		"note": "the payment-not-taken note (frozen.md row C30): notes as signed, " +
 			"every step of the body's and the signed note's refusal order (label not-taken, rule the step), and the buyer's check",
 		"notes":    notes,
 		"refusals": refs,
