@@ -232,7 +232,11 @@ type rig struct {
 	failSpend atomic.Value
 }
 
-func newRig(t *testing.T) *rig {
+func newRig(t *testing.T) *rig { return newRigFunded(t, 104) }
+
+// newRigFunded is newRig with the owner's pool funded by ownerBlocks
+// coinbases (the writer's own 104 blocks mature them).
+func newRigFunded(t *testing.T, ownerBlocks int) *rig {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	t.Cleanup(cancel)
 	r := &rig{t: t, ctx: ctx, chain: testchain.New(700)}
@@ -263,7 +267,7 @@ func newRig(t *testing.T) *rig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := bwallet.FundFromCoinbase(ctx, w.Signer(), w.Pool, rpc, &nodeapi.Asset{Base: r.cs.URL}, 104, 50); err != nil {
+	if _, _, err := bwallet.FundFromCoinbase(ctx, w.Signer(), w.Pool, rpc, &nodeapi.Asset{Base: r.cs.URL}, ownerBlocks, 50); err != nil {
 		t.Fatal(err)
 	}
 	store, err := publish.OpenStore(filepath.Join(dir, "store"))
@@ -380,6 +384,20 @@ func cOf(t *testing.T, txid string) [32]byte {
 // The tooling folds a batch exactly as frozen, and a host that answers the
 // same entries again after a token named them never gets one applied
 // twice: the named set is rebuilt from the chain each run.
+// An owner with one coin: the chain tree's change is the only coin left for
+// the first token's fee, which must not spend a second output of the tree
+// (spec section 12.1, token-input). The coin is moved to a transaction of
+// its own first, and the host admits the token.
+func TestFirstTokenWithOneCoin(t *testing.T) {
+	r := newRigFunded(t, 1)
+	r.host.mu.Lock()
+	n := len(r.host.tokens[0])
+	r.host.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("the host holds %d first token(s), want 1", n)
+	}
+}
+
 func TestAnchorFoldsOnceAndNeverTwice(t *testing.T) {
 	r := newRig(t)
 	_, ids := r.mint([]spec{

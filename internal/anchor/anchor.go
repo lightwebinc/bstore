@@ -15,12 +15,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bsv-blockchain/go-sdk/script"
 	"github.com/bsv-blockchain/go-sdk/transaction"
 
 	"github.com/lightwebinc/bcommon/bwallet"
 	"github.com/lightwebinc/bcommon/carrier"
 	"github.com/lightwebinc/bcommon/funding"
 	"github.com/lightwebinc/bcommon/mint"
+	"github.com/lightwebinc/bcommon/producer"
 	"github.com/lightwebinc/bcommon/pushdrop"
 
 	"github.com/lightwebinc/bstore/internal/publish"
@@ -370,6 +372,14 @@ func (t *Tool) mint(ctx context.Context, c *Chain, b *storerec.Bucket, parent *t
 		pay.GiveBack()
 		return err
 	}
+	if b.Seq == 0 && fee.Tx != nil && fee.Tx.TxID().Equal(*parent.TxID()) {
+		// A first token spends exactly one output of its parent (spec
+		// section 12.1, token-input), so its fee cannot be the chain tree's
+		// change: that coin is moved to a transaction of its own first.
+		if pay, fee, err = t.feeOfItsOwn(ctx, pay, fee, change); err != nil {
+			return err
+		}
+	}
 	tx, err := mint.Transition(lock, 1, &mint.Input{Tx: parent, Vout: vout, Unlocker: d.Unlocker(ctx, w, w.Originator)}, fee, change, fees)
 	if err != nil {
 		pay.GiveBack()
@@ -384,6 +394,31 @@ func (t *Tool) mint(ctx context.Context, c *Chain, b *storerec.Bucket, parent *t
 	}
 	t.logf("token %d of %s: %s signed and recorded (%d change(s), %d consumed)", b.Seq, c.Bucket, short(c.Pending.Txid), len(b.Changes), len(b.Consumed))
 	return t.finishPending(ctx, c)
+}
+
+// feeOfItsOwn spends coin, which pay holds, to the fund key in a
+// transaction of its own, waits for it to mine, and takes a coin of that
+// transaction with a new payer, which it returns.
+func (t *Tool) feeOfItsOwn(ctx context.Context, pay *producer.Payer, coin mint.Input, change *script.Script) (*producer.Payer, mint.Input, error) {
+	fees := t.Pub.Fees()
+	split, err := mint.FundingTree(change, 1, 1+fees.Floor*4, coin, change, fees)
+	if err != nil {
+		pay.GiveBack()
+		return nil, mint.Input{}, err
+	}
+	t.logf("the first token's fee coin %s.%d is the chain tree's change: moving it to %s", short(coin.Tx.TxID().String()), coin.Vout, short(split.TxID().String()))
+	mp, height, err := pay.SettleAndWait(ctx, "fee coin", split)
+	if err != nil {
+		pay.GiveBack()
+		return nil, mint.Input{}, fmt.Errorf("%w: the fee coin %s: %v", ErrIncomplete, split.TxID(), err)
+	}
+	pay.Change(split, height, mp)
+	next := t.Pub.NewPayer(ctx)
+	fee, err := next.TakeAtLeast(ctx, 1+fees.Floor*4)
+	if err != nil {
+		return nil, mint.Input{}, err
+	}
+	return next, fee, nil
 }
 
 // finishPending sees a recorded token through: the same bytes sent again
