@@ -136,6 +136,20 @@ func (p *Publisher) Resend(ctx context.Context, id, what string, beef []byte, ta
 	return p.outbox.send(ctx, it, beef)
 }
 
+// ResendAll is Resend, and also returns the targets that refused the BEEF.
+// A refusal is final: the outbox never offers those bytes to them again.
+func (p *Publisher) ResendAll(ctx context.Context, id, what string, beef []byte, targets []Target) (ok, refused []Target) {
+	if len(targets) == 0 {
+		return nil, nil
+	}
+	it, err := p.outbox.add(id, what, beef, targets)
+	if err != nil {
+		p.cfg.Logf("%s %s: %v", what, short(id), err)
+		return nil, nil
+	}
+	return p.outbox.sendAll(ctx, it, beef)
+}
+
 // HostTarget is one host's submit route for a bucket's records topic.
 func HostTarget(host, bucket string) Target {
 	return Target{Base: trim(host), Topic: storerec.RecordsTopic(bucket), Host: true}

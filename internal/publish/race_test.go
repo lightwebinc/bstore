@@ -367,3 +367,69 @@ func TestRankingByFirstSight(t *testing.T) {
 		t.Fatalf("same look: kept %s", r.Cands[0].First)
 	}
 }
+
+// spendPayout spends rank py's output of a mined settlement with pv's
+// BRC-29 key, as the payee's wallet would once it holds it.
+func (r *raceRig) spendPayout(race *Race, pv *provider, py PayeeRecord) string {
+	r.t.Helper()
+	raw, _ := hex.DecodeString(race.Settlement.Raw)
+	tx, err := transaction.NewTransactionFromBytes(raw)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	if tx.MerklePath, _, err = r.p.cfg.Asset.Proof(r.ctx, race.Settlement.Txid); err != nil {
+		r.t.Fatal(err)
+	}
+	d := &bwallet.Derivation{SecurityLevel: 2, Protocol: bwallet.PaymentProtocol.Protocol,
+		KeyID:           bwallet.PaymentKeyID(storerec.DerivationPrefix(race.C()), storerec.DerivationSuffix(py.Rank)),
+		CounterpartyHex: r.p.IdentityHex(), OwnerHex: hex.EncodeToString(pv.key())}
+	change, _ := r.p.signer.FundScript()
+	return r.mine(change, &mint.Input{Tx: tx, Vout: py.Vout, Unlocker: pv.w.DerivedUnlocker(d)}).TxID().String()
+}
+
+// A payee that passed at a front other than its own (a bridged incumbent)
+// is told by that front, which forwards the settlement: its remittance is
+// not owed. A payee whose output the node shows spent has its share and is
+// done, remitted or not.
+func TestSettleForwardedAndSpentPayees(t *testing.T) {
+	r := newRaceRig(t)
+	race := r.put("k", Bounty{Satoshis: 10_000, T: 2, K: 2, Retention: 3600, DeadlineBlocks: 500, CheckC: 30})
+	a, b := r.provider("a"), r.provider("b")
+	adA := r.advertise(a, 2_000_000_000, nil)
+	adB := r.advertise(b, 2_000_000_000, nil)
+	passed(race, a, adA, 1)
+	passed(race, b, adB, 2)
+	const bridge = "https://bridge.example/front/bstore/v1"
+	race.Cands[0].Answerer, race.Cands[0].Front = "02"+strings.Repeat("ab", 32), bridge
+	if race.Forwarder(hex.EncodeToString(a.key())) != bridge || race.Forwarder(hex.EncodeToString(b.key())) != "" {
+		t.Fatal("Forwarder")
+	}
+	rec, err := r.p.Settle(r.ctx, race, false)
+	if !errors.Is(err, ErrNotYet) || rec == nil || race.State != RaceSettled {
+		t.Fatalf("settle: %v %s", err, race.State)
+	}
+	if !strings.Contains(err.Error(), "1 remittance(s)") {
+		t.Fatalf("only b's remittance is owed: %v", err)
+	}
+	pa, pb := rec.Payees[0], rec.Payees[1]
+	if pa.Done() || !strings.Contains(pa.Last, "forwarded by the front at "+bridge) {
+		t.Fatalf("a: %+v", pa)
+	}
+	// b takes its share without a remittance: the node shows it spent.
+	by := r.spendPayout(race, b, pb)
+	if _, err := r.p.Settle(r.ctx, race, false); err != nil {
+		t.Fatalf("settle after b spent its output: %v", err)
+	}
+	if got := race.Settlement.Payees[1]; got.Spent != by || !got.Done() || got.Remitted {
+		t.Fatalf("b: %+v", got)
+	}
+	// a claims and spends: done too, and recorded across a reload.
+	byA := r.spendPayout(race, a, pa)
+	if err := r.p.CheckPayouts(r.ctx, race); err != nil {
+		t.Fatal(err)
+	}
+	again, _ := r.p.Race(race.Entry)
+	if got := again.Settlement.Payees[0]; got.Spent != byA || !got.Done() {
+		t.Fatalf("a after its spend: %+v", got)
+	}
+}

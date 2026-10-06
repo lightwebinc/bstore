@@ -82,9 +82,9 @@ a writer:
 anyone:
   get KEY [OUT|-]             read an object, every check in order, from its advertisers
   ls [PREFIX] [-after KEY]    list keys, every page proven complete
-  challenge KEY -provider K [-c N] [-budget SATS]
+  challenge KEY -provider K [-c N] [-budget SATS] [-front URL -answerer K]
                               a paid possession challenge; its outcome recorded
-  renew KEY -provider K (-until T | -days N) [-budget SATS]
+  renew KEY -provider K (-until T | -days N) [-budget SATS] [-front URL]
                               buy a later expiry of a provider's advertisement
   fill                        replay what this home made to every host that lacks it
   sync                        send what is owed and record what the chain anchored
@@ -276,7 +276,7 @@ func classify(err error) (int, string) {
 	}
 	msg := err.Error()
 	switch {
-	case errors.Is(err, anchor.ErrBroken), errors.Is(err, reader.ErrRefused), errors.Is(err, reader.ErrContentHash),
+	case errors.Is(err, anchor.ErrBroken), errors.Is(err, anchor.ErrRefused), errors.Is(err, reader.ErrRefused), errors.Is(err, reader.ErrContentHash),
 		errors.Is(err, storerec.ErrRollback), errors.Is(err, storerec.ErrProofRoot):
 		return exitRefused, msg
 	case errors.Is(err, anchor.ErrIncomplete), errors.Is(err, publish.ErrNotYet), errors.Is(err, reader.ErrUnavailable),

@@ -64,6 +64,57 @@ type PayeeRecord struct {
 	Remitted   bool   `json:"remitted,omitempty"`
 	Refused    string `json:"refused,omitempty"`
 	Last       string `json:"last,omitempty"`
+	// Spent is the transaction the node shows spending this payee's
+	// output: only the payee's key can, so the payee has its share
+	// whoever told it (a bridged incumbent learns of it from its front,
+	// which forwards the settlement, spec C28).
+	Spent string `json:"spent,omitempty"`
+}
+
+// Done is a payee nothing more is owed: remitted, refused, or its output
+// already spent by the payee.
+func (py *PayeeRecord) Done() bool { return py.Remitted || py.Refused != "" || py.Spent != "" }
+
+// Forwarder is the front that answered for an advertiser in the race when
+// that front is not the advertiser itself (a bridge in front of an
+// incumbent UHRP host). Such a front forwards the settlement to the
+// advertiser (C28); the advertiser's own front has no settle route.
+func (r *Race) Forwarder(adv string) string {
+	for _, c := range r.Cands {
+		if c.Advertiser == adv && c.Status == CandPassed && c.Answerer != "" && c.Answerer != adv {
+			return c.Front
+		}
+	}
+	return ""
+}
+
+// CheckPayouts asks the node, for each payee of a mined settlement not yet
+// done, whether its output is spent, and records a spend. It saves the
+// race when anything changed. A spend source that cannot answer decides
+// nothing.
+func (p *Publisher) CheckPayouts(ctx context.Context, r *Race) error {
+	s := r.Settlement
+	if s == nil || s.Bump == "" {
+		return nil
+	}
+	changed := false
+	for i := range s.Payees {
+		py := &s.Payees[i]
+		if py.Done() {
+			continue
+		}
+		unspent, by, err := p.unspent(ctx, s.Txid, py.Vout)
+		if err != nil || unspent {
+			continue
+		}
+		py.Spent, py.Last = by, ""
+		changed = true
+		p.cfg.Logf("race %s: rank %d's output %s.%d is spent by %s: the payee has its share", short(r.Entry), py.Rank, short(s.Txid), py.Vout, short(by))
+	}
+	if !changed {
+		return nil
+	}
+	return p.saveRace(r)
 }
 
 // ReclaimRecord is a hold output spent back to the writer after its
@@ -426,12 +477,19 @@ func (p *Publisher) remit(ctx context.Context, r *Race, tx *transaction.Transact
 		return err
 	}
 	prefix := storerec.DerivationPrefix(r.C())
+	if err := p.CheckPayouts(ctx, r); err != nil {
+		return err
+	}
 	left := 0
 	for i := range s.Payees {
 		py := &s.Payees[i]
-		if py.Remitted || py.Refused != "" {
+		if py.Done() {
 			continue
 		}
+		// A payee whose front forwards for it still gets its remittance
+		// offered at its own route, which an incumbent does not serve; it
+		// is not counted as owed, since its front forwards the settlement.
+		fwd := r.Forwarder(py.Advertiser)
 		if py.Front == "" {
 			if f, ok := p.frontOf(r, py.Advertiser); ok {
 				py.Front = f
@@ -439,7 +497,11 @@ func (p *Publisher) remit(ctx context.Context, r *Race, tx *transaction.Transact
 		}
 		if py.Front == "" {
 			py.Last = "no front to send the remittance to; the payee finds its output from the hold output's spend"
-			left++
+			if fwd == "" {
+				left++
+			} else {
+				py.Last = ForwardedNote(fwd)
+			}
 			continue
 		}
 		body, _ := json.Marshal(map[string]any{"entry": r.Entry, "rank": py.Rank, "transaction": base64.StdEncoding.EncodeToString(beef),
@@ -449,14 +511,19 @@ func (p *Publisher) remit(ctx context.Context, r *Race, tx *transaction.Transact
 		switch {
 		case err != nil:
 			py.Last = firstLine(err.Error())
-			left++
 		case call.Status == http.StatusOK:
 			py.Remitted, py.Last = true, ""
 		case call.Status == http.StatusBadRequest:
 			py.Refused = firstLine(string(call.Body))
 		default:
 			py.Last = fmt.Sprintf("%d %s", call.Status, firstLine(string(call.Body)))
-			left++
+		}
+		if !py.Done() {
+			if fwd != "" {
+				py.Last = ForwardedNote(fwd)
+			} else {
+				left++
+			}
 		}
 	}
 	if err := p.saveRace(r); err != nil {
@@ -466,6 +533,11 @@ func (p *Publisher) remit(ctx context.Context, r *Race, tx *transaction.Transact
 		return fmt.Errorf("%w: %d remittance(s) not yet taken; settle again to resend them", ErrNotYet, left)
 	}
 	return nil
+}
+
+// ForwardedNote says why a forwarded payee's remittance is not owed.
+func ForwardedNote(front string) string {
+	return "forwarded by the front at " + front + ", which answered for the advertiser; done once the payee spends its output"
 }
 
 func (p *Publisher) frontOf(r *Race, adv string) (string, bool) {

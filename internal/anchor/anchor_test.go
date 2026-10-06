@@ -615,3 +615,38 @@ func cOfHex(txid string) [32]byte {
 	}
 	return c
 }
+
+// A first token a host refuses is reported as refused, final, and is not
+// left for bstore sync: the fake host admits only tBucket's records, so a
+// second bucket's first token is refused there.
+func TestFirstTokenRefusedIsFinal(t *testing.T) {
+	r := newRig(t)
+	other := "example_other_qwertyuiop"
+	c, err := r.tool.New(r.ctx, other, nil)
+	if c == nil || c.ID == "" {
+		t.Fatalf("no chain recorded: %v", err)
+	}
+	if !errors.Is(err, ErrRefused) || errors.Is(err, ErrIncomplete) {
+		t.Fatalf("want ErrRefused, got %v", err)
+	}
+	if msg := err.Error(); !strings.Contains(msg, "refusal is final") || strings.Contains(msg, "sent again") {
+		t.Fatalf("message: %s", msg)
+	}
+	if n := r.tool.Pub.Outbox().Pending(); n != 0 {
+		t.Fatalf("a refused token was left in the outbox (%d item(s))", n)
+	}
+}
+
+func TestTokenDeliveryWording(t *testing.T) {
+	tg := []publish.Target{{Base: "https://a.example"}}
+	if err := tokenDelivery(1, 2, 2, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := tokenDelivery(1, 2, 1, nil); !errors.Is(err, ErrIncomplete) || !strings.Contains(err.Error(), "bstore sync sends it again") {
+		t.Fatalf("not taken: %v", err)
+	}
+	err := tokenDelivery(1, 3, 1, tg)
+	if !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), "https://a.example") || !strings.Contains(err.Error(), "1 other target(s)") {
+		t.Fatalf("refused and left: %v", err)
+	}
+}

@@ -103,8 +103,11 @@ func cmdBucket(ctx context.Context, g *global, args []string) error {
 		g.out("served %s:%s:%s", c.Bucket, h.pub.IdentityHex(), c.ID)
 		g.out("topics %s %s", storerec.RecordsTopic(c.Bucket), storerec.BlobTopic(c.Bucket))
 	}
-	if errors.Is(err, anchor.ErrIncomplete) {
-		return incomplete("%v (bstore sync sends the token again; bucket new %s finishes a token not yet mined)", err, bucket)
+	switch {
+	case errors.Is(err, anchor.ErrRefused):
+		return refused("%v (a host that refused the first token does not serve this chain; when the reason is the token itself, make a fresh bucket with bucket new and a bare name)", err)
+	case errors.Is(err, anchor.ErrIncomplete):
+		return incomplete("%v (bucket new %s finishes a token not yet mined; bstore sync delivers a mined one)", err, bucket)
 	}
 	return err
 }

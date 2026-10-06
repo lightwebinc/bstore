@@ -38,6 +38,10 @@ func cmdS3D(ctx context.Context, g *global, args []string) error {
 	if len(args) < 1 {
 		return usage("%s", s3dUsage)
 	}
+	if isHelp(args[0]) {
+		g.say("%s", s3dUsage)
+		return nil
+	}
 	cmd := args[0]
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fs.SetOutput(g.stderr)

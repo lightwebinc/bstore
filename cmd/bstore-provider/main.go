@@ -9,6 +9,7 @@
 //	bstore-provider fund -config FILE -blocks N
 //	                                     a test network only: mine N blocks to the fund address
 //	bstore-provider run -config FILE     serve until interrupted
+//	bstore-provider version              print the version
 package main
 
 import (
@@ -40,6 +41,9 @@ func main() {
 
 type usageError struct{ error }
 
+// version is stamped by the build; "dev" otherwise.
+var version = "dev"
+
 const usage = `usage: bstore-provider <command> [flags]
 
 commands:
@@ -49,11 +53,23 @@ commands:
                                  take coin paid to the fund address in blocks H.. into the pool
   fund -config FILE -blocks N    a test network only: mine N blocks to the fund address
                                  through the node's RPC (settle rpc:<url>) and pool the coinbase
-  run -config FILE               serve until interrupted`
+  run -config FILE               serve until interrupted
+  version                        print the version
+
+docs/provider.md is the operator's guide: the configuration file, the
+terms, the limits and the metrics.`
 
 func run(args []string) error {
 	if len(args) == 0 {
 		return usageError{errors.New(usage)}
+	}
+	switch args[0] {
+	case "-h", "-help", "--help", "help":
+		fmt.Println(usage)
+		return nil
+	case "version", "-version", "--version":
+		fmt.Println("bstore-provider", version)
+		return nil
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -64,6 +80,9 @@ func run(args []string) error {
 	to := fs.Uint("to", 0, "last block height to rescan (default the tip)")
 	blocks := fs.Int("blocks", 0, "blocks to mine (fund)")
 	if err := fs.Parse(args[1:]); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return usageError{err}
 	}
 	switch args[0] {

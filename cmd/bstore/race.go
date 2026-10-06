@@ -125,6 +125,8 @@ func (h *home) printRace(r *publish.Race) {
 			switch {
 			case p.Refused != "":
 				st = "refused: " + p.Refused
+			case p.Spent != "" && !p.Remitted:
+				st = "spent by the payee in " + p.Spent
 			case !p.Remitted:
 				st = "not yet remitted"
 				if p.Last != "" {
@@ -158,7 +160,10 @@ the key BRC-29 derives for its advertiser (prefix the entry's commitment,
 suffix the rank); the fee from another coin. It is recorded before it is
 sent: settle again resends the same bytes and never builds a second one.
 Once it mines, each payee's remittance goes to its settle route; settle
-again resends any not taken.`
+again resends any not taken. A payee whose output the node shows spent
+has its share and is owed nothing more; one that passed at a front other
+than its own (a bridge in front of an incumbent) is told by that front,
+which forwards the settlement, so its remittance is not counted as owed.`
 
 func cmdSettle(ctx context.Context, g *global, args []string) error {
 	fs := g.flagSet("settle", settleHelp)
@@ -243,7 +248,7 @@ func remitted(r *publish.Race) bool {
 		return true
 	}
 	for _, p := range r.Settlement.Payees {
-		if !p.Remitted && p.Refused == "" {
+		if !p.Done() && r.Forwarder(p.Advertiser) == "" {
 			return false
 		}
 	}

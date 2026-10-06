@@ -40,6 +40,9 @@ var (
 	// the spend source could not vouch for, a token not yet mined. It
 	// proves nothing either way (exit 3).
 	ErrIncomplete = errors.New("anchor: incomplete")
+	// ErrRefused is a mined token a host refused: a refusal is final for
+	// those bytes, so it is not sent to that host again (exit 1).
+	ErrRefused = errors.New("anchor: refused")
 )
 
 // Chain is a bucket chain this identity owns, as its tooling records it:
@@ -494,15 +497,35 @@ func (t *Tool) finishPending(ctx context.Context, c *Chain) error {
 		return err
 	}
 	targets := t.Pub.RecordTargets(c.Bucket)
-	ok := t.Pub.Resend(ctx, pt.Txid, "bucket token", beef, targets)
+	ok, refused := t.Pub.ResendAll(ctx, pt.Txid, "bucket token", beef, targets)
 	c.Seq = pt.Seq
 	c.Pending = nil
 	if err := t.Store.Save(c); err != nil {
 		return err
 	}
 	t.logf("token %d of %s: %s mined at height %d and taken by %d of %d target(s)", pt.Seq, c.Bucket, short(pt.Txid), height, len(ok), len(targets))
-	if len(ok) < len(targets) {
-		return fmt.Errorf("%w: token %d is mined and %d target(s) have not taken it yet; it is sent again (bstore sync)", ErrIncomplete, pt.Seq, len(targets)-len(ok))
+	return tokenDelivery(pt.Seq, len(targets), len(ok), refused)
+}
+
+// tokenDelivery says what became of a mined token's delivery: a refusal is
+// final (the same bytes are never sent to that target again), anything
+// else not taken is left in the outbox for bstore sync.
+func tokenDelivery(seq uint64, targets, ok int, refused []publish.Target) error {
+	left := targets - ok - len(refused)
+	if len(refused) > 0 {
+		names := make([]string, len(refused))
+		for i, r := range refused {
+			names[i] = r.Base
+		}
+		msg := fmt.Sprintf("token %d is mined and %d target(s) refused it (%s); a refusal is final: the token is not sent there again (the reason is in the log, -v)",
+			seq, len(refused), strings.Join(names, ", "))
+		if left > 0 {
+			msg += fmt.Sprintf("; %d other target(s) have not taken it yet and bstore sync sends it to them", left)
+		}
+		return fmt.Errorf("%w: %s", ErrRefused, msg)
+	}
+	if left > 0 {
+		return fmt.Errorf("%w: token %d is mined and %d target(s) have not taken it yet; bstore sync sends it again", ErrIncomplete, seq, left)
 	}
 	return nil
 }

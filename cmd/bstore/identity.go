@@ -522,7 +522,9 @@ const dueHelp = `usage: bstore due
 What this home owes, and exit 3 when it owes anything: objects in the
 outbox, closures owed to a provider, hold transactions not yet mined, open
 races (with the blocks left to their deadline), settlements not yet mined
-or whose remittances a payee has not taken, hold outputs whose deadline has
+or whose remittances a payee has not taken (a payee whose output the node
+shows spent is done; one a front forwards for, a bridged incumbent, is
+listed and not owed), hold outputs whose deadline has
 come and that nobody won (bstore reclaim), and the entries of this
 identity no token has named yet.`
 
@@ -569,8 +571,17 @@ func cmdDue(ctx context.Context, g *global, args []string) error {
 		case publish.RaceSettling:
 			note("race %s: settlement %s not yet seen mined (bstore settle)", short(r.Entry), short(r.Settlement.Txid))
 		case publish.RaceSettled:
+			if err := h.pub.CheckPayouts(ctx, r); err != nil {
+				g.say("race %s: %v", short(r.Entry), err)
+			}
 			for _, p := range r.Settlement.Payees {
-				if !p.Remitted && p.Refused == "" {
+				switch {
+				case p.Done():
+				case r.Forwarder(p.Advertiser) != "":
+					// Not owed by this home: the front forwards it, and
+					// the node shows when the payee spends it.
+					g.out("race %s: rank %d's share is %s (not owed)", short(r.Entry), p.Rank, publish.ForwardedNote(r.Forwarder(p.Advertiser)))
+				default:
 					note("race %s: rank %d's remittance not yet taken (bstore settle)", short(r.Entry), p.Rank)
 				}
 			}
