@@ -69,9 +69,20 @@ the root's own size and content hash:
    `contentHash` the entry's;
 2. the closure, by bcommon `chirp.Verify` with the 2^43-byte bound, in its
    refusal order (rows C3 and C4), and profile 1's canonical construction;
-3. the proof root (spec section 6): every blob is read once more and every
-   4 KiB segment hashed, the subtree root of each blob kept, and the proof
-   root over them compared with the entry's.
+3. the proof root (spec section 6): every 4 KiB segment hashed, the
+   subtree root of each blob kept, and the proof root over them compared
+   with the entry's.
+
+The work is done as the pieces arrive: each piece is hashed by the request
+that brings it (its segment leaves and subtree root, on whatever core
+serves it), and once the root has arrived the content hash advances over
+the blobs in order as they land. When the entry is evaluated, a root that
+names blobs only is checked from what was computed: rebuilt from its blob
+references and the content hash (profile 1's canonical construction), the
+proof files written from the leaves already hashed, nothing read back. A
+closure with branch nodes (over 1 GiB), or pieces that arrived before a
+restart, takes the full check, reading every blob once more. Leaves are
+kept for at most 1,024 pieces and content hashes for 64 roots at a time.
 
 A closure that fails is the writer's fault: every entry it fails is
 declined, and the reason recorded. One that is not complete yet is waited
@@ -289,7 +300,11 @@ outputs do not exceed its inputs, SPV against the provider's headers),
 A paid challenge held is taken (the payment is broadcast and the payee
 collects it) and answered `402` `ERR_PAYMENT_HELD`, with no BRC-105 headers
 so a client does not pay again; the same payment sent again once mined buys
-its answer. A challenge refused on the fast path is answered `400`
+its answer. The payment is not bound to its first request: the seed is
+checked against the tip when it is sent again, as for any answer, so a
+buyer that waited longer than the seed window sends it with a request on a
+fresh seed (a `422 seed` refusal of a held payment says so and names it).
+Waiting is never a reason to refuse a payment already taken. A challenge refused on the fast path is answered `400`
 `ERR_PAYMENT_REFUSED` with a payment-not-taken note (row C30). Without an
 arcade settlement leg (`settle = arcade:<url>`) nothing is fast. Each fast
 payment is watched on the background tick until it mines; one that is
@@ -297,6 +312,17 @@ double-spent or refused is recorded unsettleable and logged, and its payer
 is held for confirmation from then on, across restarts (the payers of the
 book's unsettleable payments are held again when the provider starts).
 Nothing is clawed back.
+
+A writer's remittance taken fast and then lost (its settlement never
+mined) holds that writer's later remittances: each answers `202` and is
+taken once its settlement mines. The writer, for its part, remits the
+settlement it builds in place of an abandoned one only once it mines. When
+the payout scan then finds the entry's hold output spent by a mined
+settlement paying this provider at least what the lost remittance said,
+the loss is made good: it is recorded (`madeGood` in the state) and the
+writer is no longer held on its account, at once and across restarts. A
+loss nobody makes good keeps the writer held; the operator unflags it by
+removing the payment from the book's unsettleable list.
 
 Every payment the provider takes (settlements, paid challenges, renewals)
 goes to `payments.jsonl` in the data directory, the shared payee ledger's

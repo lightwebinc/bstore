@@ -91,6 +91,10 @@ type Config struct {
 	// StoreBytes bounds the local closures kept for reading the gateway's
 	// own writes and for copies.
 	StoreBytes int64 `json:"store_bytes"`
+	// OutboxBytes bounds what each identity's outbox may owe its targets
+	// (a provider that is down) before a put is refused with 503
+	// SlowDown; 0 is 8 GiB.
+	OutboxBytes int64 `json:"outbox_bytes,omitempty"`
 	// MetricsListen, when set, serves /metrics there, and only there.
 	MetricsListen string `json:"metrics_listen,omitempty"`
 }

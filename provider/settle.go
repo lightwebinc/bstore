@@ -5,7 +5,9 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -214,6 +216,7 @@ func (p *Provider) scanPayouts(ctx context.Context) {
 						break
 					}
 				}
+				p.madeGood(e, by, o.Satoshis)
 				p.notePayout(e.C, by, rank, o.Satoshis, "scan")
 				found = true
 				break
@@ -260,4 +263,46 @@ func (p *Provider) forward(ctx context.Context, e EntryRec, by string, tx *trans
 	_ = p.save()
 	p.metrics.inc("bstore_provider_payouts_total", "via=forwarded")
 	p.logf("entry %s: its hold output was spent by %s (height %d); forwarded for the advertiser", short(e.C), short(by), height)
+}
+
+// madeGood: the entry's last known payout was a fast remittance that never
+// mined, and the mined spend by now pays this provider at least as much.
+// The writer built its settlement again and the provider has its share, so
+// the loss is made good: the payer is no longer held for confirmation on
+// its account, at once and across a restart. A later loss flags it again.
+func (p *Provider) madeGood(e EntryRec, by string, sats uint64) {
+	p.mu.Lock()
+	po := p.st.Payouts[e.C]
+	if po == nil || po.Settlement == by || po.Via != "remittance" || !p.st.IsUnsettleable(po.Settlement) || sats < po.Satoshis {
+		p.mu.Unlock()
+		return
+	}
+	if p.st.MadeGood == nil {
+		p.st.MadeGood = map[string]string{}
+	}
+	p.st.MadeGood[po.Settlement] = by
+	lost := po.Settlement
+	_ = p.save()
+	p.mu.Unlock()
+	if !p.stillLost(e.Writer) {
+		p.acc.Exposure.Unflag(e.Writer)
+	}
+	p.logf("entry %s: the lost remittance %s was made good by settlement %s; its writer is no longer held on its account", short(e.C), short(lost), short(by))
+}
+
+// stillLost reports whether payer has a lost payment not made good.
+func (p *Provider) stillLost(payer string) bool {
+	p.mu.Lock()
+	lost := slices.Clone(p.st.Unsettleable)
+	good := maps.Clone(p.st.MadeGood)
+	p.mu.Unlock()
+	for _, u := range lost {
+		if _, ok := good[u.Txid]; ok {
+			continue
+		}
+		if pl := p.ledger.find(u.Txid); pl != nil && strings.EqualFold(pl.SenderIdentityKey, payer) {
+			return true
+		}
+	}
+	return false
 }

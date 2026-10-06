@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 // The flexible checksums S3 clients send, in a header or a trailer
@@ -34,6 +35,10 @@ type bodyHashes struct {
 	sha256 hash.Hash
 	sums   map[string]hash.Hash
 	n      int64
+
+	lanes   []chan []byte
+	pending sync.WaitGroup
+	synced  bool
 }
 
 // newBodyHashes computes MD5 (the ETag), SHA-256 when the payload hash is
@@ -63,26 +68,75 @@ func newBodyHashes(h http.Header, trailer string) *bodyHashes {
 	return b
 }
 
+// Write hands p to every digest. Each digest runs on a goroutine of its
+// own, fed a copy of p, so the request's read loop waits for none of them
+// and the digests overlap each other and the closure's own hashing; sync
+// waits for them all before any digest is read.
 func (b *bodyHashes) Write(p []byte) (int, error) {
-	b.md5.Write(p)
+	b.n += int64(len(p))
+	if b.synced {
+		b.write(p)
+		return len(p), nil
+	}
+	if b.lanes == nil {
+		for _, h := range b.all() {
+			ch := make(chan []byte, 8)
+			b.lanes = append(b.lanes, ch)
+			go func(h hash.Hash) {
+				for c := range ch {
+					h.Write(c)
+					b.pending.Done()
+				}
+			}(h)
+		}
+	}
+	c := append([]byte(nil), p...)
+	b.pending.Add(len(b.lanes))
+	for _, ch := range b.lanes {
+		ch <- c
+	}
+	return len(p), nil
+}
+
+func (b *bodyHashes) all() []hash.Hash {
+	hs := []hash.Hash{b.md5}
 	if b.sha256 != nil {
-		b.sha256.Write(p)
+		hs = append(hs, b.sha256)
 	}
 	for _, h := range b.sums {
+		hs = append(hs, h)
+	}
+	return hs
+}
+
+func (b *bodyHashes) write(p []byte) {
+	for _, h := range b.all() {
 		h.Write(p)
 	}
-	b.n += int64(len(p))
-	return len(p), nil
+}
+
+// sync waits for every digest to take what was written; later writes are
+// hashed in line.
+func (b *bodyHashes) sync() {
+	if b.synced {
+		return
+	}
+	b.synced = true
+	for _, ch := range b.lanes {
+		close(ch)
+	}
+	b.pending.Wait()
 }
 
 // reader tees r through the hashes.
 func (b *bodyHashes) reader(r io.Reader) io.Reader { return io.TeeReader(r, b) }
 
-func (b *bodyHashes) md5Hex() string { return hex.EncodeToString(b.md5.Sum(nil)) }
+func (b *bodyHashes) md5Hex() string { b.sync(); return hex.EncodeToString(b.md5.Sum(nil)) }
 
 // check holds each declared checksum, from the headers or the trailers, to
 // the body: nil, or the S3 error.
 func (b *bodyHashes) check(h http.Header, trailers map[string]string) *s3Error {
+	b.sync()
 	for name, hs := range b.sums {
 		got := base64.StdEncoding.EncodeToString(hs.Sum(nil))
 		want := h.Get("X-Amz-Checksum-" + name)
@@ -103,6 +157,7 @@ func (b *bodyHashes) check(h http.Header, trailers map[string]string) *s3Error {
 
 // responseHeaders echo the checksums a put declared, as S3 does.
 func (b *bodyHashes) responseHeaders(w http.Header) {
+	b.sync()
 	for name, hs := range b.sums {
 		w.Set("x-amz-checksum-"+name, base64.StdEncoding.EncodeToString(hs.Sum(nil)))
 	}

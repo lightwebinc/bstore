@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -468,6 +469,7 @@ func (s *Server) openBody(r *http.Request, a *Auth, max int64) (*body, *s3Error)
 	}
 	bd.r = bd.hashes.reader(raw)
 	bd.check = func() *s3Error {
+		bd.hashes.sync()
 		if bd.hashes.n != length {
 			return errIncomplete
 		}
@@ -543,6 +545,7 @@ func (s *Server) putObject(ctx context.Context, w http.ResponseWriter, r *http.R
 		stageDone()
 		return e
 	}
+	defer bd.hashes.sync()
 	staged, err := s.store.Stage(ctx, bd.r, uint64(bd.length))
 	stageDone()
 	if err != nil {
@@ -559,6 +562,16 @@ func (s *Server) putObject(ctx context.Context, w http.ResponseWriter, r *http.R
 	defer release()
 	s.metrics.add("bstore_s3d_bytes_in_total", int64(staged.Size))
 	etag := bd.hashes.md5Hex()
+	if prev := s.retryOf(a, b, key, ct, meta, etag, staged.Root, staged.Size); prev != nil {
+		// The same write sent again (a retry after a 503): the entry made
+		// for it stands, and is still being delivered; no second entry.
+		s.metrics.add("bstore_s3d_put_retries_total", 1)
+		bd.hashes.responseHeaders(w.Header())
+		w.Header().Set("ETag", `"`+etag+`"`)
+		w.Header()["x-amz-meta-bstore-root"] = []string{hex.EncodeToString(prev.Root[:])}
+		w.WriteHeader(http.StatusOK)
+		return nil
+	}
 	rec, e := s.publishPut(ctx, a, b, key, ct, meta, &etag, publish.Object{Root: staged.Root, Size: staged.Size,
 		ContentHash: staged.ContentHash, ProofRoot: staged.ProofRoot, Closure: publish.StoreClosure{Store: s.store, Manifest: staged.Manifest, Staged: true}})
 	if e != nil {
@@ -598,6 +611,9 @@ func (s *Server) afterPublish(b *bucket, rec *publish.Receipt, err error) (*publ
 		s.opts.Logf("s3d: publish to %s: %v", b.name, err)
 		if errors.Is(err, publish.ErrNoHold) {
 			return rec, &s3Error{"SlowDown", "No mined hold output is ready for the bounty yet; try again shortly.", http.StatusServiceUnavailable}
+		}
+		if errors.Is(err, publish.ErrOutboxFull) {
+			return rec, &s3Error{"SlowDown", "A provider has not taken what this gateway sent it, and the gateway's outbox is at its bound: " + err.Error(), http.StatusServiceUnavailable}
 		}
 		if errors.Is(err, publish.ErrNotSent) {
 			return rec, &s3Error{"SlowDown", "The entry was made but no host took it yet; it is sent again.", http.StatusServiceUnavailable}
@@ -774,6 +790,7 @@ func (s *Server) deleteObjects(ctx context.Context, w http.ResponseWriter, r *ht
 	if e != nil {
 		return e
 	}
+	defer bd.hashes.sync()
 	raw, err := io.ReadAll(io.LimitReader(bd.r, 2<<20+1))
 	if err != nil {
 		return bodyError(err)
@@ -850,4 +867,47 @@ type rcKey struct{}
 func responseControllerOf(r *http.Request) *http.ResponseController {
 	rc, _ := r.Context().Value(rcKey{}).(*http.ResponseController)
 	return rc
+}
+
+// retryWindow is how long after a put's entry the same write, sent again,
+// is answered by that entry instead of a second one.
+const retryWindow = time.Hour
+
+// retryOf is the entry a put made moments ago for exactly this write: the
+// key's newest pending entry at this gateway, made within retryWindow by
+// the same identity, of the same content (root and size), content type,
+// ETag and metadata. A client that retries a put after a 503 SlowDown
+// (whose entry stays in the outbox, to be delivered) gets that entry
+// instead of a second one for the same content. Any other write to the key
+// in between is newer, and a retry after it makes a new entry, as it must.
+func (s *Server) retryOf(a *Auth, b *bucket, key, ct string, meta []storerec.MetaPair, etag string, root [32]byte, size uint64) *storerec.Entry {
+	p := s.pubs[a.Key.Identity]
+	if p == nil {
+		return nil
+	}
+	return s.st.retryOf(b.chain.Bucket, b.chain.ID, p.Identity(), key, ct, meta, etag, root, size, s.opts.Now())
+}
+
+func (s *state) retryOf(bucket string, id [32]byte, writer []byte, key, ct string, meta []storerec.MetaPair, etag string, root [32]byte, size uint64, now time.Time) *storerec.Entry {
+	pe := s.newest(bucket, key)
+	if pe == nil || now.Sub(time.Unix(pe.Seen, 0)) > retryWindow {
+		return nil
+	}
+	e := pe.decoded()
+	if e == nil || e.Kind != storerec.KindPut || e.ID != id || !bytes.Equal(e.Writer, writer) || e.Root != root || e.Size != size ||
+		e.ContentType != ct || e.ETag == nil || *e.ETag != etag || !sameMeta(e.Meta, meta) {
+		return nil
+	}
+	return e
+}
+
+func sameMeta(a, b []storerec.MetaPair) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	x, y := slices.Clone(a), slices.Clone(b)
+	cmp := func(p, q storerec.MetaPair) int { return strings.Compare(p.Key, q.Key) }
+	slices.SortFunc(x, cmp)
+	slices.SortFunc(y, cmp)
+	return slices.Equal(x, y)
 }

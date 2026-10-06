@@ -96,6 +96,9 @@ type Reader struct {
 	// OnToken, when set, is handed every token a walk verifies past the one
 	// held, oldest first: what it names is the map's from then on.
 	OnToken func(b *storerec.Bucket)
+	// WalkDir, when set, keeps a walk's progress across a restart
+	// (walkstore.go).
+	WalkDir string
 
 	walkMu  sync.Map // chain key -> *sync.Mutex
 	walks   sync.Map // chain key and target txid -> *walkJob
@@ -103,6 +106,7 @@ type Reader struct {
 	unspent sync.Map // txid -> time checked unspent
 	ads     adCache
 	bad     badSources
+	wf      walkFiles
 }
 
 func (r *Reader) logf(format string, args ...any) {
@@ -357,8 +361,11 @@ func (r *Reader) walk(ctx context.Context, host string, c Chain, t *Token) error
 		}
 	}
 	if r.Held != nil {
-		return r.Held.SetHeld(c.key(), storerec.Held{Seq: t.Bucket.Seq, Txid: t.Txid})
+		if err := r.Held.SetHeld(c.key(), storerec.Held{Seq: t.Bucket.Seq, Txid: t.Txid}); err != nil {
+			return err
+		}
 	}
+	r.walkDone(c)
 	return nil
 }
 
@@ -394,6 +401,9 @@ func (r *Reader) tokenAt(ctx context.Context, host string, c Chain, seq uint64, 
 	if t := r.tokens.get(want); t != nil && t.Bucket.Seq == seq {
 		return t, nil
 	}
+	if t := r.walkSaved(ctx, c, seq, want); t != nil {
+		return t, nil
+	}
 	hosts := append([]string{host}, r.others(host)...)
 	for _, h := range hosts {
 		a, err := r.ask(ctx, h, c.query("seq", strconv.FormatUint(seq, 10)))
@@ -403,6 +413,7 @@ func (r *Reader) tokenAt(ctx context.Context, host string, c Chain, seq uint64, 
 		for _, o := range a.Outputs {
 			t, err := r.verifyToken(ctx, c, o)
 			if err == nil && t.Txid == want && t.Bucket.Seq == seq {
+				r.walkKeep(c, want, o)
 				return t, nil
 			}
 		}

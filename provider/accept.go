@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"slices"
 	"time"
@@ -191,7 +192,7 @@ func (p *Provider) reencoded(txid string) bool {
 // BRC-105 headers, so a client does not pay again.
 func heldReply(txid string, v acceptance.Verdict) auth104.Reply {
 	return auth104.JSON(http.StatusPaymentRequired, map[string]any{"status": "error", "code": "ERR_PAYMENT_HELD", "txid": txid,
-		"reason": string(v.Reason), "description": fmt.Sprintf("the payment is broadcast and held for confirmation (%s); send it again once it is mined", v.Reason)})
+		"reason": string(v.Reason), "description": fmt.Sprintf("the payment is broadcast and held for confirmation (%s); send it again once it is mined, with a request on a fresh seed for a challenge", v.Reason)})
 }
 
 // heldFor is how long a held challenge payment waits to be sent again
@@ -238,8 +239,12 @@ func (p *Provider) confirmHeld(ctx context.Context) {
 		// A payer whose payment was lost stays held across a restart.
 		p.mu.Lock()
 		lost := slices.Clone(p.st.Unsettleable)
+		good := maps.Clone(p.st.MadeGood)
 		p.mu.Unlock()
 		for _, u := range lost {
+			if _, ok := good[u.Txid]; ok {
+				continue
+			}
 			if pl := p.ledger.find(u.Txid); pl != nil && pl.SenderIdentityKey != "" {
 				p.acc.Exposure.Flag(pl.SenderIdentityKey, "unsettleable: "+u.Txid)
 			}

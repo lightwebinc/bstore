@@ -20,6 +20,7 @@ import (
 	"github.com/lightwebinc/bcommon/acceptance"
 	"github.com/lightwebinc/bcommon/cbor"
 	"github.com/lightwebinc/bcommon/commit"
+	"github.com/lightwebinc/bcommon/guard"
 	"github.com/lightwebinc/bcommon/pushdrop"
 
 	"github.com/lightwebinc/bstore/auth104"
@@ -95,6 +96,15 @@ func (p *Provider) challengeAnswer(ctx context.Context, r *http.Request, body []
 	if _, err := storerec.AnswerCheck(raw, uint64(tip), p.headerAt(ctx), p.own); err != nil {
 		switch {
 		case errors.Is(err, storerec.ErrSeed):
+			// A payment held for confirmation and sent again once mined is
+			// not bound to its first request: the seed is checked against
+			// the tip now, as for any answer, and the payment stays good
+			// for a request on a fresh seed (it is never refused for the
+			// time it waited).
+			if txid := heldPaymentTxid(r.Header.Get("x-bsv-payment")); txid != "" && p.isHeld(txid) {
+				return auth104.JSON(http.StatusUnprocessableEntity, map[string]string{"error": "seed", "held": txid,
+					"description": "the seed is outside the window; the held payment stays good: send it again with a request on a fresh seed"})
+			}
 			return refuse422("seed")
 		case errors.Is(err, storerec.ErrUnknownRoot):
 			return refuse422("unknown-root")
@@ -536,4 +546,27 @@ func (p *Provider) signResponse(ctx context.Context, raw, body []byte) ([]byte, 
 		return nil, errors.New("the response signature does not verify under the derived challenge key")
 	}
 	return cbor.Encode([]cbor.Value{body, sig})
+}
+
+// heldPaymentTxid is the txid of a BRC-105 payment header's transaction,
+// or "" when the header is not one.
+func heldPaymentTxid(h string) string {
+	if h == "" {
+		return ""
+	}
+	var pm struct {
+		Transaction string `json:"transaction"`
+	}
+	if json.Unmarshal([]byte(h), &pm) != nil {
+		return ""
+	}
+	beef, err := base64.StdEncoding.Strict().DecodeString(pm.Transaction)
+	if err != nil || len(beef) > maxPaymentBEEF {
+		return ""
+	}
+	_, _, txid, err := guard.ParseBEEF(beef, maxPaymentBEEF)
+	if err != nil || txid == nil {
+		return ""
+	}
+	return txid.String()
 }

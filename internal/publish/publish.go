@@ -132,6 +132,9 @@ type Config struct {
 	// should refuse private ones. Nil uses Delivery's client.
 	FrontHTTP *http.Client
 	Logf      func(format string, args ...any)
+	// OutboxMax bounds the bytes the outbox may owe before a put is
+	// refused (ErrOutboxFull); 0 is DefaultOutboxMax.
+	OutboxMax int64
 	Now       func() time.Time
 }
 
@@ -309,6 +312,7 @@ func Open(ctx context.Context, cfg Config) (*Publisher, error) {
 	if p.outbox, err = openOutbox(filepath.Join(cfg.Dir, "outbox"), cfg.Delivery, cfg.Store, cfg.Logf, cfg.Now); err != nil {
 		return nil, err
 	}
+	p.outbox.Max = cfg.OutboxMax
 	p.auth = newAuthClient(p, cfg.Delivery.HTTP)
 	fh := cfg.FrontHTTP
 	if fh == nil {

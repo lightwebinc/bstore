@@ -83,7 +83,11 @@ func (s *Store) Put(b []byte) ([32]byte, error) {
 // put stores an object and, with pin, pins it in the same step, so Trim
 // cannot remove an object a stage found already held.
 func (s *Store) put(b []byte, pin bool) ([32]byte, bool, error) {
-	h := sha256.Sum256(b)
+	return s.putHashed(sha256.Sum256(b), b, pin)
+}
+
+// putHashed is put of bytes whose SHA-256 the caller just computed.
+func (s *Store) putHashed(h [32]byte, b []byte, pin bool) ([32]byte, bool, error) {
 	p := s.objectPath(h)
 	s.mu.Lock()
 	if pin {

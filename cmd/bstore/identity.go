@@ -259,6 +259,21 @@ func cmdDoctor(ctx context.Context, g *global, args []string) error {
 		states[r.State]++
 	}
 	g.out("races       %d %v", len(races), states)
+	for _, r := range races {
+		if age, ok := r.RemittedAge(time.Now()); ok && age >= publish.RemittedStale {
+			g.out("ALARM       race %s: settlement %s remitted %s ago, no proof served: it may never mine", short(r.Entry), short(r.Settlement.Txid), age.Truncate(time.Second))
+		}
+	}
+	total, by := h.pub.Outbox().Owed()
+	if total > 0 {
+		worst, most := "", int64(0)
+		for u, n := range by {
+			if n > most {
+				worst, most = u, n
+			}
+		}
+		g.out("owed        %d bytes in the outbox, most to %s (%d)", total, worst, most)
+	}
 	chains, _ := h.tool.Store.Load()
 	for _, c := range chains {
 		p := ""
@@ -571,6 +586,10 @@ func cmdDue(ctx context.Context, g *global, args []string) error {
 		case publish.RaceSettling:
 			note("race %s: settlement %s not yet seen mined (bstore settle)", short(r.Entry), short(r.Settlement.Txid))
 		case publish.RaceRemitted:
+			if age, _ := r.RemittedAge(time.Now()); age >= publish.RemittedStale {
+				note("race %s: ALARM settlement %s remitted %s ago and the node serves no proof of it: it may never mine (bstore settle; check the node and arcade)", short(r.Entry), short(r.Settlement.Txid), age.Truncate(time.Second))
+				break
+			}
 			note("race %s: settlement %s remitted on the network's acceptance, not yet seen mined (bstore settle collects its proof)", short(r.Entry), short(r.Settlement.Txid))
 		case publish.RaceSettled:
 			if err := h.pub.CheckPayouts(ctx, r); err != nil {

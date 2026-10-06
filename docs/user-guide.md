@@ -340,7 +340,7 @@ through the command line with the gateway stopped.
 | exit 3, `incomplete` | something is still owed or a host answered what does not verify (named) | `bstore sync`, then the command again; `bstore due` |
 | `bucket new` exits 3 | the hosts do not carry the bucket yet | give the operators the `served` line; `bstore sync` once they do |
 | `bucket new` exits 1, refused | a host refused the first token | read the reason (`-v`); make a fresh bucket if it is the token's |
-| a put answers `503 SlowDown` | no hold output ready, or the entry not taken in time | wait and retry; a retry after the entry was made makes a second entry |
+| a put answers `503 SlowDown` | no hold output ready, or the entry not taken in time | wait and retry; the same write retried within an hour is answered from the entry already made, with no second entry |
 | `challenge` exits 2, cannot pay | the pool's change waits for a proof | `bstore sync` after a block, or fund the home |
 | `due` lists a forwarded remittance | a bridged incumbent's share, forwarded by its bridge | nothing: it clears when the payee spends its output |
 | a provider named as serving wrong bytes | its copy is damaged or it lies | challenge it; publish the outcome |

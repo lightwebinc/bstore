@@ -2,10 +2,12 @@ package publish
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/lightwebinc/bstore/storerec"
 )
@@ -34,43 +36,54 @@ func (s *Staged) Release() {
 	}
 }
 
+// StageWorkers is how many blobs Stage hashes and stores at once
+// (storerec.Parallel); 0 is storerec.DefaultWorkers.
+var StageWorkers = 0
+
 // Stage reads content from r to its end, at most max bytes, building the
-// closure and the proof root as it streams: each 4 MiB blob goes to the
-// store as soon as it is complete, so memory holds one blob and one
-// segment whatever the content's size (spec section 16.2). An error from r,
-// or content over max (ErrTooLarge), leaves nothing to publish.
+// closure and the proof root as it streams: each 4 MiB blob is hashed and
+// goes to the store as soon as it is complete, on one of several cores
+// (storerec.Parallel), while the content hash runs on another, so memory
+// holds a few blobs whatever the content's size (spec section 16.2). An
+// error from r, or content over max (ErrTooLarge), leaves nothing to
+// publish.
 func (st *Store) Stage(ctx context.Context, r io.Reader, max uint64) (*Staged, error) {
 	if max > storerec.MaxSize {
 		max = storerec.MaxSize
 	}
-	var blobs []string
+	var mu sync.Mutex
+	blobs := map[int]string{}
 	var pinned, wrote [][32]byte
 	ok := false
+	put := func(h [32]byte, b []byte) error {
+		h, w, err := st.putHashed(h, b, true)
+		mu.Lock()
+		pinned = append(pinned, h)
+		if w {
+			wrote = append(wrote, h)
+		}
+		mu.Unlock()
+		return err
+	}
+	b := storerec.NewParallel(cmpOr(StageWorkers, storerec.DefaultWorkers()), func(i int, h [32]byte, blob []byte) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := put(h, blob); err != nil {
+			return err
+		}
+		mu.Lock()
+		blobs[i] = hex.EncodeToString(h[:])
+		mu.Unlock()
+		return nil
+	})
 	defer func() {
+		b.Abort()
 		if !ok {
 			st.unpin(pinned)
 			st.unstage(wrote)
 		}
 	}()
-	put := func(b []byte) ([32]byte, error) {
-		h, w, err := st.put(b, true)
-		pinned = append(pinned, h)
-		if w {
-			wrote = append(wrote, h)
-		}
-		return h, err
-	}
-	b := storerec.NewStreaming(func(blob []byte) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		h, err := put(blob)
-		if err != nil {
-			return err
-		}
-		blobs = append(blobs, hex.EncodeToString(h[:]))
-		return nil
-	})
 	buf := make([]byte, 256<<10)
 	var n uint64
 	for {
@@ -95,13 +108,16 @@ func (st *Store) Stage(ctx context.Context, r io.Reader, max uint64) (*Staged, e
 	if err != nil {
 		return nil, err
 	}
-	if _, err := put(built.Root); err != nil {
+	if err := put(built.RootHash, built.Root); err != nil {
 		return nil, err
 	}
-	m := &Manifest{Root: hex.EncodeToString(built.RootHash[:]), Size: built.Size, Blobs: blobs}
+	m := &Manifest{Root: hex.EncodeToString(built.RootHash[:]), Size: built.Size}
+	for i := range len(blobs) {
+		m.Blobs = append(m.Blobs, blobs[i])
+	}
 	for _, br := range built.Branches {
-		h, err := put(br)
-		if err != nil {
+		h := sha256.Sum256(br)
+		if err := put(h, br); err != nil {
 			return nil, err
 		}
 		m.Branches = append(m.Branches, hex.EncodeToString(h[:]))
@@ -119,6 +135,13 @@ func (st *Store) Stage(ctx context.Context, r io.Reader, max uint64) (*Staged, e
 	}
 	return &Staged{Root: built.RootHash, ContentHash: built.ContentHash, ProofRoot: built.ProofRoot, Size: built.Size,
 		Manifest: m, release: release}, nil
+}
+
+func cmpOr(a, b int) int {
+	if a > 0 {
+		return a
+	}
+	return b
 }
 
 // Closure is a closure's objects, wherever they come from: the store for

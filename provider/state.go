@@ -45,6 +45,11 @@ type State struct {
 	// Payouts are the settlements found paying this provider, by entry
 	// commitment: from a remittance or from the hold output's spend.
 	Payouts map[string]*Payout `json:"payouts"`
+	// MadeGood are lost fast remittances (unsettleable) whose entry's hold
+	// output was later spent by a mined settlement paying this provider at
+	// least as much, by the lost txid: the writer made the loss good, so it
+	// is not held for confirmation on their account.
+	MadeGood map[string]string `json:"madeGood,omitempty"`
 	// Owed are renewals paid for and not made yet.
 	Owed []Owed `json:"owed,omitempty"`
 	// Held are challenge payments taken and held for confirmation, by

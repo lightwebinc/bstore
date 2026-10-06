@@ -317,6 +317,7 @@ func (p *Provider) keepPiece(data []byte, rootHex, bucket, writer string) string
 		p.dirty = true
 		p.mu.Unlock()
 	}
+	p.arrived(h, data, mustHash(rootHex))
 	p.mu.Lock()
 	wanted := false
 	for _, e := range p.st.Entries {

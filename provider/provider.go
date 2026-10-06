@@ -143,6 +143,7 @@ type Provider struct {
 	acc    *acceptance.Verifier
 	mon    *acceptance.Monitor
 	reflag sync.Once
+	inc    *incremental
 	hc     *headers.Client
 	hosts  []*publish.Facade
 	facade *publish.Facade
@@ -238,7 +239,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 	} else if st.Identity != signer.IdentityHex() {
 		return nil, fmt.Errorf("the state belongs to identity %s, not this wallet's %s", st.Identity, signer.IdentityHex())
 	}
-	p := &Provider{cfg: cfg, opts: opts, st: st, wallet: w, signer: signer, pool: w.Pool,
+	p := &Provider{cfg: cfg, inc: newIncremental(), opts: opts, st: st, wallet: w, signer: signer, pool: w.Pool,
 		queue: make(chan string, 4096), queued: map[string]bool{}, metrics: newMetrics()}
 	if err := p.legs(); err != nil {
 		return nil, err

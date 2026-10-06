@@ -216,6 +216,15 @@ func (m *metrics) add(name string, v int64) {
 	c.Add(v)
 }
 
+// set sets a gauge.
+func (m *metrics) set(name string, v int64) {
+	m.add(name, 0)
+	m.mu.Lock()
+	c := m.c[name]
+	m.mu.Unlock()
+	c.Store(v)
+}
+
 func (m *metrics) request(op string, status int) {
 	m.add(fmt.Sprintf("bstore_s3d_requests_total{op=%q,status=\"%d\"}", op, status), 1)
 }

@@ -252,7 +252,10 @@ func (p *Provider) verifyRoot(ctx context.Context, rootHex string, entries []*En
 		return false, nil
 	}
 	entries = fit
-	c, err := storerec.VerifyCHIRP(root, p.fetch)
+	c := p.quickClosure(root, rootBytes)
+	if c == nil {
+		c, err = storerec.VerifyCHIRP(root, p.fetch)
+	}
 	if err != nil {
 		if errors.Is(err, storerec.ErrClosure) {
 			// Not all here yet; looked at again when the next piece lands.
@@ -310,6 +313,7 @@ func (p *Provider) verifyRoot(ctx context.Context, rootHex string, entries []*En
 	if err := p.save(); err != nil {
 		return false, err
 	}
+	p.inc.forget(root, c.Blobs)
 	p.logf("root %s: closure verified (%d objects, %d bytes, proof root %s)", short(rootHex), len(c.Objects), e.Size, short(h.ProofRoot))
 	if p.export != nil {
 		if err := p.export.Add(root, c.Objects); err != nil {
@@ -345,21 +349,24 @@ func (p *Provider) writeProofFiles(rootHex string, c *chirp.Closure) ([32]byte, 
 	}
 	var roots [][32]byte
 	for _, b := range c.Blobs {
-		blob, err := p.fetch(b.Hash)
-		if err != nil || sha256.Sum256(blob) != b.Hash {
-			return [32]byte{}, 0, errIncomplete
-		}
-		leaves := make([]byte, 0, 32*storerec.SegmentsPerBlob)
-		var lh [][32]byte
-		for off := 0; off < len(blob); off += storerec.SegmentSize {
-			l := commit.HashLeaf(blob[off:min(off+storerec.SegmentSize, len(blob))])
-			lh = append(lh, l)
-			leaves = append(leaves, l[:]...)
+		leaves, r, ok := p.preLeaves(b.Hash)
+		if !ok {
+			blob, err := p.fetch(b.Hash)
+			if err != nil || sha256.Sum256(blob) != b.Hash {
+				return [32]byte{}, 0, errIncomplete
+			}
+			leaves = make([]byte, 0, 32*storerec.SegmentsPerBlob)
+			var lh [][32]byte
+			for off := 0; off < len(blob); off += storerec.SegmentSize {
+				l := commit.HashLeaf(blob[off:min(off+storerec.SegmentSize, len(blob))])
+				lh = append(lh, l)
+				leaves = append(leaves, l[:]...)
+			}
+			r = commit.RootOfLeafHashes(lh)
 		}
 		if _, err := files["leaves"].Write(leaves); err != nil {
 			return [32]byte{}, 0, err
 		}
-		r := commit.RootOfLeafHashes(lh)
 		roots = append(roots, r)
 		if _, err := files["blobroots"].Write(r[:]); err != nil {
 			return [32]byte{}, 0, err

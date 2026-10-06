@@ -336,7 +336,9 @@ advertisement; 1 an answer that does not check; 2 a price over the budget.
 - `due` lists what is owed, and exits 3 when anything is: undelivered
   objects, open races with the blocks left to their deadline, settlements
   not mined or not remitted, bounties to reclaim, entries no token has
-  named, tokens recorded and not published. It asks the node about each
+  named, tokens recorded and not published. A settlement remitted before
+  it mines whose proof the node has not served for an hour is named as an
+  `ALARM` (by `doctor` too): it may never mine. It asks the node about each
   unremitted payee's output first: a spent one is done. A forwarded
   payee's share (above) is listed and not owed. A claim by an incumbent's
   operator (`bstore-bridge claim`) is not visible from here: it changes

@@ -118,7 +118,7 @@ every host.
 | A token | 65,536 bytes encoded, 16 writers, 1,024 changes and 1,024 consumed; `anchor` splits a larger interval | contract |
 | A token on chain | 616 to 727 bytes, 620 to 731 satoshis | measured (4 tokens) |
 | Cadence | when the owner runs `anchor`, at most one token a block: each spends the last and is minted only once the last is mined in the owner's headers. Until then a put is pending: readable at the writing gateway, and as a claim by `pending` | contract |
-| An anchoring run | 19.7 s for one change (v0.3.0), 32.1 s for a delete (each a block and both hosts) | measured |
+| An anchoring run | 19.7 s for one change, 26.8 s for a delete (v0.3.0; each a block and both hosts) | measured |
 | Its walk | 16,384 `unanchored` pages a writer and host, ten minutes in all | set |
 
 ## Reading
@@ -177,23 +177,36 @@ not do, stated so that nobody finds it by accident.
    by-reference sample proves the advertised URL served the bytes, not
    whose disk they are on: an advertiser that proxies another provider's
    blob route passes its challenges. As with keys that are not copies
-   (spec section 9.7), independence is the writer's judgement.
+   (spec section 9.7), independence is the writer's judgement. No
+   clarification closes it: a sample can show that bytes were served, never
+   whose copy they are, short of a sealed copy per advertiser, which is a
+   new proof format, not a reading of this one.
 2. **Tie-key grinding is still open to a late advertiser.** Ties in first
    sight break by `SHA-256(txid || vout || C)` (frozen.md A1), which nobody
    can grind before the entry exists. A provider that advertises only after
    the entry is published can still grind its advertisement's txid, and
-   wins only ties with advertisements first seen in that same look.
+   wins only ties with advertisements first seen in that same look. Closing
+   it means a tie key the advertiser cannot know when it mints (a later
+   block's hash, say), which changes amendment A1's rule and its vectors: an
+   amendment, not a clarification, and the gain is a rank among ties in one
+   look only.
 3. **A bridged incumbent gets one draw.** Its own derived front does not
    exist: the first draw at it is spent, at once when the incumbent answers
    `404` and after three tries when it does not answer, and that front is
    not asked again (C23, C29); the second draw reaches the bridge's front in
    the same look. A native provider has two draws in which to answer.
+   Clarification C31 ([frozen.md](frozen.md) section 14, pending owner
+   confirmation) would not count a `404 ERR_ROUTE_NOT_FOUND` from a
+   derived front as a draw, giving the incumbent two; until it is
+   confirmed the clients count it as C23 and C29 say.
 4. **Incumbents that ignore `Range` cost 4 MiB a sample.** A bridge reads
    each sampled segment from the incumbent's URL; when the incumbent
    answers a ranged request with the whole blob, a challenge of `c` reads
    up to `c` x 4 MiB there, and is priced per sample all the same. The
    bridge probes `Range` after each commit and daily, and states what it
-   found.
+   found. Prices are the provider's own terms, not the contract's, so this
+   needs no clarification: a bridge in front of such an incumbent prices
+   its samples for what they cost it.
 5. **A refused paid challenge without a note holds a coin for an hour.**
    The buyer builds its payment on the provider's 402; a provider that then
    refuses (`unknown-root`) takes nothing. This version's providers say so
@@ -211,21 +224,32 @@ not do, stated so that nobody finds it by accident.
    the payee's output spent, the payee is done. A claim alone is not
    visible: `bstore-bridge claim` prints what the incumbent's wallet takes
    in, and nothing reaches the chain until that wallet spends the output.
-7. **The first chain walk restarts after a gateway restart.** A gateway
-   walks a bucket's chain back from its latest token in the background; the
-   walk is not kept across a restart, so a restarted gateway asks a host one
-   question per token again before it answers from the chain.
-8. **A 503 retry duplicates an entry.** A put whose entry was not taken in
-   time answers `503 SlowDown` and the entry stays in the outbox, to be
-   delivered; a client that retries the put makes a second entry for the
-   same content, and the later one decides the key. Nothing is lost, and
-   the owner's anchor consumes the earlier one.
-9. **The outbox can grow while a provider is down.** Every piece a target
-   has not taken is kept and sent again, the same bytes, for a week. A
-   piece is kept by reference to the local store's copy of its object,
-   which stays pinned there while it is owed, so a provider that stays
-   down while large objects are written holds them in the store beyond
-   its bound.
+7. **A chain walk cut short by a restart resumes, but only from what it
+   kept.** A gateway walks a bucket's chain back from its latest token in
+   the background, and keeps every token it verifies in a file of the
+   chain's (`walks/` under its data directory, at most 64 MiB a chain)
+   until the walk completes. A restarted gateway verifies those tokens
+   again against its own headers, without asking a host, and asks only for
+   the rest. A chain longer than the file holds asks hosts again for the
+   part past it.
+8. **A retry is the same entry only while it is recent and the key's
+   newest.** A put whose entry was not taken in time answers `503
+   SlowDown` and the entry stays in the outbox, to be delivered. The same
+   write sent again (same identity, key, content, content type, ETag and
+   metadata) within an hour, while that entry is still the key's newest
+   pending one at the gateway, is answered `200` from it, and no second
+   entry is made. A retry after another write to the key, after the hour,
+   or at another gateway makes a second entry for the same content; the
+   later one decides the key, and the owner's anchor consumes the earlier.
+9. **A provider that stays down stops the gateway's puts at a bound.**
+   Every piece a target has not taken is kept and sent again, the same
+   bytes, for a week, pinned in the local store while it is owed. Past
+   `outbox_bytes` owed (default 8 GiB per identity) a put is refused
+   before anything is spent, `503 SlowDown`, naming the target that owes
+   most; it is taken again once that target takes what it is owed (or the
+   week passes). The bound counts what is owed, so one provider that is
+   down for long enough stops every put of the identity, by design: the
+   alternative is a store that grows without bound.
 10. **The reference host gives a module no engine handle.** So:
     - **no evict:** the module drops an object through the storage the host
       hands it after the engine has recorded the admission, never by an
@@ -239,11 +263,16 @@ not do, stated so that nobody finds it by accident.
 11. **The blob topics carry nothing yet.** Pieces travel by unicast (Plane
     and unicast, above), so a blob topic a host or a consumer subscribes
     to is delivered nothing; a directory host should not subscribe to one.
-12. **The S3 gateway settles only through the command line.** Its puts'
-    races are judged and settled by `bstore holds` and `bstore settle` with
-    `-home` at the identity's directory while the gateway is stopped
-    ([usage.md](usage.md)). A race run in the background of `bstore s3d`
-    is planned for a later version.
+12. **A settlement remitted before it mines can stay unmined.** A
+    settlement at or below the acceptance threshold is remitted on arcade's
+    word that the network took it (race state `remitted`). When the node
+    serves no proof of it for an hour, the gateway's
+    `bstore_s3d_races_remitted_stale` gauge counts it and `bstore doctor`
+    names it as an alarm. If it never mines because its fee coin went
+    elsewhere, the next settlement of the race is remitted only once it
+    mines; its payees hold the writer's later remittances for confirmation
+    until a mined settlement pays them at least what the lost one said
+    (provider.md, Payment acceptance).
 13. **The incumbent in the tests is a stand-in.** The bridge is tested
     against `internal/fakeuhrp` in bstore-bridge, written from the
     incumbent server's published HTTP descriptions, not against the

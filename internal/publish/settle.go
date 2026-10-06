@@ -51,6 +51,9 @@ type SettleRecord struct {
 	// Abandoned is set when the network never took this settlement and
 	// the hold output went elsewhere.
 	Abandoned string `json:"abandoned,omitempty"`
+	// RemittedAt is when it was remitted before mining (Unix seconds);
+	// zero when it was remitted, if at all, only once mined.
+	RemittedAt int64 `json:"remittedAt,omitempty"`
 }
 
 // PayeeRecord is one rank of a settlement.

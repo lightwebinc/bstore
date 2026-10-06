@@ -181,6 +181,25 @@ type Outbox struct {
 	// live are the batch files a put is writing: the background run
 	// leaves them to it.
 	live map[string]bool
+	// Max bounds the bytes owed (0 is DefaultOutboxMax); owed is the
+	// last count, and owedAt when it was taken.
+	Max    int64
+	owed   owedCount
+	owedAt time.Time
+}
+
+// DefaultOutboxMax is the bytes an identity's outbox may owe before a put
+// is refused: what targets have not taken (a provider that is down), kept
+// as files of the outbox's own or pinned in the store.
+const DefaultOutboxMax = 8 << 30
+
+// ErrOutboxFull is a put refused because the outbox owes more than its
+// bound: a target has not taken what was sent it. Nothing is spent.
+var ErrOutboxFull = errors.New("publish: the outbox is full")
+
+type owedCount struct {
+	total  int64
+	byDest map[string]int64
 }
 
 type outItem struct {
@@ -436,6 +455,7 @@ func (o *Outbox) RetryAll(ctx context.Context) { o.retry(ctx, true) }
 func (o *Outbox) retry(ctx context.Context, all bool) {
 	items := o.load()
 	defer o.closeBatches(items)
+	defer o.count()
 	sort.SliceStable(items, func(i, j int) bool { return items[i].Created.Before(items[j].Created) })
 	for _, it := range items {
 		if ctx.Err() != nil {
@@ -695,4 +715,72 @@ func (keptTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1,
 		Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(raw)),
 		ContentLength: int64(len(raw)), Request: req}, nil
+}
+
+// itemBytes is what an item keeps owed: its own BEEF file, or the stored
+// object it refers to with its head and tail.
+func (o *Outbox) itemBytes(it *outItem) int64 {
+	if it.Ref == "" {
+		bp, _ := o.paths(it.ID)
+		if fi, err := os.Stat(bp); err == nil {
+			return fi.Size()
+		}
+		return 0
+	}
+	n := int64(len(it.Head) + len(it.Tail))
+	if h, err := parseHash(it.Ref); err == nil && o.store != nil {
+		if fi, err := os.Stat(o.store.objectPath(h)); err == nil {
+			n += fi.Size()
+		}
+	}
+	return n
+}
+
+// count takes the bytes owed, in all and by target.
+func (o *Outbox) count() owedCount {
+	items := o.load()
+	c := owedCount{byDest: map[string]int64{}}
+	for _, it := range items {
+		n := o.itemBytes(it)
+		c.total += n
+		for _, t := range it.Targets {
+			c.byDest[t.Base] += n
+		}
+	}
+	o.mu.Lock()
+	o.owed, o.owedAt = c, o.now()
+	o.mu.Unlock()
+	return c
+}
+
+// Owed is the bytes the outbox owes, in all and by target URL, counted at
+// most a few seconds ago.
+func (o *Outbox) Owed() (int64, map[string]int64) {
+	o.mu.Lock()
+	c, at := o.owed, o.owedAt
+	o.mu.Unlock()
+	if at.IsZero() || o.now().Sub(at) > 5*time.Second {
+		c = o.count()
+	}
+	return c.total, c.byDest
+}
+
+// room refuses a put of size more bytes when the outbox owes its bound
+// already, naming the target that owes most.
+func (o *Outbox) room(size int64) error {
+	limit := o.Max
+	if limit <= 0 {
+		limit = DefaultOutboxMax
+	}
+	total, by := o.Owed()
+	if total+size <= limit || total == 0 {
+		return nil
+	}
+	worst, most := "", int64(0)
+	for u, n := range by {
+		if n > most || n == most && u < worst {
+			worst, most = u, n
+		}
+	}
+	return fmt.Errorf("%w: %d bytes owed against a bound of %d; %s has not taken %d bytes (is it down?); try again once it has", ErrOutboxFull, total, limit, worst, most)
 }

@@ -275,6 +275,7 @@ func (s *Server) uploadPart(ctx context.Context, w http.ResponseWriter, r *http.
 	if e != nil {
 		return e
 	}
+	defer bd.hashes.sync()
 	f, err := os.CreateTemp(up.dir, "tmp-*")
 	if err != nil {
 		return errNoSuchUpload
@@ -380,6 +381,7 @@ func (s *Server) completeUpload(ctx context.Context, w http.ResponseWriter, r *h
 	if e != nil {
 		return e
 	}
+	defer bd.hashes.sync()
 	raw, err := io.ReadAll(io.LimitReader(bd.r, 4<<20+1))
 	if err != nil {
 		return bodyError(err)
@@ -481,6 +483,7 @@ func (s *Server) completeUpload(ctx context.Context, w http.ResponseWriter, r *h
 		return nil
 	}
 	sums := newBodyHashes(whole, "")
+	defer sums.sync()
 	staged, err := s.store.Stage(context.WithoutCancel(ctx), sums.reader(&partsReader{files: files}), uint64(total))
 	if err != nil {
 		s.opts.Logf("s3d: completing upload %s: %v", up.ID, err)

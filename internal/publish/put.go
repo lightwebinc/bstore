@@ -95,6 +95,14 @@ func (p *Publisher) Put(ctx context.Context, f Fields, obj Object, b *Bounty) (*
 	if p.Killed() {
 		return nil, ErrKilled
 	}
+	// Backpressure: a target that takes nothing (a provider down) leaves
+	// its share owed in the outbox; past the bound new puts are refused
+	// until it takes it, rather than pinning ever more of the store.
+	if obj.Closure != nil {
+		if err := p.outbox.room(int64(obj.Size)); err != nil {
+			return nil, err
+		}
+	}
 	p.mintMu.Lock()
 	defer p.mintMu.Unlock()
 	var hold *HoldRecord

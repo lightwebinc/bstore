@@ -31,6 +31,14 @@ func (p *Publisher) remitUnmined(ctx context.Context, r *Race, tx *transaction.T
 		if p.cfg.Status == nil || p.cfg.Asset == nil {
 			return false, nil
 		}
+		if r.RemittedBefore() {
+			// A settlement of this race was remitted unmined and never
+			// mined: its payees were told of a payment they never got, and
+			// hold this writer for confirmation. The one built in its
+			// place is remitted only once it mines.
+			p.cfg.Logf("settlement %s: an earlier settlement of this race was remitted and never mined; remitted once mined", short(s.Txid))
+			return false, nil
+		}
 		var largest uint64
 		for _, py := range s.Payees {
 			largest = max(largest, py.Satoshis)
@@ -51,6 +59,7 @@ func (p *Publisher) remitUnmined(ctx context.Context, r *Race, tx *transaction.T
 	}
 	if r.State != RaceRemitted {
 		r.State = RaceRemitted
+		s.RemittedAt = p.cfg.Now().Unix()
 		if err := p.saveRace(r); err != nil {
 			return true, err
 		}
@@ -137,4 +146,50 @@ func (p *Publisher) withSources(r *Race, tx *transaction.Transaction) error {
 		in.SourceTransaction = src
 	}
 	return nil
+}
+
+// RemittedBefore reports whether a settlement of this race was remitted
+// before mining and then abandoned (it could never mine).
+func (r *Race) RemittedBefore() bool {
+	for _, a := range r.Abandoned {
+		if a.RemittedAt != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// RemittedStale is how long a settlement may stay remitted and unmined
+// before it is reported: a block is expected within minutes, so an hour
+// means the node does not serve its proof, or it will never mine.
+const RemittedStale = time.Hour
+
+// StaleRemitted counts this identity's races remitted before mining whose
+// proof the node has not served for at least age, and the oldest's age.
+// A race recorded before RemittedAt existed counts from its start.
+func (p *Publisher) StaleRemitted(age time.Duration) (n int, oldest time.Duration) {
+	races, err := p.Races()
+	if err != nil {
+		return 0, 0
+	}
+	now := p.cfg.Now()
+	for _, r := range races {
+		if a, ok := r.RemittedAge(now); ok && a >= age {
+			n++
+			oldest = max(oldest, a)
+		}
+	}
+	return n, oldest
+}
+
+// RemittedAge is how long the race has been remitted and unmined.
+func (r *Race) RemittedAge(now time.Time) (time.Duration, bool) {
+	if r.State != RaceRemitted || r.Settlement == nil {
+		return 0, false
+	}
+	at := r.Settlement.RemittedAt
+	if at == 0 {
+		at = r.Started
+	}
+	return now.Sub(time.Unix(at, 0)), true
 }

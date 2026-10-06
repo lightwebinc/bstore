@@ -124,7 +124,8 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.reader = &reader.Reader{Hosts: cfg.Hosts, HTTP: hostHTTP, Fetch: fetchHTTP, Headers: hc, Held: s.st, Logf: opts.Logf, Now: opts.Now}
+	s.reader = &reader.Reader{Hosts: cfg.Hosts, HTTP: hostHTTP, Fetch: fetchHTTP, Headers: hc, Held: s.st, Logf: opts.Logf, Now: opts.Now,
+		WalkDir: filepath.Join(cfg.Data, "walks")}
 	s.fetch = fetchHTTP
 	asset := &nodeapi.Asset{Base: cfg.Node}
 	s.reader.Spender = asset.Spender
@@ -135,7 +136,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Server, error) {
 	}
 	d := &publish.Delivery{Facade: cfg.Facade, Hosts: cfg.Hosts, Providers: cfg.Providers, HTTP: hostHTTP, Quorum: cfg.Quorum}
 	for _, name := range cfg.Identities {
-		p, err := publish.Open(ctx, publish.Config{Dir: cfg.IdentityDir(name), Asset: asset, Settler: settler,
+		p, err := publish.Open(ctx, publish.Config{Dir: cfg.IdentityDir(name), OutboxMax: cfg.OutboxBytes, Asset: asset, Settler: settler,
 			Accept: cfg.AcceptPolicy(), Status: statusOf(cfg),
 			Fees: mint.Fees{SatPerByte: cfg.FeeRate, Floor: cfg.FeeFloor}, Mainnet: cfg.Mainnet,
 			PieceTree: cfg.PieceTree, EntryTree: cfg.EntryTree, PieceAhead: cfg.PieceAhead, PieceWorkers: cfg.PieceWorkers,
@@ -383,7 +384,12 @@ func (s *Server) background(ctx context.Context) {
 			}(p)
 		}
 	}
+	lastAge := time.Time{}
 	for {
+		if time.Since(lastAge) >= time.Minute {
+			s.remittedAlarm()
+			lastAge = time.Now()
+		}
 		for _, p := range s.pubs {
 			p.CheckHolds(ctx)
 			if b := s.cfg.Bounty; b != nil {
@@ -715,4 +721,19 @@ func acquire(sem chan struct{}) (func(), *s3Error) {
 	default:
 		return nil, errSlowDown
 	}
+}
+
+// remittedAlarm sets the gauges of races remitted before mining whose
+// proof the node has not served within publish.RemittedStale: the
+// settlement may never mine (an alert reads
+// bstore_s3d_races_remitted_stale > 0; bstore doctor names each race).
+func (s *Server) remittedAlarm() {
+	n, oldest := 0, time.Duration(0)
+	for _, p := range s.pubs {
+		k, o := p.StaleRemitted(publish.RemittedStale)
+		n += k
+		oldest = max(oldest, o)
+	}
+	s.metrics.set("bstore_s3d_races_remitted_stale", int64(n))
+	s.metrics.set("bstore_s3d_race_remitted_oldest_seconds", int64(oldest.Seconds()))
 }
