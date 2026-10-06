@@ -47,7 +47,9 @@ spending one mined funding output.
 | A piece carrier | the blob plus about 1.2 KB and 49 bytes per output of its funding tree: about 4.3 KB over the blob on the default 64-output piece tree, so a 100 MiB put delivers about 0.1 % above its content to each provider | contract arithmetic |
 | The hold output's transaction | 240 and 241 bytes, 495 satoshis of fee, for one hold output (up to 16 a transaction when minted ahead) | measured |
 | The bounty | the writer's choice; the test runs used 30,000 satoshis, `t = 3`, `K = 3` | set by the writer |
-| A 100 MiB `PutObject` through the gateway | 9.8 s from the first byte to the `200`, with no block wait (hold outputs and funding trees minted ahead) | measured (v0.3.0) |
+| A 100 MiB `PutObject` through the gateway | 7.9 s from the first byte to the `200`, with no block wait (hold outputs and funding trees minted ahead; staging hashed on several cores) | measured (v0.5.0; 9.8 s on v0.3.0) |
+| Staging 100 MiB (closure, proof root, store writes) | 0.6 to 0.8 s locally, was 2.9 to 3.3 s on one core | measured (v0.5.0) |
+| A provider's closure check once the entry arrives, 100 MiB | 0.05 to 0.09 s, the pieces having been hashed as they arrived (about 1.2 s spread over the piece requests); 2.8 to 3.4 s for the full check | measured (v0.5.0) |
 
 ## The hold race and the bounty
 
