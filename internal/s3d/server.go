@@ -30,6 +30,7 @@ import (
 	"github.com/lightwebinc/bcommon/nodeapi"
 	bpub "github.com/lightwebinc/bcommon/publish"
 
+	"github.com/lightwebinc/bstore/internal/efleg"
 	"github.com/lightwebinc/bstore/internal/publish"
 	"github.com/lightwebinc/bstore/internal/reader"
 	"github.com/lightwebinc/bstore/storerec"
@@ -163,11 +164,11 @@ func settlerOf(c *Config) (bpub.Settler, error) {
 	kind, addr, _ := strings.Cut(c.Settle, ":")
 	switch kind {
 	case "tcp":
-		return &bpub.TCPIngress{Addr: addr}, nil
+		return efleg.Wrap(&bpub.TCPIngress{Addr: addr}, &nodeapi.Asset{Base: c.Node}), nil
 	case "rpc":
 		return &bpub.RPCSettler{RPC: &nodeapi.RPC{URL: addr, User: c.RPCUser, Pass: c.RPCPass, ID: "bstore-s3d"}}, nil
 	case "arcade":
-		return &bpub.Arcade{Base: addr, Key: c.ArcadeKey}, nil
+		return efleg.Wrap(&bpub.Arcade{Base: addr, Key: c.ArcadeKey}, &nodeapi.Asset{Base: c.Node}), nil
 	}
 	return nil, errors.New("settle is tcp:, rpc: or arcade:")
 }

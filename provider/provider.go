@@ -41,6 +41,7 @@ import (
 
 	"github.com/lightwebinc/bstore/auth104"
 	"github.com/lightwebinc/bstore/backend"
+	"github.com/lightwebinc/bstore/internal/efleg"
 	"github.com/lightwebinc/bstore/storerec"
 )
 
@@ -295,12 +296,12 @@ func (p *Provider) legs() error {
 	kind, addr, _ := strings.Cut(c.Settle, ":")
 	switch kind {
 	case "tcp":
-		p.settler = &publish.TCPIngress{Addr: addr}
+		p.settler = efleg.Wrap(&publish.TCPIngress{Addr: addr}, p.asset)
 	case "rpc":
 		p.settler = &publish.RPCSettler{RPC: &nodeapi.RPC{URL: addr, User: c.RPCUser, Pass: c.RPCPass, ID: "bstore-provider"}}
 	case "arcade":
 		p.arcade = &publish.Arcade{Base: addr, Key: c.ArcadeKey}
-		p.settler = p.arcade
+		p.settler = efleg.Wrap(p.arcade, p.asset)
 	}
 	hc, err := headers.NewSource(c.Headers)
 	if err != nil {
