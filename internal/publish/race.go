@@ -19,7 +19,7 @@ import (
 	"github.com/lightwebinc/bcommon/chaintoken"
 	"github.com/lightwebinc/bcommon/chirp"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // The hold race, judged by the writer's own client (spec section 9.4, T2):
@@ -737,9 +737,11 @@ func (p *Publisher) challengeCand(ctx context.Context, r *Race, c *Cand, blobs [
 		// Not answered: the same request goes again later.
 		c.Pending.Tries++
 		if c.Pending.Tries >= pendingTries {
-			if !own {
-				c.BadFronts = append(c.BadFronts, f.url)
-			}
+			// Not asked again in this race, the advertiser's own derived
+			// front included: an incumbent host that never learned of
+			// bstore has none, and its next draw goes to a front that
+			// states it answers for it. The draw is spent either way.
+			c.BadFronts = append(c.BadFronts, f.url)
 			spend(fmt.Sprintf("the front gave no answer to the draw in %d tries", pendingTries))
 		}
 		if c.Status != CandFailed {

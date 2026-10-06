@@ -10,7 +10,7 @@ import (
 
 	"github.com/lightwebinc/bcommon/pushdrop"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // adPriv is a party's advertisement key: [2, "uhrp advertisement"] key id 1,

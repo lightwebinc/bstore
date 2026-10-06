@@ -21,7 +21,7 @@ import (
 	bpub "github.com/lightwebinc/bcommon/publish"
 	"github.com/lightwebinc/bcommon/testchain"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 const testBucket = "example_photos_hmqzvtkwrx"

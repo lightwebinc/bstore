@@ -10,7 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/lightwebinc/bstore/internal/reader"
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // Listing (spec section 16.2): `list` pages, each proven complete against

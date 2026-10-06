@@ -12,7 +12,7 @@ import (
 	"github.com/lightwebinc/bcommon/mint"
 	"github.com/lightwebinc/bcommon/pushdrop"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // txEnv is everything the transaction vectors are built from: real funding

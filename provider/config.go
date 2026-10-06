@@ -13,7 +13,7 @@ import (
 
 	"github.com/lightwebinc/bcommon/guard"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // Config is a provider's configuration file, JSON. Every field has a
@@ -53,8 +53,10 @@ type Config struct {
 	// Buckets are the buckets the provider takes objects for.
 	Buckets []BucketConfig `json:"buckets"`
 	// Backend selects the hold backend: "native" (the content-addressed
-	// store under Data/store). Export, when set, keeps a read-only view of
-	// every held closure there for an NFS export (docs/provider.md).
+	// store under Data/store), or "bridge" when a bridge runs the provider
+	// as a front for another advertiser and supplies the backend (Front).
+	// Export, when set, keeps a read-only view of every held closure there
+	// for an NFS export (docs/provider.md); a bridge keeps no closure.
 	Backend string `json:"backend"`
 	Export  string `json:"export,omitempty"`
 	// QuotaBytes bounds the store; UnclaimedBytes the part of it pieces no
@@ -323,8 +325,14 @@ func (c *Config) Check() error {
 			}
 		}
 	}
-	if c.Backend != "native" {
-		return fmt.Errorf("backend %q: this provider has the native backend", c.Backend)
+	if c.Backend != "native" && c.Backend != "bridge" {
+		return fmt.Errorf("backend %q: the backends are native and bridge", c.Backend)
+	}
+	if c.Backend == "bridge" && c.Export != "" {
+		return errors.New("export: a bridge keeps no closure to export")
+	}
+	if c.Backend == "bridge" && c.Policy.AnswerInline != nil && *c.Policy.AnswerInline {
+		return errors.New("policy.answer_inline: a front answers every sample by reference (spec section 7.5)")
 	}
 	if c.Export != "" && !filepath.IsAbs(c.Export) {
 		return errors.New("export must be an absolute directory")
@@ -388,4 +396,6 @@ func checkPublicURL(s string) error {
 func (c *Config) FrontURL() string { return c.PublicURL + storerec.FrontSuffix }
 
 // answerInline reports whether challenges are answered with the segments.
-func (c *Config) answerInline() bool { return c.Policy.AnswerInline == nil || *c.Policy.AnswerInline }
+func (c *Config) answerInline() bool {
+	return c.Backend != "bridge" && (c.Policy.AnswerInline == nil || *c.Policy.AnswerInline)
+}

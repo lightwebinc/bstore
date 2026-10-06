@@ -16,7 +16,7 @@ import (
 
 	"github.com/lightwebinc/bcommon/mint"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // Chain is a bucket chain this writer owns, for tests only: the owner's

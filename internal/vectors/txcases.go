@@ -14,7 +14,7 @@ import (
 	"github.com/lightwebinc/bcommon/mint"
 	"github.com/lightwebinc/bcommon/pushdrop"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 type admitJSON struct {

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -26,8 +27,8 @@ import (
 	"github.com/lightwebinc/bcommon/funding"
 	"github.com/lightwebinc/bcommon/pushdrop"
 
-	"github.com/lightwebinc/bstore/internal/auth104"
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/auth104"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // fakeFront is a provider's front over BRC-104 that answers challenges of
@@ -145,8 +146,11 @@ func TestDrawsAreBounded(t *testing.T) {
 		tip, _ := r.p.cfg.Asset.BestHeader(r.ctx)
 		r.p.challengeCand(r.ctx, race, c, blobs, tip.Height, RaceOptions{})
 	}
-	if c.Status != CandFailed || f.draws() > maxDraws {
-		t.Fatalf("status %s after %d distinct draws", c.Status, f.draws())
+	// A draw left unanswered three times is spent and the front is not
+	// asked again, its own derived front included: with no other front the
+	// candidate waits, never passing.
+	if c.Status == CandPassed || f.draws() > maxDraws || c.Draws < 1 || !slices.Contains(c.BadFronts, f.srv.URL+"/store/bstore/v1") {
+		t.Fatalf("status %s after %d distinct draws, %d spent, bad fronts %v", c.Status, f.draws(), c.Draws, c.BadFronts)
 	}
 	// A request not answered is sent again unchanged, never redrawn.
 	for nonce, n := range f.seen {

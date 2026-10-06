@@ -9,7 +9,7 @@ import (
 // TestDetectionTablesMatchSpec holds spec section 7.6's two tables to the
 // formula, cell by cell.
 func TestDetectionTablesMatchSpec(t *testing.T) {
-	spec, err := os.ReadFile("../../docs/spec.md")
+	spec, err := os.ReadFile("../docs/spec.md")
 	if err != nil {
 		t.Fatal(err)
 	}

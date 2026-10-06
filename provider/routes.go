@@ -15,9 +15,9 @@ import (
 
 	"github.com/lightwebinc/bcommon/chirp"
 
-	"github.com/lightwebinc/bstore/internal/auth104"
-	"github.com/lightwebinc/bstore/internal/backend"
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/auth104"
+	"github.com/lightwebinc/bstore/backend"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // Bounds on what a route reads. A piece carrier's BEEF is the largest
@@ -108,6 +108,15 @@ func (p *Provider) routes() http.Handler {
 	})
 	mux.HandleFunc(front+"/challenge", p.post(maxChallengeReq, p.challenge))
 	mux.HandleFunc(front+"/renew", p.post(maxRenewReq, p.renew))
+	if p.front != nil {
+		// A front is not the payee of a bounty, holds no bytes to serve and
+		// takes no uploads: the advertiser serves its own URL, and a writer
+		// remits to the advertiser's own route (row C24).
+		mux.HandleFunc(front+"/settle", p.post(maxSettleReq, func(context.Context, *http.Request, []byte, *auth104.Caller) auth104.Reply {
+			return auth104.Error(http.StatusBadRequest, "ERR_REMITTANCE", "this front is not a payee: a bounty pays the advertiser's key")
+		}))
+		return mux
+	}
 	mux.HandleFunc(front+"/settle", p.post(maxSettleReq, p.settle))
 	mux.HandleFunc(pre+"/chirp/v1/uploads", p.post(maxCommitReq, p.uploadCreate))
 	mux.HandleFunc(pre+"/chirp/v1/uploads/", p.handleUpload)

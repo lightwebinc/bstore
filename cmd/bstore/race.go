@@ -14,7 +14,7 @@ import (
 	"github.com/lightwebinc/bcommon/chirp"
 
 	"github.com/lightwebinc/bstore/internal/publish"
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 const holdsHelp = `usage: bstore holds [-entry TXID] [-watch DURATION] [-budget SATS]

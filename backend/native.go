@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // MaxObject is the largest CHIRP object a native store holds: a Profile 1

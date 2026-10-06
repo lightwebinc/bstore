@@ -11,6 +11,7 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -30,15 +31,17 @@ import (
 
 	"github.com/lightwebinc/bcommon/bwallet"
 	"github.com/lightwebinc/bcommon/funding"
+	"github.com/lightwebinc/bcommon/guard"
 	"github.com/lightwebinc/bcommon/headers"
 	"github.com/lightwebinc/bcommon/mint"
 	"github.com/lightwebinc/bcommon/nodeapi"
 	"github.com/lightwebinc/bcommon/producer"
 	"github.com/lightwebinc/bcommon/publish"
+	"github.com/lightwebinc/bcommon/purse"
 
-	"github.com/lightwebinc/bstore/internal/auth104"
-	"github.com/lightwebinc/bstore/internal/backend"
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/auth104"
+	"github.com/lightwebinc/bstore/backend"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // Profile is the embedded wallet's profile: the fund key under
@@ -65,6 +68,55 @@ type Options struct {
 	// Settler, when set, is the settlement leg instead of the configured
 	// one.
 	Settler publish.Settler
+	// Front, when set, makes the provider a front for another advertiser
+	// (configuration backend "bridge"): see Front.
+	Front *Front
+}
+
+// Front makes a provider the market front of spec section 17 for an
+// advertiser that holds, serves and advertises the bytes itself: an
+// incumbent UHRP host joined through a bridge backend. The provider still
+// receives, checks the closure, recomputes the proof root, decides and
+// answers; then, for each closure it takes, it hands every object to the
+// backend (Put), has the backend make the closure held (Advertise: the
+// advertiser commits or renews through its own routes), checks the
+// advertisement the backend returns, publishes it to the bucket's records
+// topic unchanged, and drops its own copy of the bytes, keeping the proof
+// tree's segment hashes. It answers challenges by reference only, every
+// sampled segment read through the backend (from the advertiser's URL) and
+// checked against the kept hashes before anything is signed; it serves no
+// object routes and takes no uploads; a bounty pays the advertiser, so a
+// settlement it finds is passed to Forward rather than taken.
+type Front struct {
+	// Backend is the bridge backend. Its Advertise returns the
+	// advertiser's advertisement mined, with its own proof in the BEEF.
+	Backend backend.Backend
+	// Advertiser is the advertiser's identity key, 33 bytes compressed:
+	// every advertisement the backend returns must name it.
+	Advertiser []byte
+	// Forward is told of every spend of a held entry's hold output (a
+	// settlement, or a reclaim) once it is mined. An error is retried.
+	Forward func(context.Context, Settlement) error
+}
+
+// Settlement is a spend of the hold output of an entry a front took, as a
+// front finds it: the payee of a bounty is the advertiser, whose key the
+// front does not hold, so the front forwards what the advertiser needs to
+// find and take its output (spec section 9.5): the transaction, and the
+// BRC-29 derivation's prefix and sender; the suffix is the rank's, for
+// ranks 1 to K.
+type Settlement struct {
+	Entry            string `json:"entry"`
+	Bucket           string `json:"bucket"`
+	Root             string `json:"root"`
+	Hold             string `json:"hold"`
+	Writer           string `json:"senderIdentityKey"`
+	K                uint64 `json:"k"`
+	Txid             string `json:"txid"`
+	Height           uint32 `json:"height"`
+	DerivationPrefix string `json:"derivationPrefix"`
+	// BEEF is the spending transaction as Atomic BEEF with its proof.
+	BEEF []byte `json:"beef"`
 }
 
 // Provider is one running provider.
@@ -88,6 +140,8 @@ type Provider struct {
 	store  *backend.Native
 	be     backend.Backend
 	export *backend.Export
+	// front is set when the provider fronts another advertiser.
+	front *Front
 
 	auth    *auth104.Server
 	limits  *routeLimits
@@ -112,6 +166,9 @@ type Provider struct {
 	// scanned is when each entry's hold output was last looked at for a
 	// payout (under mu).
 	scanned map[string]time.Time
+	// rechecked is when each damaged root was last looked at again, for a
+	// front (under mu).
+	rechecked map[string]time.Time
 	// dirty is a change to the state not saved yet (under mu): pieces and
 	// funding records are saved with the next background pass.
 	dirty bool
@@ -178,6 +235,20 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 	}
 	store.Advertiser = p.advertise
 	p.store, p.be = store, store
+	switch {
+	case cfg.Backend == "bridge" && (opts.Front == nil || opts.Front.Backend == nil):
+		return nil, errors.New("backend bridge: the provider is run by a bridge, which supplies its backend")
+	case cfg.Backend != "bridge" && opts.Front != nil:
+		return nil, errors.New("a front needs backend bridge in the configuration")
+	case opts.Front != nil:
+		if _, err := guard.ParsePubKey(opts.Front.Advertiser); err != nil {
+			return nil, fmt.Errorf("the advertiser's key: %w", err)
+		}
+		if bytes.Equal(opts.Front.Advertiser, signer.Identity.Compressed()) {
+			return nil, errors.New("a front answers for another advertiser, not for its own key")
+		}
+		p.front, p.be = opts.Front, opts.Front.Backend
+	}
 	if cfg.Export != "" {
 		if p.export, err = backend.OpenExport(cfg.Export, store); err != nil {
 			return nil, err
@@ -253,6 +324,33 @@ func (p *Provider) FundAddress() (string, error) { return p.signer.FundAddress(p
 
 // Wallet is the provider's wallet.
 func (p *Provider) Wallet() wallet.Interface { return p.wallet }
+
+// Signer is the provider's key set: its identity, its fund key.
+func (p *Provider) Signer() *bwallet.Signer { return p.signer }
+
+// Purse pays from the provider's pool, up to maxPay for one payment (zero
+// pays nothing): a BRC-105 402 answered as a client (the wallet of go-sdk
+// AuthFetch).
+func (p *Provider) Purse(maxPay uint64) *purse.Purse {
+	pu := p.purse()
+	pu.MaxPay = maxPay
+	return pu
+}
+
+// Staged is an object of the provider's own store, whole: for a front,
+// what a bridge backend uploads from between Put and Advertise, before the
+// front drops its copy.
+func (p *Provider) Staged(h [32]byte) ([]byte, error) { return p.fetch(h) }
+
+// Settler is the settlement leg the provider broadcasts on.
+func (p *Provider) Settler() publish.Settler { return p.settler }
+
+// Fees is the provider's fee policy.
+func (p *Provider) Fees() mint.Fees { return p.fees() }
+
+// NewPayer is a payer over the provider's pool, for a transaction a caller
+// funds from it (its fee coin taken, its change kept).
+func (p *Provider) NewPayer() *producer.Payer { return p.newPayer() }
 
 // Start listens, recovers what a previous run left, and starts the
 // background work. It returns once the routes are served.

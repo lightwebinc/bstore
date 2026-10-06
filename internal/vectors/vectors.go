@@ -1,5 +1,5 @@
 // Package vectors generates the golden vectors under testdata/vectors from
-// the codec in internal/storerec. Every value is derived from fixed
+// the codec in storerec. Every value is derived from fixed
 // stand-ins (public test keys, hashes of labels for anything a client draws
 // at random), so the files are reproducible byte for byte; every check the
 // generator makes fails the run when it stops holding.
@@ -18,7 +18,7 @@ import (
 
 	"github.com/lightwebinc/bcommon/cbor"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // The vectors' buckets; each suffix is a fixed example.

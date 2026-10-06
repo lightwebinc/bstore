@@ -13,12 +13,12 @@ import (
 
 	"github.com/lightwebinc/bcommon/chirp"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 func load(t *testing.T, name string, v any) {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "..", "testdata", "vectors", name))
+	b, err := os.ReadFile(filepath.Join("..", "testdata", "vectors", name))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestRefusalVectors(t *testing.T) {
 // each appears in some vector file.
 func TestEveryLabelHasAVector(t *testing.T) {
 	var all []byte
-	files, _ := filepath.Glob(filepath.Join("..", "..", "testdata", "vectors", "*.json"))
+	files, _ := filepath.Glob(filepath.Join("..", "testdata", "vectors", "*.json"))
 	for _, f := range files {
 		b, _ := os.ReadFile(f)
 		all = append(all, b...)

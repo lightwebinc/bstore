@@ -14,7 +14,7 @@ import (
 	"github.com/lightwebinc/bcommon/guard"
 	"github.com/lightwebinc/bcommon/payee"
 
-	"github.com/lightwebinc/bstore/internal/auth104"
+	"github.com/lightwebinc/bstore/auth104"
 )
 
 // BRC-105 on a priced route: without a payment the route answers 402 with

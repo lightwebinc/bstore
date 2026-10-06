@@ -21,7 +21,7 @@ import (
 	"github.com/lightwebinc/bcommon/producer"
 	bpub "github.com/lightwebinc/bcommon/publish"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // Settlement by rank (spec section 9.5): one mined transaction that spends

@@ -12,7 +12,7 @@ import (
 
 	"github.com/lightwebinc/bcommon/guard"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // Config is the gateway's configuration file, JSON; an unknown key is

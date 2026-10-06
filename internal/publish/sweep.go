@@ -15,7 +15,7 @@ import (
 	"github.com/lightwebinc/bcommon/producer"
 	"github.com/lightwebinc/bcommon/pushdrop"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // The kill switch (spec sections 12.4 and 13.5): a sweep of every funding

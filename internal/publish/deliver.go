@@ -17,7 +17,7 @@ import (
 
 	bpub "github.com/lightwebinc/bcommon/publish"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // Delivery is how a publisher reaches the plane, the hosts and the

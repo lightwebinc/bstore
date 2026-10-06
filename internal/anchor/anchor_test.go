@@ -32,8 +32,8 @@ import (
 
 	"github.com/lightwebinc/bstore/internal/publish"
 	"github.com/lightwebinc/bstore/internal/reader"
-	"github.com/lightwebinc/bstore/internal/storerec"
 	"github.com/lightwebinc/bstore/internal/testwriter"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 const tBucket = "example_photos_hmqzvtkwrx"

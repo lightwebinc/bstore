@@ -46,6 +46,15 @@ type Backend interface {
 	Advertise(ctx context.Context, root [32]byte, until uint64) (*Advert, error)
 }
 
+// RangeReporter is optional: a backend that reads by reference implements
+// it to be told when a ranged read came back as bytes other than the same
+// range of the whole object, which held to its hash was right. The front
+// then used the whole object; the backend may stop asking that server for
+// ranges.
+type RangeReporter interface {
+	RangeWrong(hash [32]byte)
+}
+
 // Refusals.
 var (
 	// ErrHash is bytes that do not hash to the hash they are put under.

@@ -5,7 +5,7 @@ import (
 
 	"github.com/bsv-blockchain/go-sdk/wallet"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 func genSettle(files map[string][]byte) error {

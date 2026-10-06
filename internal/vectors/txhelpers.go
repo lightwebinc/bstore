@@ -19,7 +19,7 @@ import (
 	"github.com/lightwebinc/bcommon/carrier"
 	"github.com/lightwebinc/bcommon/pushdrop"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // Headers is the test chain's block headers: a merkle root per height. It is

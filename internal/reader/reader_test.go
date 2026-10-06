@@ -7,7 +7,7 @@ import (
 
 	"github.com/lightwebinc/bcommon/nodeapi"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // The latest token's spend check acts on the spend source's "unspent"

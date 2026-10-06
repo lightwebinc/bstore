@@ -19,7 +19,7 @@ import (
 	"github.com/lightwebinc/bcommon/chirp"
 	"github.com/lightwebinc/bcommon/commit"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // What a provider keeps for each root it holds, under roots/<root hex>/:

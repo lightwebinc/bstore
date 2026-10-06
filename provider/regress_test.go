@@ -15,8 +15,8 @@ import (
 
 	"github.com/lightwebinc/bcommon/chirp"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
 	"github.com/lightwebinc/bstore/internal/testwriter"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // One funding output pays for one carrier: a second, different carrier on

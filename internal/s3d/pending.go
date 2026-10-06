@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // The gateway's own pending entries: what it wrote that no token names

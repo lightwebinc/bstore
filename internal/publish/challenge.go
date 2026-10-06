@@ -17,7 +17,7 @@ import (
 
 	"github.com/lightwebinc/bcommon/chirp"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // A challenge as its buyer makes it (spec section 7): a request seeded at

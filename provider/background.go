@@ -22,6 +22,15 @@ func (p *Provider) recover(ctx context.Context) error {
 	p.resumeAds(ctx)
 	p.mu.Lock()
 	p.evictLocked(true)
+	if p.front != nil {
+		// A front that stopped between adopting an advertisement and
+		// dropping its copy drops it now.
+		for r, h := range p.st.Holdings {
+			if h.Handed {
+				p.dropStagedLocked(r)
+			}
+		}
+	}
 	p.mu.Unlock()
 	p.collect()
 	return nil
@@ -56,6 +65,7 @@ func (p *Provider) background(ctx context.Context) {
 		p.collectChange(ctx)
 		p.waitPending(ctx)
 		p.makeOwed(ctx)
+		p.recheckDamaged(ctx)
 		p.publishOutbox(ctx)
 		p.mu.Lock()
 		var roots []string

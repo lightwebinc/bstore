@@ -20,8 +20,8 @@ import (
 
 	"github.com/lightwebinc/bcommon/chirp"
 
-	"github.com/lightwebinc/bstore/internal/auth104"
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/auth104"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // handleSubmit takes objects the way an overlay host does (POST /submit,
@@ -293,6 +293,15 @@ func (p *Provider) pruneEntries() {
 func (p *Provider) keepPiece(data []byte, rootHex, bucket, writer string) string {
 	h := sha256.Sum256(data)
 	hh := hex.EncodeToString(h[:])
+	if p.front != nil {
+		// A front keeps no second copy of what it handed to the backend.
+		p.mu.Lock()
+		handed := p.handedObjectLocked(hh)
+		p.mu.Unlock()
+		if handed {
+			return ""
+		}
+	}
 	if !p.store.Has(h) {
 		if why := p.room(uint64(len(data)), writer); why != "" {
 			return why

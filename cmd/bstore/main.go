@@ -34,7 +34,7 @@ import (
 	"github.com/lightwebinc/bstore/internal/anchor"
 	"github.com/lightwebinc/bstore/internal/publish"
 	"github.com/lightwebinc/bstore/internal/reader"
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // version is stamped by the build; "dev" otherwise.

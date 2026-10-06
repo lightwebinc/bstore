@@ -41,7 +41,7 @@ import (
 	"github.com/lightwebinc/bcommon/purse"
 	"github.com/lightwebinc/bcommon/pushdrop"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // Profile is the test writer's wallet profile.

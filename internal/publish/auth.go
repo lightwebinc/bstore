@@ -21,7 +21,7 @@ import (
 	"github.com/lightwebinc/bcommon/producer"
 	"github.com/lightwebinc/bcommon/purse"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // authClient is the identity's BRC-103 client over BRC-104 (go-sdk

@@ -9,7 +9,7 @@ import (
 	"github.com/lightwebinc/bcommon/cbor"
 	"github.com/lightwebinc/bcommon/pushdrop"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // challengePriv is a party's derive(identity, "challenge") private key.

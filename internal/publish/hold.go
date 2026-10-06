@@ -14,7 +14,7 @@ import (
 	"github.com/lightwebinc/bcommon/funding"
 	"github.com/lightwebinc/bcommon/producer"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // Hold outputs (spec section 9.2) are minted ahead, up to 16 in one

@@ -8,13 +8,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // seeds are every record of hex-v1.json and refusal-v1.json, small ones.
 func seeds(f *testing.F, kind string) {
 	var h struct{ Records []struct{ Kind, Hex string } }
-	b, _ := os.ReadFile(filepath.Join("..", "..", "testdata", "vectors", "hex-v1.json"))
+	b, _ := os.ReadFile(filepath.Join("..", "testdata", "vectors", "hex-v1.json"))
 	_ = json.Unmarshal(b, &h)
 	for _, r := range h.Records {
 		if r.Kind == kind {
@@ -23,7 +23,7 @@ func seeds(f *testing.F, kind string) {
 		}
 	}
 	var rf struct{ Cases []struct{ Kind, Hex string } }
-	b, _ = os.ReadFile(filepath.Join("..", "..", "testdata", "vectors", "refusal-v1.json"))
+	b, _ = os.ReadFile(filepath.Join("..", "testdata", "vectors", "refusal-v1.json"))
 	_ = json.Unmarshal(b, &rf)
 	for _, r := range rf.Cases {
 		if r.Kind == kind && len(r.Hex) < 4096 {
@@ -110,7 +110,7 @@ func FuzzContexts(f *testing.F) {
 
 func FuzzAdvertisement(f *testing.F) {
 	var s struct{ Cases []struct{ Script string } }
-	b, _ := os.ReadFile(filepath.Join("..", "..", "testdata", "vectors", "script-v1.json"))
+	b, _ := os.ReadFile(filepath.Join("..", "testdata", "vectors", "script-v1.json"))
 	_ = json.Unmarshal(b, &s)
 	for i, c := range s.Cases {
 		if i%25 == 0 {

@@ -9,7 +9,7 @@ and the readings the codec takes where [spec.md](spec.md) leaves a case open.
 
 | Path | What it is |
 | --- | --- |
-| `internal/storerec` | The Go codec: the records, hold terms, the key map, its fold and contexts, the page checks, the proof tree, challenges, settlement, BRC-26 advertisements, the classifier, the topic manager's transaction rules, lookup questions, a reader's checks and the closure checks |
+| `storerec` | The Go codec: the records, hold terms, the key map, its fold and contexts, the page checks, the proof tree, challenges, settlement, BRC-26 advertisements, the classifier, the topic manager's transaction rules, lookup questions, a reader's checks and the closure checks |
 | `internal/vectors`, `cmd/vectors` | The vector generator; every check it makes fails the run when it stops holding |
 | `testdata/vectors` | The golden vectors (spec section 22), JSON |
 | `host/src` | The TypeScript twin, read against every vector, and the host module ([host.md](host.md)) |

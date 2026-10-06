@@ -90,6 +90,10 @@ type Holding struct {
 	Lease uint64 `json:"lease"`
 	// At is when it was taken, Unix seconds.
 	At int64 `json:"at"`
+	// Handed is a front's: every object was handed to the backend and the
+	// advertiser's advertisement adopted, and the front's own copy of the
+	// bytes dropped (Bytes is then 0).
+	Handed bool `json:"handed,omitempty"`
 }
 
 // AdRec is a mined advertisement.

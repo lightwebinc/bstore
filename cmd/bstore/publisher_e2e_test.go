@@ -54,7 +54,7 @@ import (
 	"github.com/lightwebinc/bcommon/testchain"
 
 	"github.com/lightwebinc/bstore/internal/publish"
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 type pubRig struct {

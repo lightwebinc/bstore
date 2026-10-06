@@ -8,7 +8,7 @@ import (
 
 	"github.com/lightwebinc/bcommon/pushdrop"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 func genDerivation(files map[string][]byte) error {

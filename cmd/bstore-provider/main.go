@@ -24,7 +24,7 @@ import (
 	"github.com/lightwebinc/bcommon/bwallet"
 	"github.com/lightwebinc/bcommon/nodeapi"
 
-	"github.com/lightwebinc/bstore/internal/provider"
+	"github.com/lightwebinc/bstore/provider"
 )
 
 func main() {

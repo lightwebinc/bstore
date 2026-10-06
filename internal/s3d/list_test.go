@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/lightwebinc/bstore/internal/reader"
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // pages serves a sorted map as proven pages of three.

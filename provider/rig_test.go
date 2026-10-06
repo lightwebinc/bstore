@@ -97,6 +97,12 @@ func (r *rig) config(dir string) *Config {
 // start funds and starts a provider on cfg.
 func (r *rig) start(cfg *Config, fund bool) *Provider {
 	r.t.Helper()
+	return r.startWith(cfg, fund, Options{})
+}
+
+// startWith is start with options (a front's, say).
+func (r *rig) startWith(cfg *Config, fund bool, opts Options) *Provider {
+	r.t.Helper()
 	if err := cfg.Check(); err != nil {
 		r.t.Fatal(err)
 	}
@@ -106,7 +112,8 @@ func (r *rig) start(cfg *Config, fund bool) *Provider {
 		}
 	}
 	ctx := context.Background()
-	p, err := New(ctx, cfg, Options{Tick: 100 * time.Millisecond, Logf: r.logf})
+	opts.Tick, opts.Logf = 100*time.Millisecond, r.logf
+	p, err := New(ctx, cfg, opts)
 	if err != nil {
 		r.t.Fatal(err)
 	}

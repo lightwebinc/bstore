@@ -19,8 +19,8 @@ import (
 	"github.com/lightwebinc/bcommon/publish"
 	"github.com/lightwebinc/bcommon/purse"
 
-	"github.com/lightwebinc/bstore/internal/backend"
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/backend"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // An advertisement is a BRC-26 output exactly as the SDK makes it, in a

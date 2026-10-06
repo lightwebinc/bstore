@@ -16,7 +16,7 @@ import (
 	"github.com/lightwebinc/bcommon/guard"
 	"github.com/lightwebinc/bcommon/nodeapi"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // retryError is a check that could not be made now (the node or the
@@ -214,7 +214,7 @@ func (p *Provider) holdFor(ctx context.Context, rootHex string, e *EntryRec, unt
 		}
 		return nil
 	}
-	_, err := p.be.Advertise(ctx, mustHash(rootHex), until)
+	_, err := p.advertiseVia(ctx, mustHash(rootHex), until)
 	if errors.Is(err, errAdPending) {
 		return err
 	}

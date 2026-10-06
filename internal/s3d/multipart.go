@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/lightwebinc/bstore/internal/publish"
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // Multipart uploads (spec section 16.2) are the gateway's own state: the

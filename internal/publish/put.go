@@ -13,7 +13,7 @@ import (
 	"github.com/lightwebinc/bcommon/carrier"
 	"github.com/lightwebinc/bcommon/mint"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // Bounty is the hold terms a put asks for (spec section 4.3), its hold

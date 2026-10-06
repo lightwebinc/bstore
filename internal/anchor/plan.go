@@ -24,7 +24,7 @@ import (
 	"errors"
 	"sort"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // Step is one token's worth of a batch: its changes, ascending by key, its

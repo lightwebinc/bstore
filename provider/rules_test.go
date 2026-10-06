@@ -26,8 +26,8 @@ import (
 	"github.com/lightwebinc/bcommon/nodeapi"
 	"github.com/lightwebinc/bcommon/payee"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
 	"github.com/lightwebinc/bstore/internal/testwriter"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 var bounty = testwriter.Terms{Sats: 5000, T: 1, K: 2, Retention: 86400, DeadlineAhead: 200, CheckC: 30}

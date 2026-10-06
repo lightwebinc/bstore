@@ -6,8 +6,8 @@ already published. Once one record using it is on a public host, readers
 verify against it for as long as anyone reads that record, so changing it
 afterwards is a new identifier or a new record version, never an edit.
 
-**Status: signed, with twenty-four clarifications pending owner confirmation
-(section 14, rows C1 to C24).** Every other row below is signed with the
+**Status: signed, with twenty-nine clarifications pending owner confirmation
+(section 14, rows C1 to C29).** Every other row below is signed with the
 value it gives, and none is provisional. The rows marked "vectors" are pinned byte for byte by
 the golden vectors the codec generates ([spec.md](spec.md) section 22); a
 vector that disagrees with a row is a defect in the codec, not a change to
@@ -206,7 +206,8 @@ least 1024. As ceilings, not floors: the BEEF ceilings of section 2.
 A clarification rewords a signed rule where the signed wording leaves a
 case open. Each below is pending the owner's confirmation; the codec and its
 vectors (C1 to C7), the host module (C8), the provider (C9 to C11), the S3
-gateway (C13 to C16) and the command line (C17 to C24) already follow it.
+gateway (C13 to C16), the command line (C17 to C24) and the provider as a
+front and the bridge (C25 to C29) already follow it.
 C12 rewords how the contract describes the challenge seed, and binds a later
 on-chain form.
 
@@ -236,3 +237,8 @@ on-chain form.
 | C22 | Remittance, spec sections 9.5 and 10.1 | The `settle` remittance carries the settlement as Atomic BEEF with its proof: the writer sends it once the settlement has mined, and a payee takes it only once it verifies against the payee's headers | PENDING owner confirmation |
 | C23 | The settlement challenge, spec sections 7.2, 7.4 and 9.4 | The writer gives each candidate at most two requests over the race, at every front together. A request is seeded at a block below the writer's tip (two blocks), and one not answered (no response, a server error, a price, a `seed` refusal) is sent again unchanged until its seed leaves the answerer's window or it has gone unanswered three times, and only then counts; any other answer to it counts at once. A failure is the answerer's: it fails the candidate when the answerer is the advertiser, or when a sample is unretrievable from the advertiser's URL; a failure at a front that is not the advertiser is that front's, which is not asked again | PENDING owner confirmation |
 | C24 | Remittance, spec sections 9.5 and 10.1 | The `settle` remittance goes to the route of the front derived from the payee's own advertisement, never to a front statement's: a third party that answered for the advertiser is not the payee's route | PENDING owner confirmation |
+| C25 | The hold-backend interface, spec section 17 | A bridge backend's `Put` holds each object to its hash and records it as owed to the incumbent; the closure is uploaded when `Advertise` is called, because an upload session's retention is fixed when the session opens and only `Advertise` knows the expiry. The front keeps its own copy of the bytes until `Advertise` returns, then drops it. The five calls are unchanged | PENDING owner confirmation |
+| C26 | A front's adopted advertisement, spec sections 9.1 and 17 | A front adopts and publishes an advertisement its bridge backend returns only when it is by the fronted advertiser's key, for the root, at the backend's `ServeURL` of the root, with the expiry asked for or later and `fileSize` the root node's length, mined with a proof that verifies in the front's headers; anything else is not adopted and nothing is published | PENDING owner confirmation |
+| C27 | By-reference answers, spec sections 7.4, 7.5 and 17 | A front reads every sampled segment from the advertiser's tested URL and holds it to its kept leaf hash before it signs (spec section 17's "MAY" taken as always). A ranged read that does not match is read again from the whole blob, held to its object hash, as a buyer rechecks (the answerer's side of review item M1); only a blob the backend says is gone, or that reads back as other bytes, marks the root damaged (`422 unknown-root`, nothing signed); a passing failure (a transport error, a 5xx) is `503` and marks nothing. A front answers only while the advertisement it adopted is unexpired, and looks again at a damaged root every ten minutes: once the advertiser serves every object of the closure and a spread of its blobs read whole hold to their hashes, it answers again | PENDING owner confirmation |
+| C28 | Settlement for a bridged advertiser, spec sections 9.5 and 17, rows C22 and C24 | A writer remits to the advertiser's own derived route (row C24), which an unchanged incumbent does not serve. A front's `/settle` refuses remittances (`400`: a front is not a payee); the front finds each spend of a held entry's hold output from public data once it is mined and forwards it to the advertiser's operator: the transaction as Atomic BEEF with its proof, the BRC-29 prefix, the sender, and the suffix of every rank 1 to `K`, since only the advertiser's key tells which output is its own. This is spec section 17's "forwards the remittance" | PENDING owner confirmation |
+| C29 | The settlement challenge, spec section 9.4, row C23 | A draw that the advertiser's own derived front leaves unanswered three times is spent, and that front is not asked again in the race, as a third-party front's is not: the next draw goes to a front that states it answers for the advertiser. An incumbent with no bstore routes is reached through its bridge; draws stay at two per candidate, every front counted | PENDING owner confirmation |

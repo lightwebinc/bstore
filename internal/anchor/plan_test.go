@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 func c(s string) [32]byte { return sha256.Sum256([]byte(s)) }

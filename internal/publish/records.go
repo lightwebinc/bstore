@@ -13,7 +13,7 @@ import (
 
 	"github.com/lightwebinc/bcommon/carrier"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // The identity keeps every entry it made (entries/<txid>.json and .beef),

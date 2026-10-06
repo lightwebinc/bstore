@@ -8,7 +8,7 @@ import (
 	"github.com/lightwebinc/bcommon/cbor"
 	"github.com/lightwebinc/bcommon/commit"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 func mapOf(keys ...string) storerec.Map {

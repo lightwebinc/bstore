@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/lightwebinc/bstore/internal/anchor"
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 const bucketHelp = `usage: bstore bucket new NAME [-writers K1,K2]

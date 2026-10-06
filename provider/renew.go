@@ -11,7 +11,7 @@ import (
 
 	"github.com/bsv-blockchain/go-sdk/transaction"
 
-	"github.com/lightwebinc/bstore/internal/auth104"
+	"github.com/lightwebinc/bstore/auth104"
 )
 
 // renew is <front>/renew (spec sections 10.1 and 10.3): anyone may buy
@@ -102,7 +102,7 @@ func (p *Provider) renew(ctx context.Context, r *http.Request, body []byte, who 
 	if err != nil {
 		return auth104.Error(http.StatusInternalServerError, "ERR_INTERNAL", "the renewal could not be recorded")
 	}
-	ad, err := p.be.Advertise(ctx, [32]byte(root), req.Until)
+	ad, err := p.advertiseVia(ctx, [32]byte(root), req.Until)
 	if err != nil {
 		p.logf("root %s: renewal through %d paid, made later: %v", short(req.Root), req.Until, err)
 		return auth104.JSON(http.StatusAccepted, map[string]any{"pending": true, "until": req.Until,
@@ -163,7 +163,7 @@ func (p *Provider) makeOwed(ctx context.Context) {
 			p.payOwed(o.Root, o.Until)
 			continue
 		}
-		if _, err := p.be.Advertise(ctx, mustHash(o.Root), o.Until); err != nil {
+		if _, err := p.advertiseVia(ctx, mustHash(o.Root), o.Until); err != nil {
 			continue
 		}
 		p.payOwed(o.Root, o.Until)

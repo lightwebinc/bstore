@@ -59,8 +59,8 @@ import (
 	"github.com/lightwebinc/bcommon/nodeapi"
 	"github.com/lightwebinc/bcommon/testchain"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
 	"github.com/lightwebinc/bstore/internal/testwriter"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 const (

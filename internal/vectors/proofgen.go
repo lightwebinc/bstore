@@ -10,7 +10,7 @@ import (
 	"github.com/lightwebinc/bcommon/cbor"
 	"github.com/lightwebinc/bcommon/commit"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // ContentRule is how every proof vector's content is made, so that both

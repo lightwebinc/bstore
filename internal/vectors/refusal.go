@@ -9,7 +9,7 @@ import (
 	"github.com/lightwebinc/bcommon/cbor"
 	"github.com/lightwebinc/bcommon/guard"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 type refusalCase struct {

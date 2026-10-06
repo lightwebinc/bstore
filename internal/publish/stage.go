@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // ErrTooLarge is a body over the bound Stage was given.

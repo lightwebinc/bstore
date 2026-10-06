@@ -21,9 +21,9 @@ import (
 	"github.com/lightwebinc/bcommon/commit"
 	"github.com/lightwebinc/bcommon/pushdrop"
 
-	"github.com/lightwebinc/bstore/internal/auth104"
-	"github.com/lightwebinc/bstore/internal/backend"
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/auth104"
+	"github.com/lightwebinc/bstore/backend"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // challenge is <front>/challenge (spec sections 7 and 10.1). The order:
@@ -64,9 +64,15 @@ func (p *Provider) challenge(ctx context.Context, r *http.Request, body []byte, 
 	if err != nil || len(raw) > storerec.MaxRequest {
 		return refuse422("request")
 	}
+	// It signs only as itself, and only for an advertiser it answers for:
+	// itself, or, as a front, the advertiser it fronts (row C11).
 	me := p.signer.Identity.Compressed()
+	adv := me
+	if p.front != nil {
+		adv = p.front.Advertiser
+	}
 	q, err := storerec.DecodeRequest(raw)
-	if err != nil || !bytes.Equal(q.Provider, me) || !bytes.Equal(q.Answerer, me) {
+	if err != nil || !bytes.Equal(q.Provider, adv) || !bytes.Equal(q.Answerer, me) {
 		return refuse422("request")
 	}
 	tip, err := p.tip(ctx)
@@ -167,6 +173,11 @@ func (p *Provider) own(root [32]byte) ([32]byte, uint64, bool) {
 	defer p.mu.Unlock()
 	h := p.st.Holdings[hex.EncodeToString(root[:])]
 	if h == nil || !h.Verified || h.Damaged {
+		return [32]byte{}, 0, false
+	}
+	// A front answers only for a closure the advertiser holds: one handed
+	// to the backend and advertised.
+	if p.front != nil && (!h.Handed || h.Ad == nil || h.Ad.Expiry < uint64(p.now().Unix())) {
 		return [32]byte{}, 0, false
 	}
 	return mustHash(h.ProofRoot), h.Size, true
@@ -307,6 +318,21 @@ func readErr(what string, err error) error {
 	return fmt.Errorf("%s: %w", what, err)
 }
 
+// backendErr is a backend read failure as answer reports it. A native
+// backend's is readErr's. A front's backend reads from the advertiser's
+// URL over the network, where an error is most often a passing one: only
+// the backend's own word that the object is missing or the range outside
+// it marks the root damaged, and anything else marks nothing.
+func (p *Provider) backendErr(what string, err error) error {
+	if p.front == nil {
+		return readErr(what, err)
+	}
+	if errors.Is(err, backend.ErrMissing) || errors.Is(err, backend.ErrRange) {
+		return &lostError{what + ": " + err.Error()}
+	}
+	return fmt.Errorf("%s: %v", what, err)
+}
+
 func (p *Provider) answer(_ context.Context, rootHex string, q *storerec.Request, raw []byte) ([]byte, error) {
 	n := storerec.Segments(q.Size)
 	nb := storerec.Blobs(q.Size)
@@ -344,11 +370,20 @@ func (p *Provider) answer(_ context.Context, rootHex string, q *storerec.Request
 		seglen := storerec.SegmentLen(i, q.Size)
 		seg, err := p.be.Get(bd.hash, off, seglen)
 		if err != nil {
-			return nil, readErr("a sampled segment", err)
+			return nil, p.backendErr("a sampled segment", err)
 		}
 		leaf := commit.HashLeaf(seg)
 		if leaf != bd.leaves[within] {
-			return nil, &lostError{"a sampled segment read back wrong"}
+			// Read again from the whole blob, held to its object hash, as a
+			// buyer rechecks a by-reference sample (spec section 7.4): a
+			// backend that reads by reference may meet a server whose
+			// ranged answers are wrong while its whole blobs are right.
+			if seg, err = p.recheck(bd.hash, b, off, seglen, q.Size, true); err != nil {
+				return nil, err
+			}
+			if leaf = commit.HashLeaf(seg); leaf != bd.leaves[within] {
+				return nil, &lostError{"a sampled segment read back wrong"}
+			}
 		}
 		inner, err := commit.ProveLeafHashes(bd.leaves, int(within))
 		if err != nil {
@@ -365,6 +400,25 @@ func (p *Provider) answer(_ context.Context, rootHex string, q *storerec.Request
 		body.Samples = append(body.Samples, s)
 	}
 	return body.Encode()
+}
+
+// recheck reads blob b (object hash h) whole, holds it to its hash, and
+// returns the segment at off of seglen bytes; a blob that is gone or reads
+// back as other bytes is lost. With rangeWrong, a backend that reports
+// ranged reads gone wrong is told.
+func (p *Provider) recheck(h [32]byte, b, off, seglen, size uint64, rangeWrong bool) ([]byte, error) {
+	blen := min(uint64(storerec.BlobSize), size-b*storerec.BlobSize)
+	whole, err := p.be.Get(h, 0, blen)
+	if err != nil {
+		return nil, p.backendErr("a sampled segment's blob", err)
+	}
+	if uint64(len(whole)) != blen || sha256.Sum256(whole) != h {
+		return nil, &lostError{"a sampled segment's blob read back wrong"}
+	}
+	if rr, ok := p.be.(backend.RangeReporter); ok && rangeWrong {
+		rr.RangeWrong(h)
+	}
+	return whole[off : off+seglen], nil
 }
 
 // levels are the tree over the blob subtree roots, level by level, an odd

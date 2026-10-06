@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/lightwebinc/bstore/internal/publish"
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 const putHelp = `usage: bstore put KEY [FILE|-] [flags]

@@ -12,7 +12,7 @@ import (
 	"github.com/lightwebinc/bcommon/chirp"
 	"github.com/lightwebinc/bcommon/lookup"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // Ask asks one host one free question of ls_bstore and returns its

@@ -17,7 +17,7 @@ import (
 	"github.com/lightwebinc/bcommon/chaintoken"
 	"github.com/lightwebinc/bcommon/chirp"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // Source is an advertiser of a root: a BRC-26 advertisement verified

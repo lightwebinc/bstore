@@ -30,7 +30,7 @@ import (
 	"github.com/lightwebinc/bcommon/chaintoken"
 	"github.com/lightwebinc/bcommon/lookup"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // Errors a caller maps to its answers.

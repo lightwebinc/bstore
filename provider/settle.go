@@ -15,8 +15,8 @@ import (
 	"github.com/lightwebinc/bcommon/guard"
 	"github.com/lightwebinc/bcommon/payee"
 
-	"github.com/lightwebinc/bstore/internal/auth104"
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/auth104"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // settle is <front>/settle (spec sections 9.5 and 10.1): a writer's BRC-29
@@ -166,6 +166,10 @@ func (p *Provider) scanPayouts(ctx context.Context) {
 		tx.MerklePath = mp
 		c, _ := displayHash(e.C)
 		prefix := storerec.DerivationPrefix(c)
+		if p.front != nil {
+			p.forward(ctx, e, by, tx, height, prefix)
+			continue
+		}
 		found := false
 		for rank := 1; rank <= int(e.Hold.K) && !found; rank++ {
 			suffix := storerec.DerivationSuffix(rank)
@@ -211,3 +215,30 @@ func (p *Provider) scanPayouts(ctx context.Context) {
 }
 
 func equalScript(a, b []byte) bool { return hex.EncodeToString(a) == hex.EncodeToString(b) }
+
+// forward passes a spend of a held entry's hold output to the front's
+// Forward, once: the bounty pays the advertiser, whose key the front does
+// not hold.
+func (p *Provider) forward(ctx context.Context, e EntryRec, by string, tx *transaction.Transaction, height uint32, prefix string) {
+	beef, err := tx.AtomicBEEF(false)
+	if err != nil {
+		return
+	}
+	n := Settlement{Entry: e.C, Bucket: e.Bucket, Root: e.Root, Hold: e.Hold.Outpoint(), Writer: e.Writer, K: e.Hold.K,
+		Txid: by, Height: height, DerivationPrefix: prefix, BEEF: beef}
+	if p.front.Forward != nil {
+		if err := p.front.Forward(ctx, n); err != nil {
+			p.logf("entry %s: the spend %s of its hold output was not forwarded: %v; tried again", short(e.C), short(by), err)
+			return
+		}
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.payoutOpenLocked(e.C) {
+		return
+	}
+	p.st.Payouts[e.C] = &Payout{Settlement: by, Via: "forwarded", At: p.now().Unix()}
+	_ = p.save()
+	p.metrics.inc("bstore_provider_payouts_total", "via=forwarded")
+	p.logf("entry %s: its hold output was spent by %s (height %d); forwarded for the advertiser", short(e.C), short(by), height)
+}

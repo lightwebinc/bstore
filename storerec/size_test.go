@@ -11,7 +11,7 @@ import (
 
 	"github.com/lightwebinc/bcommon/cbor"
 
-	"github.com/lightwebinc/bstore/internal/storerec"
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // Every frozen bound of docs/frozen.md section 12, at the bound and one

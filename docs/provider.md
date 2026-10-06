@@ -268,7 +268,7 @@ The `402` is authoritative.
 
 ## The backend
 
-The hold-backend interface (spec section 17) is `internal/backend`:
+The hold-backend interface (spec section 17) is `backend`:
 
 | Call | The native backend |
 | --- | --- |
@@ -280,6 +280,35 @@ The hold-backend interface (spec section 17) is `internal/backend`:
 
 Every path in the store is made from a hash's hex digits alone, so nothing
 a request carries names a file.
+
+**As a front for another advertiser.** With `backend` set to `bridge`, the
+provider is run by a bridge (its own repository, `bstore-bridge`), which
+supplies the bridge backend and the advertiser's identity key
+(`provider.Options.Front`). Receiving, the closure checks, the hold
+policy, the bounty checks, the terms and the route hardening are the same.
+What differs:
+
+- for a closure it takes, every object is handed to the backend (`Put`),
+  the backend makes the closure held through its `Advertise` (the
+  advertiser commits or renews through its own routes) and returns the
+  advertiser's advertisement mined; the front adopts it only when it names
+  the advertiser's key, the root, the backend's `ServeURL`, the expiry
+  asked for and the root node's length, and its proof verifies in the
+  front's headers, then publishes it to the records topic of every bucket
+  the root is held for and drops its own copy of the bytes, keeping the
+  segment hashes;
+- it answers challenges whose `provider` is the advertiser and whose
+  `answerer` is itself, every sample by reference (`policy.answer_inline`
+  true is refused), each sampled segment read through the backend from the
+  advertiser's URL and held to the kept leaf hash before anything is
+  signed; a ranged read that does not match is read again from the whole
+  blob, held to its object hash, before it decides anything; a segment the
+  advertiser no longer serves marks the root damaged;
+- it serves no object routes and takes no uploads; `/settle` answers `400`
+  (a bounty pays the advertiser's key), and every spend of a held entry's
+  hold output, once mined, is passed to the bridge to forward;
+- renewals are priced and paid as here, then made through the backend's
+  `Advertise`.
 
 **A read-only export.** With `export` set, the provider keeps
 `<export>/<root hex>/<index>` for each held closure, index 0 the root node
@@ -368,7 +397,7 @@ A JSON file; an unknown key is refused. The required keys:
 | `facade` | none | a plane facade advertisements are also submitted to |
 | `uhrp_topic` | false | also submit each advertisement to `tm_uhrp` |
 | `buckets` | required | `{"bucket": <identifier>, "writers": [<66 hex>, ...]}`; with `writers`, only those writers' pieces and entries are taken |
-| `backend` | `native` | the hold backend |
+| `backend` | `native` | the hold backend: `native`, or `bridge` when a bridge runs the provider as a front (see The backend) |
 | `export` | none | the read-only export directory |
 | `quota_bytes` | 64 GiB | the store's bound |
 | `unclaimed_bytes` | an eighth of the quota | unclaimed pieces' share |

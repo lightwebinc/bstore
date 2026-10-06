@@ -28,7 +28,7 @@ go-test:
 # force, exhaustively (about 38 million pages); without the race detector,
 # which would make it take minutes.
 go-oracle:
-	GOWORK=off go test -count=1 -run 'TestPageChecksAgainstOracle$$' ./internal/storerec/
+	GOWORK=off go test -count=1 -run 'TestPageChecksAgainstOracle$$' ./storerec/
 
 vet:
 	GOWORK=off go vet ./...
@@ -117,7 +117,7 @@ vectors-check:
 FUZZTIME ?= 30s
 fuzz:
 	@for f in FuzzBucket FuzzEntry FuzzOutcome FuzzFront FuzzRequest FuzzContexts FuzzAdvertisement; do \
-		GOWORK=off go test ./internal/storerec/ -run '^$$' -fuzz "^$$f\$$" -fuzztime $(FUZZTIME) || exit 1; \
+		GOWORK=off go test ./storerec/ -run '^$$' -fuzz "^$$f\$$" -fuzztime $(FUZZTIME) || exit 1; \
 	done
 
 # The provider end to end (docs/provider.md): two bstore-provider processes
