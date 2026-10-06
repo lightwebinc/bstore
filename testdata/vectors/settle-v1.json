@@ -55,7 +55,7 @@
       "writer": "03cb144659ef300200912762786a173663150592d78f4408390c47e9956d9a6c31"
     }
   ],
-  "note": "payouts for k 1 to 16 and assorted R (BRC-178's two worked examples are R 12 k 5 and R 20 k 3); derivation prefixes, suffixes and the BRC-29 payment key; rankings and settlements: first sight, ties to the lower txid in display order, renewal successors, cancellations dropped with t counted again",
+  "note": "payouts for k 1 to 16 and assorted R (BRC-178's two worked examples are R 12 k 5 and R 20 k 3); derivation prefixes, suffixes and the BRC-29 payment key; tie keys: SHA-256 over the txid in hash byte order, the vout as 4 bytes little-endian and the commitment C, in hash byte order (txid shown in display order); rankings and settlements: first sight, ties to the lower tie key compared as bytes, renewal successors, cancellations dropped with t counted again",
   "payouts": [
     {
       "R": 1,
@@ -2621,7 +2621,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "a3f89dd0aed6aeb1c1b03aa1d1d7cd867c0b7428e697358b92ddae7bf4e95247"
+            "txid": "a3f89dd0aed6aeb1c1b03aa1d1d7cd867c0b7428e697358b92ddae7bf4e95247",
+            "vout": 0
           },
           "firstSeen": 40,
           "passed": true
@@ -2632,7 +2633,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "4f93b6a225442d08026e296a826cc63e82b80fa34333d7f7f0d7277488d7a2dc"
+            "txid": "4f93b6a225442d08026e296a826cc63e82b80fa34333d7f7f0d7277488d7a2dc",
+            "vout": 0
           },
           "firstSeen": 20,
           "passed": true
@@ -2643,7 +2645,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42"
+            "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42",
+            "vout": 0
           },
           "firstSeen": 10,
           "passed": true
@@ -2654,7 +2657,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "806f3942b89a853c33d77760083116a40e7b542fa156d7f28fe723963882f3ca"
+            "txid": "806f3942b89a853c33d77760083116a40e7b542fa156d7f28fe723963882f3ca",
+            "vout": 0
           },
           "firstSeen": 30,
           "passed": true
@@ -2702,7 +2706,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42"
+            "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42",
+            "vout": 0
           },
           "firstSeen": 10,
           "passed": true
@@ -2713,7 +2718,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "4f93b6a225442d08026e296a826cc63e82b80fa34333d7f7f0d7277488d7a2dc"
+            "txid": "4f93b6a225442d08026e296a826cc63e82b80fa34333d7f7f0d7277488d7a2dc",
+            "vout": 0
           },
           "firstSeen": 10,
           "passed": true
@@ -2721,7 +2727,7 @@
       ],
       "commitment": "9e20371e9f68d735a655594335ad2ef9e853a596e5e4d6ab0ca9884d38c5216a",
       "dropped": [],
-      "name": "a tie in first sight goes to the lower txid, display order",
+      "name": "a tie in first sight goes to the lower tie key, SHA-256(txid || vout LE32 || C)",
       "payees": [
         {
           "ad": "4f93b6a225442d08026e296a826cc63e82b80fa34333d7f7f0d7277488d7a2dc",
@@ -2745,7 +2751,7 @@
     },
     {
       "K": 2,
-      "R": 1000,
+      "R": 100,
       "candidates": [
         {
           "ad": {
@@ -2753,7 +2759,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42"
+            "txid": "0000000000000000000000000000000000000000000000000000000000000000",
+            "vout": 0
           },
           "firstSeen": 10,
           "passed": true
@@ -2764,7 +2771,179 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "4f93b6a225442d08026e296a826cc63e82b80fa34333d7f7f0d7277488d7a2dc"
+            "txid": "78501bc67edacbf9f6fbe4d3b6b70bfcefa8cf719032a2e85a299e93eadbe408",
+            "vout": 0
+          },
+          "firstSeen": 10,
+          "passed": true
+        }
+      ],
+      "commitment": "9e20371e9f68d735a655594335ad2ef9e853a596e5e4d6ab0ca9884d38c5216a",
+      "dropped": [],
+      "name": "grinding a low txid no longer wins a tie: an all-zero txid loses to a lower tie key",
+      "payees": [
+        {
+          "ad": "78501bc67edacbf9f6fbe4d3b6b70bfcefa8cf719032a2e85a299e93eadbe408",
+          "advertiser": "028ab6cae041834cf12edef9eee966bce3ba95135eaead3d32d78bacadf5349d55",
+          "prefix": "niA3Hp9o1zWmVVlDNa0u+ehTpZbl5NarDKmITTjFIWo=",
+          "rank": 1,
+          "satoshis": 59,
+          "suffix": "AAE="
+        },
+        {
+          "ad": "0000000000000000000000000000000000000000000000000000000000000000",
+          "advertiser": "031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99",
+          "prefix": "niA3Hp9o1zWmVVlDNa0u+ehTpZbl5NarDKmITTjFIWo=",
+          "rank": 2,
+          "satoshis": 41,
+          "suffix": "AAI="
+        }
+      ],
+      "settled": true,
+      "t": 1
+    },
+    {
+      "K": 2,
+      "R": 100,
+      "candidates": [
+        {
+          "ad": {
+            "advertiser": "031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99",
+            "expiry": 2000,
+            "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
+            "spent": false,
+            "txid": "cbec15d7de09940f945a18da3a9329d743956aa8954f0f0d1d380a6342bcf643",
+            "vout": 0
+          },
+          "firstSeen": 10,
+          "passed": true
+        },
+        {
+          "ad": {
+            "advertiser": "028ab6cae041834cf12edef9eee966bce3ba95135eaead3d32d78bacadf5349d55",
+            "expiry": 2000,
+            "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
+            "spent": false,
+            "txid": "cbec15d7de09940f945a18da3a9329d743956aa8954f0f0d1d380a6342bcf643",
+            "vout": 1
+          },
+          "firstSeen": 10,
+          "passed": true
+        }
+      ],
+      "commitment": "9e20371e9f68d735a655594335ad2ef9e853a596e5e4d6ab0ca9884d38c5216a",
+      "dropped": [],
+      "name": "two advertisements of one transaction tie: the output index is in the key",
+      "payees": [
+        {
+          "ad": "cbec15d7de09940f945a18da3a9329d743956aa8954f0f0d1d380a6342bcf643",
+          "advertiser": "031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99",
+          "prefix": "niA3Hp9o1zWmVVlDNa0u+ehTpZbl5NarDKmITTjFIWo=",
+          "rank": 1,
+          "satoshis": 59,
+          "suffix": "AAE="
+        },
+        {
+          "ad": "cbec15d7de09940f945a18da3a9329d743956aa8954f0f0d1d380a6342bcf643",
+          "advertiser": "028ab6cae041834cf12edef9eee966bce3ba95135eaead3d32d78bacadf5349d55",
+          "prefix": "niA3Hp9o1zWmVVlDNa0u+ehTpZbl5NarDKmITTjFIWo=",
+          "rank": 2,
+          "satoshis": 41,
+          "suffix": "AAI="
+        }
+      ],
+      "settled": true,
+      "t": 1
+    },
+    {
+      "K": 3,
+      "R": 1000,
+      "candidates": [
+        {
+          "ad": {
+            "advertiser": "031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99",
+            "expiry": 2000,
+            "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
+            "spent": false,
+            "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42",
+            "vout": 0
+          },
+          "firstSeen": 10,
+          "passed": true
+        },
+        {
+          "ad": {
+            "advertiser": "031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99",
+            "expiry": 2500,
+            "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
+            "spent": false,
+            "txid": "b2235f4bf0c1f7c338aca0baf52c3bfba582c9f21268acb21abd7ff218ae18fd",
+            "vout": 0
+          },
+          "firstSeen": 10,
+          "passed": true
+        },
+        {
+          "ad": {
+            "advertiser": "028ab6cae041834cf12edef9eee966bce3ba95135eaead3d32d78bacadf5349d55",
+            "expiry": 2000,
+            "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
+            "spent": false,
+            "txid": "4f93b6a225442d08026e296a826cc63e82b80fa34333d7f7f0d7277488d7a2dc",
+            "vout": 0
+          },
+          "firstSeen": 10,
+          "passed": true
+        }
+      ],
+      "commitment": "9e20371e9f68d735a655594335ad2ef9e853a596e5e4d6ab0ca9884d38c5216a",
+      "dropped": [],
+      "name": "one advertiser's two advertisements in one look: counted once, at the lower tie key",
+      "payees": [
+        {
+          "ad": "b2235f4bf0c1f7c338aca0baf52c3bfba582c9f21268acb21abd7ff218ae18fd",
+          "advertiser": "031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99",
+          "prefix": "niA3Hp9o1zWmVVlDNa0u+ehTpZbl5NarDKmITTjFIWo=",
+          "rank": 1,
+          "satoshis": 586,
+          "suffix": "AAE="
+        },
+        {
+          "ad": "4f93b6a225442d08026e296a826cc63e82b80fa34333d7f7f0d7277488d7a2dc",
+          "advertiser": "028ab6cae041834cf12edef9eee966bce3ba95135eaead3d32d78bacadf5349d55",
+          "prefix": "niA3Hp9o1zWmVVlDNa0u+ehTpZbl5NarDKmITTjFIWo=",
+          "rank": 2,
+          "satoshis": 414,
+          "suffix": "AAI="
+        }
+      ],
+      "settled": true,
+      "t": 2
+    },
+    {
+      "K": 2,
+      "R": 1000,
+      "candidates": [
+        {
+          "ad": {
+            "advertiser": "031195a8046dcbb8e17034bca630065e7a0982e4e36f6f7e5a8d4554e4846fcd99",
+            "expiry": 2000,
+            "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
+            "spent": false,
+            "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42",
+            "vout": 0
+          },
+          "firstSeen": 10,
+          "passed": true
+        },
+        {
+          "ad": {
+            "advertiser": "028ab6cae041834cf12edef9eee966bce3ba95135eaead3d32d78bacadf5349d55",
+            "expiry": 2000,
+            "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
+            "spent": false,
+            "txid": "4f93b6a225442d08026e296a826cc63e82b80fa34333d7f7f0d7277488d7a2dc",
+            "vout": 0
           },
           "firstSeen": 20,
           "passed": false
@@ -2775,7 +2954,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "806f3942b89a853c33d77760083116a40e7b542fa156d7f28fe723963882f3ca"
+            "txid": "806f3942b89a853c33d77760083116a40e7b542fa156d7f28fe723963882f3ca",
+            "vout": 0
           },
           "firstSeen": 30,
           "passed": true
@@ -2815,7 +2995,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42"
+            "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42",
+            "vout": 0
           },
           "firstSeen": 10,
           "passed": true
@@ -2826,7 +3007,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "4f93b6a225442d08026e296a826cc63e82b80fa34333d7f7f0d7277488d7a2dc"
+            "txid": "4f93b6a225442d08026e296a826cc63e82b80fa34333d7f7f0d7277488d7a2dc",
+            "vout": 0
           },
           "firstSeen": 20,
           "passed": true
@@ -2855,10 +3037,12 @@
                 "expiry": 3000,
                 "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
                 "spent": false,
-                "txid": "7cc4e1a46482e0e90e946dad751a7a7ad9e92a3c58bbf2cb2a1b777ab382c326"
+                "txid": "7cc4e1a46482e0e90e946dad751a7a7ad9e92a3c58bbf2cb2a1b777ab382c326",
+                "vout": 0
               }
             ],
-            "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42"
+            "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42",
+            "vout": 0
           },
           "firstSeen": 10,
           "passed": true
@@ -2869,7 +3053,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "4f93b6a225442d08026e296a826cc63e82b80fa34333d7f7f0d7277488d7a2dc"
+            "txid": "4f93b6a225442d08026e296a826cc63e82b80fa34333d7f7f0d7277488d7a2dc",
+            "vout": 0
           },
           "firstSeen": 20,
           "passed": true
@@ -2880,7 +3065,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "806f3942b89a853c33d77760083116a40e7b542fa156d7f28fe723963882f3ca"
+            "txid": "806f3942b89a853c33d77760083116a40e7b542fa156d7f28fe723963882f3ca",
+            "vout": 0
           },
           "firstSeen": 30,
           "passed": true
@@ -2932,13 +3118,16 @@
                     "expiry": 4000,
                     "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
                     "spent": false,
-                    "txid": "41cd2092d995e38ed4e41140305664f095ebe2b9e76be43e71ec69cd73c35156"
+                    "txid": "41cd2092d995e38ed4e41140305664f095ebe2b9e76be43e71ec69cd73c35156",
+                    "vout": 0
                   }
                 ],
-                "txid": "7cc4e1a46482e0e90e946dad751a7a7ad9e92a3c58bbf2cb2a1b777ab382c326"
+                "txid": "7cc4e1a46482e0e90e946dad751a7a7ad9e92a3c58bbf2cb2a1b777ab382c326",
+                "vout": 0
               }
             ],
-            "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42"
+            "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42",
+            "vout": 0
           },
           "firstSeen": 10,
           "passed": true
@@ -2949,7 +3138,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "4f93b6a225442d08026e296a826cc63e82b80fa34333d7f7f0d7277488d7a2dc"
+            "txid": "4f93b6a225442d08026e296a826cc63e82b80fa34333d7f7f0d7277488d7a2dc",
+            "vout": 0
           },
           "firstSeen": 20,
           "passed": true
@@ -2960,7 +3150,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "806f3942b89a853c33d77760083116a40e7b542fa156d7f28fe723963882f3ca"
+            "txid": "806f3942b89a853c33d77760083116a40e7b542fa156d7f28fe723963882f3ca",
+            "vout": 0
           },
           "firstSeen": 30,
           "passed": true
@@ -3000,7 +3191,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42"
+            "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42",
+            "vout": 0
           },
           "firstSeen": 10,
           "passed": true
@@ -3011,7 +3203,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": true,
-            "txid": "4f93b6a225442d08026e296a826cc63e82b80fa34333d7f7f0d7277488d7a2dc"
+            "txid": "4f93b6a225442d08026e296a826cc63e82b80fa34333d7f7f0d7277488d7a2dc",
+            "vout": 0
           },
           "firstSeen": 20,
           "passed": true
@@ -3022,7 +3215,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "806f3942b89a853c33d77760083116a40e7b542fa156d7f28fe723963882f3ca"
+            "txid": "806f3942b89a853c33d77760083116a40e7b542fa156d7f28fe723963882f3ca",
+            "vout": 0
           },
           "firstSeen": 30,
           "passed": true
@@ -3033,7 +3227,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "a3f89dd0aed6aeb1c1b03aa1d1d7cd867c0b7428e697358b92ddae7bf4e95247"
+            "txid": "a3f89dd0aed6aeb1c1b03aa1d1d7cd867c0b7428e697358b92ddae7bf4e95247",
+            "vout": 0
           },
           "firstSeen": 40,
           "passed": true
@@ -3083,7 +3278,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42"
+            "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42",
+            "vout": 0
           },
           "firstSeen": 10,
           "passed": true
@@ -3094,7 +3290,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": true,
-            "txid": "4f93b6a225442d08026e296a826cc63e82b80fa34333d7f7f0d7277488d7a2dc"
+            "txid": "4f93b6a225442d08026e296a826cc63e82b80fa34333d7f7f0d7277488d7a2dc",
+            "vout": 0
           },
           "firstSeen": 20,
           "passed": true
@@ -3105,7 +3302,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": true,
-            "txid": "806f3942b89a853c33d77760083116a40e7b542fa156d7f28fe723963882f3ca"
+            "txid": "806f3942b89a853c33d77760083116a40e7b542fa156d7f28fe723963882f3ca",
+            "vout": 0
           },
           "firstSeen": 30,
           "passed": true
@@ -3137,10 +3335,12 @@
                 "expiry": 1000,
                 "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
                 "spent": false,
-                "txid": "21798491e03bafd2fabb25101f41a1fa527f4eb04975e9af40fb4c3668755d57"
+                "txid": "21798491e03bafd2fabb25101f41a1fa527f4eb04975e9af40fb4c3668755d57",
+                "vout": 0
               }
             ],
-            "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42"
+            "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42",
+            "vout": 0
           },
           "firstSeen": 10,
           "passed": true
@@ -3151,7 +3351,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "4f93b6a225442d08026e296a826cc63e82b80fa34333d7f7f0d7277488d7a2dc"
+            "txid": "4f93b6a225442d08026e296a826cc63e82b80fa34333d7f7f0d7277488d7a2dc",
+            "vout": 0
           },
           "firstSeen": 20,
           "passed": true
@@ -3191,10 +3392,12 @@
                 "expiry": 9000,
                 "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
                 "spent": false,
-                "txid": "4eb35905029608155a0d0b4489f8528db8800a1b835df1e7b6ad267d5ef32b5c"
+                "txid": "4eb35905029608155a0d0b4489f8528db8800a1b835df1e7b6ad267d5ef32b5c",
+                "vout": 0
               }
             ],
-            "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42"
+            "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42",
+            "vout": 0
           },
           "firstSeen": 10,
           "passed": true
@@ -3205,7 +3408,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "4f93b6a225442d08026e296a826cc63e82b80fa34333d7f7f0d7277488d7a2dc"
+            "txid": "4f93b6a225442d08026e296a826cc63e82b80fa34333d7f7f0d7277488d7a2dc",
+            "vout": 0
           },
           "firstSeen": 20,
           "passed": true
@@ -3239,7 +3443,8 @@
             "expiry": 2500,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "b2235f4bf0c1f7c338aca0baf52c3bfba582c9f21268acb21abd7ff218ae18fd"
+            "txid": "b2235f4bf0c1f7c338aca0baf52c3bfba582c9f21268acb21abd7ff218ae18fd",
+            "vout": 0
           },
           "firstSeen": 5,
           "passed": true
@@ -3250,7 +3455,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42"
+            "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42",
+            "vout": 0
           },
           "firstSeen": 10,
           "passed": true
@@ -3261,7 +3467,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "4f93b6a225442d08026e296a826cc63e82b80fa34333d7f7f0d7277488d7a2dc"
+            "txid": "4f93b6a225442d08026e296a826cc63e82b80fa34333d7f7f0d7277488d7a2dc",
+            "vout": 0
           },
           "firstSeen": 20,
           "passed": true
@@ -3301,7 +3508,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "52929e5dcb6103b7c01488067734672aa1382601516c16a0dfa769939bddaa8e"
+            "txid": "52929e5dcb6103b7c01488067734672aa1382601516c16a0dfa769939bddaa8e",
+            "vout": 0
           },
           "firstSeen": 1,
           "passed": true
@@ -3312,7 +3520,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42"
+            "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42",
+            "vout": 0
           },
           "firstSeen": 10,
           "passed": true
@@ -3344,7 +3553,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "7ac0eb004fa0472a94217d500e673653b5a6efae463ae1506c747cfe3fe16428"
+            "txid": "7ac0eb004fa0472a94217d500e673653b5a6efae463ae1506c747cfe3fe16428",
+            "vout": 0
           },
           "firstSeen": 100,
           "passed": true
@@ -3355,7 +3565,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "c630051d8810236d79a51c991d0b92ffa42f85fbcc70c73394530ff9bc1f712d"
+            "txid": "c630051d8810236d79a51c991d0b92ffa42f85fbcc70c73394530ff9bc1f712d",
+            "vout": 0
           },
           "firstSeen": 101,
           "passed": true
@@ -3366,7 +3577,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "511a3d69ce53145ebcd6cad36a85e41341cfb8727b7ff7e7d6fd44ee0f00b743"
+            "txid": "511a3d69ce53145ebcd6cad36a85e41341cfb8727b7ff7e7d6fd44ee0f00b743",
+            "vout": 0
           },
           "firstSeen": 102,
           "passed": true
@@ -3377,7 +3589,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "17ed7f11cb39cb071a8c18b07f13a0a41aa2d601a77fb5be9ad58de702001439"
+            "txid": "17ed7f11cb39cb071a8c18b07f13a0a41aa2d601a77fb5be9ad58de702001439",
+            "vout": 0
           },
           "firstSeen": 103,
           "passed": true
@@ -3388,7 +3601,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "906d711aa2411b2b4e525d496ef1c84ceec5003648d5b57de7d83539695e5b99"
+            "txid": "906d711aa2411b2b4e525d496ef1c84ceec5003648d5b57de7d83539695e5b99",
+            "vout": 0
           },
           "firstSeen": 104,
           "passed": true
@@ -3399,7 +3613,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "b5770d9c38f9309cd0a9ef4495997d7ba4a11f7d8c5aeb6e436ff6a44efc53ef"
+            "txid": "b5770d9c38f9309cd0a9ef4495997d7ba4a11f7d8c5aeb6e436ff6a44efc53ef",
+            "vout": 0
           },
           "firstSeen": 105,
           "passed": true
@@ -3410,7 +3625,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "19cec2ccb83301ec641a1374da49d5a3127551ab591bf667b5cc452e7c606bd1"
+            "txid": "19cec2ccb83301ec641a1374da49d5a3127551ab591bf667b5cc452e7c606bd1",
+            "vout": 0
           },
           "firstSeen": 106,
           "passed": true
@@ -3421,7 +3637,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "93019b1afe41c82ffc4a0e3e0e779c3b3328146fceb7770a8b9a0d8154bb84b2"
+            "txid": "93019b1afe41c82ffc4a0e3e0e779c3b3328146fceb7770a8b9a0d8154bb84b2",
+            "vout": 0
           },
           "firstSeen": 107,
           "passed": true
@@ -3432,7 +3649,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "353c1b110625d4d027de93080d66957601bb8019d0c6404862a4322dbaa9dbe2"
+            "txid": "353c1b110625d4d027de93080d66957601bb8019d0c6404862a4322dbaa9dbe2",
+            "vout": 0
           },
           "firstSeen": 108,
           "passed": true
@@ -3443,7 +3661,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "e65573a5ed545df3ee8030e35b28d216e31e81b3ed4fb418f7742fc2d5616c82"
+            "txid": "e65573a5ed545df3ee8030e35b28d216e31e81b3ed4fb418f7742fc2d5616c82",
+            "vout": 0
           },
           "firstSeen": 109,
           "passed": true
@@ -3454,7 +3673,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "7154b485229efa06d1f5caf5f713b8c76dbdc8cad5b0a9b76bac328d950f0410"
+            "txid": "7154b485229efa06d1f5caf5f713b8c76dbdc8cad5b0a9b76bac328d950f0410",
+            "vout": 0
           },
           "firstSeen": 110,
           "passed": true
@@ -3465,7 +3685,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "71fb97208512df688895a6668cf9182ab1113e50401f9e760ec64af92fa2cfa8"
+            "txid": "71fb97208512df688895a6668cf9182ab1113e50401f9e760ec64af92fa2cfa8",
+            "vout": 0
           },
           "firstSeen": 111,
           "passed": true
@@ -3476,7 +3697,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "b41f954ef8c7f90fd8e1150b82c23f6758e70f73eca3307003d1448d877d4a59"
+            "txid": "b41f954ef8c7f90fd8e1150b82c23f6758e70f73eca3307003d1448d877d4a59",
+            "vout": 0
           },
           "firstSeen": 112,
           "passed": true
@@ -3487,7 +3709,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "d7b13904fdbd03d546322356ee9d58867c716806c2d3979530a5d6cad42ded78"
+            "txid": "d7b13904fdbd03d546322356ee9d58867c716806c2d3979530a5d6cad42ded78",
+            "vout": 0
           },
           "firstSeen": 113,
           "passed": true
@@ -3498,7 +3721,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "9c034d9164cb023b6e5e9d98ee0480c479381a5c38999a40fb5f46552826faeb"
+            "txid": "9c034d9164cb023b6e5e9d98ee0480c479381a5c38999a40fb5f46552826faeb",
+            "vout": 0
           },
           "firstSeen": 114,
           "passed": true
@@ -3509,7 +3733,8 @@
             "expiry": 2000,
             "root": "5388c70748fb917e0ead1ea90e798e937040a41783e281d050665e779ff08320",
             "spent": false,
-            "txid": "93e75ab4cd56ec9e360d37adf56459ff12fd8c5f9d69667458420c646e04a442"
+            "txid": "93e75ab4cd56ec9e360d37adf56459ff12fd8c5f9d69667458420c646e04a442",
+            "vout": 0
           },
           "firstSeen": 115,
           "passed": true
@@ -3530,6 +3755,38 @@
       ],
       "settled": true,
       "t": 1
+    }
+  ],
+  "tieKeys": [
+    {
+      "commitment": "9e20371e9f68d735a655594335ad2ef9e853a596e5e4d6ab0ca9884d38c5216a",
+      "key": "fb80e2ee431ef03548833a43effae77eb715e53460d09fcb3da6cc9205fcbb7e",
+      "txid": "0000000000000000000000000000000000000000000000000000000000000000",
+      "vout": 0
+    },
+    {
+      "commitment": "9e20371e9f68d735a655594335ad2ef9e853a596e5e4d6ab0ca9884d38c5216a",
+      "key": "ced3e450499feeae537fc8439b442c0161d5e8f6ca412d3fca9454a099c1347c",
+      "txid": "0000000000000000000000000000000000000000000000000000000000000000",
+      "vout": 1
+    },
+    {
+      "commitment": "9e20371e9f68d735a655594335ad2ef9e853a596e5e4d6ab0ca9884d38c5216a",
+      "key": "af48b052b1a2f8cabccd29f088242f33b1c426d500799bdf9685e0c6137c3d45",
+      "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42",
+      "vout": 0
+    },
+    {
+      "commitment": "9e20371e9f68d735a655594335ad2ef9e853a596e5e4d6ab0ca9884d38c5216a",
+      "key": "9d2c419b6262b844cf040de2557c6f1bcd92884f8936b7a9fbf91c4bb0aeae8d",
+      "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42",
+      "vout": 4294967294
+    },
+    {
+      "commitment": "499f53716764d4d2cbd713b65d816e2d547cf56e1c271c5601ecae55db4bb584",
+      "key": "f0cca45e52e45b27db36ef67c9a2f023f92fac11b224375a6204ac1126928c77",
+      "txid": "f6f85eca880d4c269a2406f274179dac7c2f285145d46e37730bbfadaf33ad42",
+      "vout": 0
     }
   ]
 }

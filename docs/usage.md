@@ -165,7 +165,9 @@ $ bstore settle
   anyone key, expires no earlier than the entry's retention, has the root
   node's length as `fileSize` and a CHIRP URL is eligible, and its
   advertiser's first sight is the time of that look; advertisements seen in
-  one look tie, and the lower txid ranks first. A renewal keeps the
+  one look tie, and the lower tie key ranks first (`SHA-256` of the
+  advertisement's outpoint with the entry's commitment, spec section 9.4),
+  which no provider can grind before the entry exists. A renewal keeps the
   original's sight. No provider can make this client see an advertisement
   before it exists and is mined, and an advertisement says nothing about the
   bytes: possession is what the challenge proves.
@@ -338,10 +340,6 @@ What the race cannot tell:
   on: an advertiser that proxies another provider's blob route passes. As
   with keys that are not copies (spec section 9.7), independence is the
   writer's judgement.
-- **Ties go to the lower txid.** Advertisements first seen in one look tie,
-  and the lower advertisement txid ranks first (spec section 9.4, row C18):
-  a provider can grind its txid, and every advertisement that existed
-  before the race ties on the first look.
 - **A front that is not the advertiser** is asked only when the advertiser's
   own front has not answered; then a hostile one can spend the candidate's
   draws, though never fail it by its own answer.

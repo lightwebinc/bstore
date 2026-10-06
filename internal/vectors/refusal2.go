@@ -232,6 +232,12 @@ func frontRefusals() []refusalCase {
 		{"https://a.example/a b", "url"}, {"https:///abcdefg", "url"}, {"https://a.example/é", "url"},
 		{"https://a.example:8443/bstore/v1", "ok"}, {"https://" + strings.Repeat("a", 504), "ok"},
 		{"https://" + strings.Repeat("a", 505), "url"}, {"https://a.example/x\x7f", "url"},
+		// The WHATWG parse, with an ASCII host and no "xn--" label.
+		{"https://:1/x", "url"}, {"https://:443", "url"}, {"https://a.example:65536", "url"},
+		{"https://1.2.3.256/x", "url"}, {"https://0x7f.1/x", "ok"}, {"https://[::1]/x", "ok"}, {"https://[::1/x", "url"},
+		{"https://a<b.example", "url"}, {"https://a%zzb.example", "url"}, {"https://%41.example", "ok"},
+		{"https://xn--bcher-kva.example", "url"}, {"https://XN--bcher-kva.example", "url"}, {"https://b%C3%BCcher.example", "url"},
+		{"https://a%EF%BC%8Eexample", "url"}, {"https://a.example\\x", "ok"}, {"https://a.example:/x", "ok"},
 	} {
 		l.m("url "+u.v, with(f, storerec.FKURL, u.v), u.label)
 	}

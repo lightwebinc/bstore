@@ -176,6 +176,10 @@ test('script-v1: the classifier and the advertisement check', () => {
     if (label === 'ok') assert.equal(s.decodeAdvertisement(script).url, c.adUrl, c.name)
   }
   assert.ok(narrowedAdmitted >= 0)
+  for (const f of v.frontUrls) {
+    const [label] = labelOf(() => s.checkFrontURL(f.url))
+    assert.equal(label, f.verdict, `front url ${JSON.stringify(f.url)}`)
+  }
   for (const e of v.eligibility) {
     const ad = s.decodeAdvertisement(fromHex(e.script))
     assert.equal(s.eligibility(ad, s.decodeEntry(fromHex(e.entry)), e.rootLength), e.verdict, e.name)
@@ -404,9 +408,12 @@ test('settle-v1: payouts, derivations, settlements', () => {
     const k = new KeyDeriver(PrivateKey.fromHex(bob.priv)).derivePublicKey(s.SettleProtocol, `${d.prefix} ${d.suffix}`, PublicKey.fromString(d.writer).toString(), true)
     assert.equal(k.toString(), d.paymentKey, `rank ${d.rank}`)
   }
-  type AdV = { txid: string; advertiser: string; root: string; expiry: number; spent: boolean; spentBy?: AdV[] }
+  for (const k of v.tieKeys) {
+    assert.equal(toHex(s.tieKey(fromHex(k.txid).reverse(), k.vout, fromHex(k.commitment))), k.key, `tie key ${k.txid}.${k.vout}`)
+  }
+  type AdV = { txid: string; vout: number; advertiser: string; root: string; expiry: number; spent: boolean; spentBy?: AdV[] }
   const ad = (a: AdV): s.Ad => ({
-    txid: fromHex(a.txid).reverse(), advertiser: fromHex(a.advertiser), root: fromHex(a.root), expiry: a.expiry, spent: a.spent,
+    txid: fromHex(a.txid).reverse(), vout: a.vout, advertiser: fromHex(a.advertiser), root: fromHex(a.root), expiry: a.expiry, spent: a.spent,
     spentBy: (a.spentBy ?? []).map(ad),
   })
   for (const x of v.settlements) {

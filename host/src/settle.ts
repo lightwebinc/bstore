@@ -1,7 +1,7 @@
 /** Settlement and the detection tables, twins of the Go settle.go and detect.go. */
 import { Utils } from '@bsv/sdk'
 import { AnyoneKey } from './names.js'
-import { bigEndian, equal, toHex } from './util.js'
+import { bigEndian, equal, sha256, toHex } from './util.js'
 
 /** BRC-178's rule: sqrt weights in binary64, floors, the remainder to rank 1. */
 export function payouts(r: number, k: number): number[] {
@@ -21,7 +21,9 @@ export const derivationPrefix = (c: Uint8Array): string => Utils.toBase64(Array.
 export const derivationSuffix = (rank: number): string => Utils.toBase64(Array.from(bigEndian(rank, 2)))
 
 export interface Ad {
+  /** Hash byte order. */
   txid: Uint8Array
+  vout: number
   advertiser: Uint8Array
   root: Uint8Array
   expiry: number
@@ -47,13 +49,28 @@ export interface Candidate {
   passed: boolean
 }
 
-function displayLess(a: Uint8Array, b: Uint8Array): number {
-  for (let i = 31; i >= 0; i--) if (a[i] !== b[i]) return a[i]! - b[i]!
-  return 0
+/**
+ * The tie key of spec section 9.4 (as amended): SHA-256 over the txid in
+ * hash byte order (32 bytes), the output index as 4 bytes little-endian,
+ * and the entry's commitment C (32 bytes). The lower key, compared as
+ * bytes, ranks first.
+ */
+export function tieKey(txid: Uint8Array, vout: number, c: Uint8Array): Uint8Array {
+  const b = new Uint8Array(68)
+  b.set(txid, 0)
+  new DataView(b.buffer).setUint32(32, vout, true)
+  b.set(c, 36)
+  return sha256(b)
 }
 
-export function rank(cands: Candidate[]): Candidate[] {
-  const out = [...cands].sort((x, y) => (x.firstSeen !== y.firstSeen ? x.firstSeen - y.firstSeen : displayLess(x.ad.txid, y.ad.txid)))
+function bytesCompare(a: Uint8Array, b: Uint8Array): number {
+  for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return a[i]! - b[i]!
+  return a.length - b.length
+}
+
+export function rank(c: Uint8Array, cands: Candidate[]): Candidate[] {
+  const keys = new Map<Ad, Uint8Array>(cands.map((x) => [x.ad, tieKey(x.ad.txid, x.ad.vout, c)]))
+  const out = [...cands].sort((x, y) => (x.firstSeen !== y.firstSeen ? x.firstSeen - y.firstSeen : bytesCompare(keys.get(x.ad)!, keys.get(y.ad)!)))
   const seen = new Set<string>()
   return out.filter((c) => {
     const k = toHex(c.ad.advertiser)
@@ -79,7 +96,7 @@ export interface Settlement {
 }
 
 export function settle(c: Uint8Array, r: number, t: number, K: number, cands: Candidate[]): Settlement {
-  const passed = rank(cands).filter((x) => x.passed)
+  const passed = rank(c, cands).filter((x) => x.passed)
   const s: Settlement = { settled: false, dropped: [], payees: [] }
   const keep: Candidate[] = []
   for (const x of passed) {

@@ -106,6 +106,19 @@ export function checkFrontURL(s: string): void {
   const i = auth.indexOf('/')
   if (i >= 0) auth = auth.slice(0, i)
   if (auth === '' || auth.includes('@')) throw refuse('url')
+  // The WHATWG parse, as the advertisement check runs it, with its host
+  // ASCII after percent-decoding and no label beginning "xn--", so that no
+  // internationalised name is mapped (UTS #46) and Go decides alike.
+  let loc: URL
+  try {
+    loc = new URL(s)
+  } catch {
+    throw refuse('url')
+  }
+  if (loc.protocol !== 'https:' || loc.hostname.length === 0 || loc.username.length !== 0 || loc.password.length !== 0 || loc.hash.length !== 0) throw refuse('url')
+  const j = auth.indexOf('\\')
+  if (/%[89a-fA-F][0-9a-fA-F]/.test(j >= 0 ? auth.slice(0, j) : auth)) throw refuse('url')
+  if (loc.hostname.split('.').some((l) => l.startsWith('xn--'))) throw refuse('url')
 }
 
 /** The derived front of an advertisement url, or undefined. */

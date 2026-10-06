@@ -115,7 +115,7 @@ output. A chain the host does not serve is rooted but never folded: its
 `bucket` answers its highest rooted tokens, and the map classes refuse it.
 
 The **latest** tokens are those of the branch on the current chain (frozen.md
-row C8, pending the owner's confirmation): walking down from the highest
+row C8, signed): walking down from the highest
 `seq` that holds a candidate, the candidates at the first `seq` where any
 token's proof verifies in the host's headers, kept for a minute; an answer
 that needs one token takes the lowest txid among them. A longer branch a

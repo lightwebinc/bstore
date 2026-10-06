@@ -215,10 +215,11 @@ func TestProviderE2E(t *testing.T) {
 	for k, ad := range ads {
 		id, _ := hex.DecodeString(k)
 		txid, _ := displayHash(ad.Txid)
-		cands = append(cands, storerec.Candidate{Ad: &storerec.Ad{Txid: txid, Advertiser: id, Root: root, Expiry: ad.Ad.Expiry},
+		cands = append(cands, storerec.Candidate{Ad: &storerec.Ad{Txid: txid, Vout: ad.Vout, Advertiser: id, Root: root, Expiry: ad.Ad.Expiry},
 			FirstSeen: uint64(first[k].UnixNano()), Passed: true})
 	}
-	ranked := storerec.Rank(cands)
+	putC, _ := displayHash(put.C)
+	ranked := storerec.Rank(putC, cands)
 	if hex.EncodeToString(ranked[0].Ad.Advertiser) != a.identity || hex.EncodeToString(ranked[1].Ad.Advertiser) != b.identity {
 		e.fail("ranking")
 	}

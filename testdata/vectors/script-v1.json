@@ -10972,5 +10972,6007 @@
       "verdict": "no-hold"
     }
   ],
-  "note": "the classifier (claim: bucket-token, entry, outcome, front, piece, funding, hold, or empty for nothing) and the BRC-26 advertisement check as the SDK makes it (advertisement: ok, or refused with the rule that failed); a url rule marked /narrowed is an internationalised host this Go codec refuses and the WHATWG parser may admit"
+  "frontUrls": [
+    {
+      "url": "https://a.example/x",
+      "verdict": "ok"
+    },
+    {
+      "url": "https://A.EXAMPLE/x",
+      "verdict": "ok"
+    },
+    {
+      "url": "https://a..b/x",
+      "verdict": "ok"
+    },
+    {
+      "url": "https://./x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://../x",
+      "verdict": "ok"
+    },
+    {
+      "url": "https://a./x",
+      "verdict": "ok"
+    },
+    {
+      "url": "https://1.2.3.4/x",
+      "verdict": "ok"
+    },
+    {
+      "url": "https://1.2.3.256/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://1.2.3.4.5/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://0x7f.1/x",
+      "verdict": "ok"
+    },
+    {
+      "url": "https://0x7F000001/x",
+      "verdict": "ok"
+    },
+    {
+      "url": "https://0x/x",
+      "verdict": "ok"
+    },
+    {
+      "url": "https://09/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://08.1/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://1.2.3/x",
+      "verdict": "ok"
+    },
+    {
+      "url": "https://4294967295/x",
+      "verdict": "ok"
+    },
+    {
+      "url": "https://4294967296/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://1.2.3.4./x",
+      "verdict": "ok"
+    },
+    {
+      "url": "https://1..2/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://[::1]/x",
+      "verdict": "ok"
+    },
+    {
+      "url": "https://[1:2:3:4:5:6:7:8]/x",
+      "verdict": "ok"
+    },
+    {
+      "url": "https://[::ffff:1.2.3.4]/x",
+      "verdict": "ok"
+    },
+    {
+      "url": "https://[1::2::3]/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://[::1/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://[1:2:3:4:5:6:7:8:9]/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://[::1.2.3]/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://[::01.2.3.4]/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://[1:2:3:4:5:6:1.2.3.4]/x",
+      "verdict": "ok"
+    },
+    {
+      "url": "https://[g::1]/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a%2eb/x",
+      "verdict": "ok"
+    },
+    {
+      "url": "https://%41.example/x",
+      "verdict": "ok"
+    },
+    {
+      "url": "https://%zz/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a b/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a<b/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a^b/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a|b/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a%00b/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a_b/x",
+      "verdict": "ok"
+    },
+    {
+      "url": "https://a~b/x",
+      "verdict": "ok"
+    },
+    {
+      "url": "https://a!b/x",
+      "verdict": "ok"
+    },
+    {
+      "url": "https://a*b/x",
+      "verdict": "ok"
+    },
+    {
+      "url": "https://xn--abc/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://XN--ab/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a.xn--/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://bücher.example/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://%C3%BC.example/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://١.example/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https:///x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a%/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a]b/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://localhost/x",
+      "verdict": "ok"
+    },
+    {
+      "url": "https://a.example。com/x",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/\\/@bücher.example:99999999999999999999?q",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x:@XN--ab:00080?#",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs://a@b@a*b:65536?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://u:@a]b?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://u:p@a.example/",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:/u@[1::2::3]#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:\\\\1.2.3:1a/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp:\\\\u:p@١.example:443# ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://u@1.2.3:0/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x://\\:@1..2:00080\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http:/:p@.:99999999999999999999/  ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS://a%:-1?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS:u:@a^b:1a/",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:/@localhost/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs:a_b:443/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps:\\\\08.1/# ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://\\a.:65535 ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:/08.1:00080/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp:u@a%/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " http:/@@%41.example:/# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS://1..2/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS://@@[1::2::3]:1a/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a..b:00080 ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp://[1::2::3]:443#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:///u@0x?#",
+      "verdict": "url"
+    },
+    {
+      "url": "https://[::1:-1  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS:/\\/u:p@..?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://\\a.:0\\x",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://09:#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS://localhost:443/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/\\/a@b@a%00b:1a# ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/u@a.example。com/a b",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs:\\\\1.2.3.4.5:65535  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://%40@08.1:99999999999999999999?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:/u:p@1.2.3.4:  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS://1.2.3.4.5:99999999999999999999\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp://\\a!b/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://0x:65535  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp://\\a@b@١.example#é ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp::@1.2.3.4.:65536# ",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x:///@[::01.2.3.4]:65536/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs:[::1.2.3]:00080\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https://a%2eb/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://a%00b?#",
+      "verdict": "url"
+    },
+    {
+      "url": "https://u:p@[::1]:-1/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": " https://:@a%:1a/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://u@0x:00080/#",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS://a%00b#",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https://@@a.example/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "http:///1.2.3.4:1a/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS:///a%00b:1a  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://%40@a]b:00080# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs:///u:@XN--ab#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS://:@[::ffff:1.2.3.4]:443 ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:u@a!b\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs://u@%C3%BC.example/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/\\/a@b@a]b:/  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS:\\\\[g::1]:00080  ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS:%40@1.2.3.4:443/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://u@[::ffff:1.2.3.4]:00080?#",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://[::01.2.3.4]:65535?q ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps:///@@08.1:99999999999999999999 ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:localhost/#",
+      "verdict": "url"
+    },
+    {
+      "url": "https://\\:@1.2.3.4.:65535/ ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://u@a!b:1a# ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:\\\\1.2.3.4.:00080",
+      "verdict": "url"
+    },
+    {
+      "url": " https://u:p@xn--abc:65536/#",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp:///u:@a..b:1a#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS://u:p@١.example:443/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": " https://u@localhost:0#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/\\/%40@..:0/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:///[1:2:3:4:5:6:7:8]#é",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:%40@a%00b:00080/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:///4294967296#f ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a^b:0?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://\\:p@[::1.2.3]:65536/#",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp:/:p@a!b:99999999999999999999#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://4294967296:0\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:///%40@A.EXAMPLE/é ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://a@b@%41.example:65536#é",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS://a@b@xn--abc/ ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://%C3%BC.example:00080/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps:/١.example:65535#",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https:\\\\:@1.2.3:65535/# ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs://u@localhost/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x://:p@XN--ab#",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/[1:2:3:4:5:6:1.2.3.4]#f ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://\\[::ffff:1.2.3.4]:00080/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/\\/a@b@4294967296:99999999999999999999?#",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:\\\\[1::2::3]/#",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp://:p@a.example。com/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://a*b:  ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs:/\\/[1:2:3:4:5:6:7:8:9]#f",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:/%40@a%2eb:99999999999999999999/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://\\u:@a..b:99999999999999999999/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs:/@@[g::1]:0\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps:\\\\@@09:1a\\x",
+      "verdict": "url"
+    },
+    {
+      "url": "http://:p@[1:2:3:4:5:6:7:8]/a b",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps://0x7f.1:65536/é ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://@@a%2eb:-1#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x:///@0x7F000001/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs:///u:p@[::1]:65535?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://[::1:-1\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a@b@a_b:99999999999999999999/#",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp://u:@1.2.3:99999999999999999999/é",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS:///%40@a.example。com:65536/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://a%2eb:-1?q",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://%40@%41.example:00080/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs:\\\\%40@a!b:99999999999999999999/?#",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps://:p@:\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://0x7f.1:99999999999999999999/#",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:///A.EXAMPLE:00080/#",
+      "verdict": "url"
+    },
+    {
+      "url": "  http:\\\\:p@%zz:65535/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/a@b@a<b:/",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:///1.2.3.4.:65535/é",
+      "verdict": "url"
+    },
+    {
+      "url": "https://%40@0x7F000001:99999999999999999999\\x",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS:/@..#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https://u:p@[1:2:3:4:5:6:1.2.3.4]:#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:\\\\u:@A.EXAMPLE  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://\\[1:2:3:4:5:6:1.2.3.4]:99999999999999999999?#",
+      "verdict": "url"
+    },
+    {
+      "url": " https://@bücher.example:65536/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/%40@a<b:99999999999999999999?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs:///@1..2:00080?#",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https:///u:@[1:2:3:4:5:6:7:8:9]:0?q ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/u:p@0x?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "http:/u:p@0x#",
+      "verdict": "url"
+    },
+    {
+      "url": "  https::p@1.2.3.4.:65535/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": " http:%C3%BC.example:443/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps:/\\/a@b@%zz:-1?#",
+      "verdict": "url"
+    },
+    {
+      "url": " https://bücher.example:1a/",
+      "verdict": "url"
+    },
+    {
+      "url": " https://\\%41.example#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://u@1.2.3.4.5:1a/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs::@%C3%BC.example:65535/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps:/\\/u@[::01.2.3.4]:0/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS://\\u@a.:99999999999999999999/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://@@[::1]:65536/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://:@xn--abc:#f ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS::@[::1.2.3]/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:///[::1.2.3]:  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://u:@[::1:99999999999999999999  ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://a@b@xn--abc:-1/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs://\\a@b@1.2.3.256:65536?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://u:p@1.2.3\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http:/\\/[1::2::3]:0/é",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps://\\:p@%C3%BC.example#",
+      "verdict": "url"
+    },
+    {
+      "url": "https:///:@0x:65536#é ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs:\\\\[1:2:3:4:5:6:7:8:9]\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:\\\\:@a.example:?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs:/a]b:1a#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:///1.2.3#f",
+      "verdict": "url"
+    },
+    {
+      "url": " https://[1:2:3:4:5:6:7:8]\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS://u@%C3%BC.example?q",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs:/u@../a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://u@[1:2:3:4:5:6:7:8:9]/",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp://a.:00080/  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/[::1]:00080",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs:/\\/4294967296:1a/#",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:\\\\[::ffff:1.2.3.4]:00080#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http:%zz:65536#",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS::p@%C3%BC.example:1a#f",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x:///A.EXAMPLE# ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:\\\\[g::1]:-1 ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://\\[::1:65535/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://\\:@[g::1]:65536#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/a@b@XN--ab:65535/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://1.2.3.4:99999999999999999999/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " http://@@1.2.3.4:65536#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/\\/u:@١.example:65535\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a%2eb:0?#",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:/u@4294967296:99999999999999999999/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp://@@%41.example:-1/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://u@a%2eb ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://a@b@a..b?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS://a!b:0#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp://a*b?q ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps:@localhost/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp:u:@a%2eb:00080?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp://\\u:@[::01.2.3.4]#",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS:///u:@a..b:00080  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https:bücher.example:99999999999999999999\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://:@1.2.3.4:-1#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http:@1.2.3:0/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp://u:@[::1]:0/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs://:@1.2.3.4.#",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs:a@b@a.:65535?q",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x:///@@1.2.3:65535/ ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:/\\/@@0x7f.1 ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps://%40@0x7f.1:00080?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps:/u@xn--abc:-1?q",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS:/\\/0x7F000001?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs:///:p@%zz:443\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://@:-1?q",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS://a]b:99999999999999999999/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:\\\\:@[1::2::3]:1a/#",
+      "verdict": "url"
+    },
+    {
+      "url": " https://\\a^b:65535?#",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS://u@[1:2:3:4:5:6:7:8:9]:443#f",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:/\\/a@b@a%00b:00080/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://a^b:-1# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs://@1.2.3.4.:0/é",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp://@%zz/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs://%40@%C3%BC.example/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://\\u@1..2:0?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/\\/a~b:443#é",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x:///4294967296:#f",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp:/\\/:@%41.example:00080\\x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://@a]b:0#",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://u:@0x7f.1?q",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://u@a*b/ ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://@..?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a|b/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://a@b@%zz:#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps:///[1:2:3:4:5:6:7:8]:1a?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://\\..: ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://a.example。com:-1/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://@a^b/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x://u@1.2.3.4:0#",
+      "verdict": "url"
+    },
+    {
+      "url": "https://\\a@b@1.2.3.4:00080 ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS://\\[1:2:3:4:5:6:7:8:9]:0\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/bücher.example:65536?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x://@XN--ab:65536/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/\\/:@[::01.2.3.4]",
+      "verdict": "url"
+    },
+    {
+      "url": " https://%40@a.example:-1/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://u:@%C3%BC.example:99999999999999999999/ ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://:p@0x:65536/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps://:p@A.EXAMPLE:#",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS://:p@09:0#f ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://u:p@a%/é ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:\\\\u@[::ffff:1.2.3.4]:00080/a b",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:///@@bücher.example#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://a!b:0/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp://u@a*b:0?q ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:\\\\u:@a<b:99999999999999999999/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://u:p@[1:2:3:4:5:6:7:8:9]:99999999999999999999  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/\\/1.2.3.4:65536/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:///a@b@a%2eb:1a/ ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://a@b@%zz:1a/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https:///:p@a%00b:1a/  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://@@١.example:443#é",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https://\\%40@1.2.3/é ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://a.:1a#é ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://bücher.example:-1/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps:///@@0x7F000001:1a?#",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/\\/@@[::1.2.3]:1a/  ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://a@b@١.example:1a#é ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps:///[g::1]:65536/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:\\\\u:@localhost:65536#f",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps://\\@@a*b/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/:@a^b:65535/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "https:///[::1:0/?#",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs://%40@[1:2:3:4:5:6:7:8:9]#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": " http://1.2.3.4.",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://u:p@a^b:0/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/\\/4294967296:65536/é ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://08.1#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https::p@[::1/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:\\\\u:@a.example。com:00080/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:\\\\xn--abc:-1?#",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://4294967296:00080# ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS://a@b@١.example:#é",
+      "verdict": "url"
+    },
+    {
+      "url": " https://:@[g::1]\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS://u@a.xn--:00080/é",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp:/\\/@a% ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps://a<b?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://\\u:@%C3%BC.example:00080  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:[::ffff:1.2.3.4]:65535/?#",
+      "verdict": "url"
+    },
+    {
+      "url": "http:@@0x7F000001:65535?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a@b@1.2.3:1a?q ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/\\/09:99999999999999999999#",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://\\@@[::1:65535",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:\\\\a@b@%41.example:00080#f",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x://\\a%00b/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://%C3%BC.example#f",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs:/\\/:@a./a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS://1.2.3.4.5:00080?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:\\\\@[::1]/#",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https://\\:p@a.example。com:/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp://\\u@a.example。com?q",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:///a!b:443/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:\\\\a.example。com:65536/",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://:p@:-1/?#",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x:a!b\\x",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:%40@[::1.2.3]:1a/# ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps:\\\\.\\x",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS:/a@b@a.example:0?#",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://[::ffff:1.2.3.4]?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://0x:65535/é ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp:u:p@a*b:-1/# ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://u:p@0x7f.1:-1?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp://u:@a_b:65536/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http:u@bücher.example:65535\\x",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps://a<b:443 ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:\\\\%40@a!b:00080?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:\\\\%40@a~b:443?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://u@a|b:0/?#",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp:/\\/1.2.3.4.5#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://[::1]/é ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https:\\\\@[g::1]/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp://:@a!b:443\\x",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp:/\\/a|b:443#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps://a@b@[::01.2.3.4]:65536/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://1.2.3.4#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs://u@1..2:00080?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/\\/:@4294967296:1a/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://bücher.example:443/# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http::p@[::1.2.3]:65535/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://:@a|b: ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:%41.example:/é ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs:%40@bücher.example\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://@@a*b:1a?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS://u@[1:2:3:4:5:6:7:8:9]/é ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs:\\\\:@a%:0\\x",
+      "verdict": "url"
+    },
+    {
+      "url": " https://XN--ab:/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:///u@[g::1]/  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://1.2.3.4./#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://%40@1.2.3:0/é ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/\\/u:@[1::2::3]:443#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS:///1.2.3:-1/?#",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs:/:p@%C3%BC.example#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps://a.:0/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:///@@1.2.3.4:99999999999999999999?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp://u:p@4294967295:443\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://0x:1a#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://a@b@4294967295:65535/ ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://:@09:0/#",
+      "verdict": "url"
+    },
+    {
+      "url": "https:///@1.2.3:65536/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://@@A.EXAMPLE:-1?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://%40@1.2.3.4:/# ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a!b/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:u:@1..2:/ ",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x://bücher.example\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp:/0x7F000001:99999999999999999999?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://\\a]b#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://\\u@a~b/#",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x://@@a<b/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps://:p@a.example?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://a~b:/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps://:@0x7f.1:65535/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs:a@b@xn--abc:99999999999999999999/#",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp://%zz:/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a%00b:0/# ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps:///%40@1.2.3:65535?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x:u@xn--abc:65535/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:///a%00b:1a/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS://%40@a.xn--:/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp:u@1.2.3.256#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://u@localhost:65536/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://\\xn--abc/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://\\..:00080/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps://09/?#",
+      "verdict": "url"
+    },
+    {
+      "url": " https:\\\\a b:-1#",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://@@[1:2:3:4:5:6:1.2.3.4]:99999999999999999999?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:\\\\u:@%zz#é",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:///[1::2::3]:/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://\\u:p@1.2.3.4:65535#",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs:/\\/u:p@../a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps://@@%41.example:-1/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp://bücher.example:0?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs:/\\/0x7F000001:443#",
+      "verdict": "url"
+    },
+    {
+      "url": " https://a~b/#",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp:/:p@XN--ab:65535/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp://u@a..b:0\\x",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x://a@b@[::1]?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://:#f ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:\\\\:p@1.2.3.4:00080  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://u@?#",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x://@@1.2.3.4.5:99999999999999999999#é",
+      "verdict": "url"
+    },
+    {
+      "url": " https:///.:-1",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp:/:@[::1:65535/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https:///:p@1.2.3:443/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp:\\\\1.2.3.4.:00080?q",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp://[::1]:1a/  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https://0x:-1",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://\\1.2.3:00080/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/:0/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://09:#f",
+      "verdict": "url"
+    },
+    {
+      "url": " https://u:@1.2.3.256:65536/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a..b:65535#é",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs:///a@b@0x7F000001/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:\\\\:p@%zz/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS:///@@a.:65535/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps://a@b@[1:2:3:4:5:6:7:8:9]:00080#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https:/[1:2:3:4:5:6:1.2.3.4]:443#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS://\\u:@%41.example:/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs:///:p@a.xn--?q ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps://a@b@[::01.2.3.4]:/é",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x://%40@[::1:#",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/\\/@localhost ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS:/%40@1.2.3?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": " http:/a]b:99999999999999999999/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/XN--ab:1a?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https:/\\/%zz:/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://u:@[::1]:65535#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://\\@@a|b:99999999999999999999 ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:1.2.3.256?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://u@%zz:00080#f ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://:@a%:1a#é ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://@%41.example:65536/ ",
+      "verdict": "url"
+    },
+    {
+      "url": "http:///u@%41.example:?#",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/\\/u:@a]b:0?q",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x://:p@a%00b#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " http:a_b?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://[::ffff:1.2.3.4]:99999999999999999999?#",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS://:p@a b:1a#f ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:///:@./é ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS://a!b:1a\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:///%40@..:-1?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x:1..2:0/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://\\:p@a_b:443#f",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://u:@[::ffff:1.2.3.4]:443/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://@1.2.3.256:00080/",
+      "verdict": "url"
+    },
+    {
+      "url": " https://%40@a|b/?#",
+      "verdict": "url"
+    },
+    {
+      "url": " http://a..b:0/é ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs:/\\/:p@a.example?# ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS:///@@[::1:0/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:///localhost:1a  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:///u:p@[::01.2.3.4]:65536?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/1.2.3.4:1a/?#",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS://\\a^b:65536/é ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:\\\\A.EXAMPLE:65536?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://\\09:/?#",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS:///u:p@a b#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp://@@1.2.3.4.:443/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS://:@1.2.3.256/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://@1.2.3/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps:/:p@a.example。com?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:///[::1.2.3]/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/\\/u@a%00b:1a\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x://a@b@0x7f.1#",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://١.example#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS://a_b/# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:\\\\u:@a<b:99999999999999999999/?#",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS://a b/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS:/\\/:p@a|b:0?#",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs:\\\\0x/?#",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/%40@a./?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:@a^b:99999999999999999999/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "https://%40@a]b/é",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:///1.2.3.4#é ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://a@b@a..b:1a?# ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS://u:@1.2.3.4. ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs://%40@[1::2::3]:0?#",
+      "verdict": "url"
+    },
+    {
+      "url": "https://@@09:443/?#",
+      "verdict": "url"
+    },
+    {
+      "url": "http:///u@1.2.3.4.5:-1?q",
+      "verdict": "url"
+    },
+    {
+      "url": " https:///a|b\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp://\\a@b@a b:1a/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": " http://a.example/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS:///a@b@1.2.3.4.:443/ ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps://:p@1.2.3.4./  ",
+      "verdict": "url"
+    },
+    {
+      "url": " http://u@0x?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a%:99999999999999999999/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://\\[::ffff:1.2.3.4]:99999999999999999999#é ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://@@.:65536/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs://\\@1.2.3.4.5/",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps:/\\/A.EXAMPLE:-1/ ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps://:p@4294967295/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://\\a@b@[1:2:3:4:5:6:7:8:9]:443/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS:/u:@../a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://@@a.example。com:65536?q",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:\\\\1.2.3.256:00080/# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/1.2.3.256:443 ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS:\\\\%zz:65536\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS:\\\\:p@a!b?q",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS:\\\\localhost:/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://@..:99999999999999999999/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:/\\/@a^b:99999999999999999999?#",
+      "verdict": "url"
+    },
+    {
+      "url": " https:///:@0x7f.1/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://\\:@1.2.3:65535/  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs://%40@a]b:00080/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a@b@1.2.3?#",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps://a]b:65535#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS://\\a|b:00080/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs://\\:@a]b:65535?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS:///a@b@[::ffff:1.2.3.4]/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://%40@1.2.3.256:65536#é ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https:///u:p@a%2eb:0?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://:p@[1:2:3:4:5:6:7:8]:99999999999999999999#f",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs:///1.2.3.4/#",
+      "verdict": "url"
+    },
+    {
+      "url": "http://u@1.2.3.256/é ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp:\\\\%40@a~b/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x://0x7f.1:65536#é",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://a%/é ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/:@[1::2::3]:/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://[1:2:3:4:5:6:1.2.3.4]:65536\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp://[::1.2.3]:65535/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps:a.xn--:00080?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:1.2.3.256:99999999999999999999/a b",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://a%2eb/# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:\\\\@a]b:00080/?#",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/\\/u:@[1::2::3]/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps:/\\/a@b@a.example:-1#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS:/A.EXAMPLE:443?q",
+      "verdict": "url"
+    },
+    {
+      "url": " https:///u:p@[g::1]:65535/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://\\:@1..2/# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp:///u:p@localhost:65535/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x:%zz:-1/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS:/\\/a@b@a%00b?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs:\\\\u@1..2/é ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs:u:@A.EXAMPLE:65535/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:@@a^b:0#é",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS:///@[1:2:3:4:5:6:7:8:9]:65536/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x://\\:@a..b:65535/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:\\\\[g::1]:-1\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://a@b@0x:99999999999999999999\\x",
+      "verdict": "url"
+    },
+    {
+      "url": " https://[::1]:65536?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https://u:@a<b#f ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:/@0x7f.1:443/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps:\\\\u@localhost:65535# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x://%40@1.2.3.4.:/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https://\\u@a..b:1a/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://:p@XN--ab:00080?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:/localhost:443/é",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp://u:@a%:65536/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a@b@1.2.3.4/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://\\%40@[1:2:3:4:5:6:7:8]/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp://:p@[1:2:3:4:5:6:7:8:9]:65535/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/\\/[::1.2.3]?q",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps:/\\/u:@XN--ab:00080",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x://u@%41.example:1a/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS://:@a]b:00080\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:\\\\@a.  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp://u:@localhost:/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": " https:@@1.2.3:/  ",
+      "verdict": "url"
+    },
+    {
+      "url": " http:\\\\:0/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps:/\\/u:@%41.example:0/é ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://%40@[g::1]:65535/",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp:\\\\:p@A.EXAMPLE/é",
+      "verdict": "url"
+    },
+    {
+      "url": "http://%40@%zz/  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps::p@09:443#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://:p@1.2.3.4/é",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp://:p@0x7F000001:65536#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:1.2.3.4.5:443#f",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x://4294967296:0/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps:\\\\%40@1..2:99999999999999999999/  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:\\\\@1.2.3.4.5:99999999999999999999\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://.:65536#f ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp:\\\\u:p@[::1.2.3]:1a/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": " http:u@a]b:00080#",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs:u:@a.:-1/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x://%40@localhost#",
+      "verdict": "url"
+    },
+    {
+      "url": "http:///%40@[1::2::3]:-1\\x",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x://u:p@a.example。com:65535/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": " http:/\\/:@1.2.3.4.5/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs:/\\/١.example  ",
+      "verdict": "url"
+    },
+    {
+      "url": "http:///a.xn--:-1/#",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp:///u:p@09\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://1.2.3.4.5:99999999999999999999/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": "https://\\[1::2::3]:00080#f ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/\\/bücher.example:0?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://u:@XN--ab:1a#",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS://@a%00b:65536?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://a%2eb:65535/#",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps:/[g::1]#é",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:\\\\@localhost/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/u:p@a|b:-1/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp:/\\/:@[::1:1a\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/u@..:65536?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x://[::1]#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:[::ffff:1.2.3.4]/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs://\\a~b:0?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs://:@a./?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp:/\\/[::1.2.3]:00080?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps://\\1.2.3.4.:00080/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps:/@a..b?#",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/a.example:65536\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x://@a_b:0?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps://\\%40@%41.example:443/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://a.:00080/#",
+      "verdict": "url"
+    },
+    {
+      "url": " https://%40@XN--ab:99999999999999999999\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/\\/../é",
+      "verdict": "url"
+    },
+    {
+      "url": "https://[1::2::3]\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": " http:/\\/[g::1]:00080/é ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://\\1.2.3.4.5:00080/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x://\\a%:/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x://@1..2:65536/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:/XN--ab?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp://:@١.example:\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://u:@A.EXAMPLE:65536/",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https:1.2.3.256#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS://u:@A.EXAMPLE?#",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://u:@[::1.2.3]:-1",
+      "verdict": "url"
+    },
+    {
+      "url": " https:a]b:1a/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs:\\\\u:@a%00b:443#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/\\/@@[::1.2.3]/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https:\\\\a.xn--:00080/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https://\\u:p@localhost:65536#é ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/a_b:443?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp:\\\\a@b@09:0?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x:/%40@a.xn--/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": " http://@a%:0#f",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://@@0x7f.1:443/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://XN--ab:00080/#",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://a.:443#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS://\\a<b:00080/é",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:@@a.:99999999999999999999/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a@b@a_b:65535#é ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps://u@a<b:00080 ",
+      "verdict": "url"
+    },
+    {
+      "url": " http:\\\\@[::01.2.3.4]:1a#f ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://:p@..:443?#",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp://1.2.3.4.5?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://\\u:p@1.2.3.4:00080/é",
+      "verdict": "url"
+    },
+    {
+      "url": " https://XN--ab:/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x://@@[1:2:3:4:5:6:7:8]:0/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://0x:00080/é ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://4294967295?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://u:p@[1:2:3:4:5:6:7:8:9]:-1/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps:/@[::1:-1/  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/[::ffff:1.2.3.4]:99999999999999999999/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/\\/localhost:99999999999999999999?q",
+      "verdict": "url"
+    },
+    {
+      "url": " https:///1.2.3:65535/",
+      "verdict": "url"
+    },
+    {
+      "url": " https://\\09/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:\\\\@@a%00b:1a/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps://\\xn--abc?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps://u:@..?# ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS:/\\/a^b:1a#é",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps://%40@[1:2:3:4:5:6:7:8:9]:/",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://u:@08.1:443  ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS:/\\/[::1.2.3]:443#f ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:///4294967295:0/é",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a^b:-1?#",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/\\/u@١.example#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps:a@b@a!b:99999999999999999999# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http:/u@a^b:65536/ ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp://a@b@0x:0/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:///:65535?q",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://a%#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS://[::1# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:///u:p@4294967296\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x://\\u@a.xn--:443/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https://u:@1.2.3.4.5:?q ",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x://u:p@[::1.2.3] ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS://1.2.3.4.5:1a/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x::p@1.2.3/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS:///a@b@xn--abc:#f",
+      "verdict": "url"
+    },
+    {
+      "url": "https:\\\\u@a|b:00080?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x://\\:p@A.EXAMPLE:00080?#",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x:///u@1..2#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs:/0x:443/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:\\\\[1:2:3:4:5:6:7:8:9]:0\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs://.:1a#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://\\u:@./?#",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/[1:2:3:4:5:6:7:8:9]:/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs://%40@a]b#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x:a@b@a..b?q",
+      "verdict": "url"
+    },
+    {
+      "url": "https://u:p@/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": "http:/\\/[::1:65535\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https:u@1..2\\x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://%40@a<b/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps:/\\/@%zz?q",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://a|b:65535?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:/u:@١.example ",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x:\\\\a.xn--# ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp:/@a.example:65536?# ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps://u@",
+      "verdict": "url"
+    },
+    {
+      "url": "https://:@09:65535  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/..:00080/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS://@1.2.3.4.:/?#",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://\\:p@08.1#é ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs:/\\/:p@0x/#",
+      "verdict": "url"
+    },
+    {
+      "url": "https://\\a<b:0?q",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/\\/0x7F000001/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps:/.:443/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https:/\\/u:p@a~b:99999999999999999999?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a.xn--:65535?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp:/u:@a..b:99999999999999999999/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://:p@0x7f.1:1a#é",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs://1.2.3.4.:?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://u:p@[1:2:3:4:5:6:7:8:9]/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://a|b/",
+      "verdict": "url"
+    },
+    {
+      "url": " https:///%40@a.example。com:65536?#",
+      "verdict": "url"
+    },
+    {
+      "url": " https://[::1.2.3]:65535 ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp:///u@1.2.3:0?q",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/\\/@[g::1]:65536?q",
+      "verdict": "url"
+    },
+    {
+      "url": "http://a|b:/",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:/@@a%:99999999999999999999/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://XN--ab:443#é",
+      "verdict": "url"
+    },
+    {
+      "url": "https://[::ffff:1.2.3.4]/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp://u:@[1:2:3:4:5:6:7:8] ",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x:u:p@XN--ab:65535/é",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x:[1:2:3:4:5:6:7:8]:443/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:///:@a%:?#",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps:\\\\a@b@08.1/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:///a.:443/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://:p@4294967296/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps:///:p@a%00b:65535#",
+      "verdict": "url"
+    },
+    {
+      "url": "  http:\\\\:p@/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x://..:-1\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://[1:2:3:4:5:6:7:8]:0/  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://:p@a.example。com:65536/",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x:\\\\bücher.example:1a# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/\\/١.example:/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://1.2.3.256:99999999999999999999/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://1..2:1a/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs://:p@a*b/#",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x:%40@1.2.3.4:65535/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS:\\\\u:@a_b  ",
+      "verdict": "url"
+    },
+    {
+      "url": " http://xn--abc:99999999999999999999/#",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://:@..:65535/#",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:/a@b@a!b:#é",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x:///..:65536?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps://@@08.1/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps:\\\\u@1.2.3.4.:443/# ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://%40@4294967296:443/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps://1.2.3.4/ ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x://\\u@0x7F000001\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps:\\\\:p@1.2.3:65536/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://a@b@[1:2:3:4:5:6:7:8]:65536/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x:\\\\:@0x:00080/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp:/\\/@@1.2.3:1a/é",
+      "verdict": "url"
+    },
+    {
+      "url": " https:u:p@..# ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://\\a|b:/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs:/.:1a/",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp:/%40@[::01.2.3.4]:00080#é ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS://a@b@a.#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://u@%C3%BC.example?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://u:p@localhost:-1?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x://\\%40@a%:0\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https://@@1.2.3.4:00080?# ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS://\\bücher.example:443/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a~b:65535/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://%40@4294967295:65535/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp://\\a.example:443#f ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS://localhost:443/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://[::1]:#é",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp:[::1:443/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://\\a%2eb:443?# ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp:\\\\u:@.:443/é ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://@a~b/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://A.EXAMPLE#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:0x:99999999999999999999?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:\\\\[1:2:3:4:5:6:7:8:9]:1a",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs://1.2.3.256:65536#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:/\\/a b:00080",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp://a^b:#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs:///u:@a%2eb#é ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://:p@A.EXAMPLE#é",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:u@[::01.2.3.4]/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:a<b/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:///a<b:00080/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS://@@a%:65535\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:/\\/:p@1.2.3/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:a.example:-1?q ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://a@b@[::ffff:1.2.3.4]#é",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://%C3%BC.example:0?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps:bücher.example\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https://1.2.3.256/é",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs://a@b@1.2.3:1a#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://%41.example:99999999999999999999/é ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:\\\\u@[1:2:3:4:5:6:1.2.3.4]:-1?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs:/u@[::1.2.3]:",
+      "verdict": "url"
+    },
+    {
+      "url": "http:/\\/:p@a~b/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://\\XN--ab/",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x:/a@b@a*b:-1/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://@@0x:99999999999999999999/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS:/@@a..b/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS:\\\\u@0x7F000001:/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/u:p@%C3%BC.example:-1/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/[1:2:3:4:5:6:1.2.3.4]/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": "https://:@a..b:65535/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://\\:p@[::1:443?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:\\\\u@08.1:99999999999999999999/?#",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://u@a b/  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/a.example。com:-1/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs:\\\\%40@XN--ab:1a/  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp://:p@..#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs://:@a^b:0#é ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps:/\\/@@[1:2:3:4:5:6:7:8:9]:65536/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps:\\\\@@/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs://[::01.2.3.4]:65536#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS://@A.EXAMPLE:1a/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS://:@a%:65536/ ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://@[::01.2.3.4]:0?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://[1::2::3]:-1/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS:u@0x7F000001:0?#",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/a*b?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:/@localhost:65535/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:1..2:-1",
+      "verdict": "url"
+    },
+    {
+      "url": "https://u:@a.:443  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp:\\\\%40@a b:65536?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://@[1:2:3:4:5:6:1.2.3.4]:00080/é ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http:/@a..b:?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:///u@a*b:1a/é",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs:\\\\[1::2::3]:65535/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs:///[1::2::3]:99999999999999999999#f",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x://\\u@1.2.3:1a/# ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://\\a@b@a~b#",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/\\/u:p@a|b:0\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS:\\\\A.EXAMPLE:65536/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps://%40@[::ffff:1.2.3.4]:-1/#",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs::p@.:65535/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://:@:/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://\\u:p@a<b#é ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:\\\\u:@A.EXAMPLE/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps:\\\\u:p@%41.example:0/  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/a%:/",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x://@a.:0#f",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp://a.example。com/é ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://:@1.2.3.4.5/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "https:\\\\/ ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://@a%:#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://u:p@a%00b:99999999999999999999#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS://@@[1:2:3:4:5:6:7:8]?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs:/\\/u:@[::ffff:1.2.3.4]:00080/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps://a.:443#é ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS:/\\/0x7F000001:99999999999999999999/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps://u:@a^b:65536/é ",
+      "verdict": "url"
+    },
+    {
+      "url": " http:/:p@[1:2:3:4:5:6:7:8]:443/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x://A.EXAMPLE:00080/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://@@[1:2:3:4:5:6:7:8]#",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp:@0x:65536/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x://\\1.2.3.256:443/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://u:@localhost:1a# ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:\\\\@@a<b:00080/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://%C3%BC.example:1a?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x://a b:443/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://a^b\\x",
+      "verdict": "url"
+    },
+    {
+      "url": "https:\\\\u:@1..2:0?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://:@a|b:99999999999999999999/é ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS://\\u@a<b:#é",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x://:@XN--ab:443/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp://a@b@a!b:0/  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp:a<b:443/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://\\u:p@a!b:00080#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://XN--ab:65536\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x:\\\\@@0x7F000001:65536#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://a@b@[::ffff:1.2.3.4]:/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps://1.2.3.256/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp:/\\/u:@a|b/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/a@b@a|b:00080/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs://\\a@b@..:65536?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x:/%40@..?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://\\١.example:65535/é ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp://:p@[1:2:3:4:5:6:7:8:9]#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/\\/@a.example。com\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://u@١.example:65535/# ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp:/u:@a.xn--:443?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://\\@08.1:00080/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https://0x7F000001:00080#f ",
+      "verdict": "url"
+    },
+    {
+      "url": " http://@XN--ab:65535  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://1..2:/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps://\\@a!b:1a/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https:/\\/a%00b:99999999999999999999#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps:\\\\a%00b# ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://[::ffff:1.2.3.4]#é ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS:/a@b@0x:00080/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x://[::1.2.3]:0/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs:\\\\%zz/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp:1.2.3.4.5#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp:/\\/u:@a%:99999999999999999999 ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://:p@1.2.3.4.:65536/é ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:\\\\u:@..:65536#é",
+      "verdict": "url"
+    },
+    {
+      "url": "https:\\\\[g::1]/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http:/\\/%zz:/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/@@bücher.example\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp:/\\/:p@08.1:-1/# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/u@a^b?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://:p@4294967295/#",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps://[1:2:3:4:5:6:1.2.3.4]:0?q",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps:/\\/xn--abc:1a\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://:@%zz#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS:@a_b:99999999999999999999#",
+      "verdict": "url"
+    },
+    {
+      "url": " https:\\\\:p@[g::1]/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://1.2.3.4.:65535?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:///[1:2:3:4:5:6:7:8]/  ",
+      "verdict": "url"
+    },
+    {
+      "url": " http://a]b:65535/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS:/:p@:00080# ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:\\\\%40@[::1:65535/#",
+      "verdict": "url"
+    },
+    {
+      "url": " http://a~b:-1/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp:\\\\a%00b:0#é",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp://u:p@a~b:1a/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://@@a_b:99999999999999999999/",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https://\\:@a~b:-1 ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a.example。com:-1?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:///a%/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x:///@%41.example:-1\\x",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS:///a_b:65535?q",
+      "verdict": "url"
+    },
+    {
+      "url": "https://\\%40@a^b:0/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:u:@0x7f.1:-1/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs://\\[::1.2.3]/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://:p@08.1:443?q",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp://.:00080/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps://\\u@[1:2:3:4:5:6:7:8:9]:1a#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp:///%40@[1:2:3:4:5:6:1.2.3.4]:-1/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs://a%00b  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/a<b:65536#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs:///[::ffff:1.2.3.4]:00080/  ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://@@%41.example# ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:///[::1:/é ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://u:@%C3%BC.example/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x::@1.2.3.4.5:99999999999999999999/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x::@[::ffff:1.2.3.4]:-1 ",
+      "verdict": "url"
+    },
+    {
+      "url": " http:@08.1 ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps://\\a./a b ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://A.EXAMPLE/?#",
+      "verdict": "url"
+    },
+    {
+      "url": "https://u:p@a%00b\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https::@%41.example:00080\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp:/u@[::1.2.3]:00080/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp:/\\/a@b@a_b:1a#é ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs://u:p@[::01.2.3.4]:443#",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs:a<b:/é ",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x:\\\\u@[g::1]:\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://\\[::ffff:1.2.3.4]#f ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://1.2.3:-1/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS:\\\\@@1..2:1a/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp://@@a|b:/é",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:/\\/u:@0x7f.1#",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/\\/a@b@1.2.3.4:65536?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:\\\\XN--ab?# ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp:/\\/u@[::ffff:1.2.3.4]:1a\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:0x7F000001:/# ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://@[1:2:3:4:5:6:7:8:9]:-1/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs://:@1.2.3.256:-1/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": " https://%40@[1:2:3:4:5:6:7:8]:443#é ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/\\/u:p@XN--ab:443#é ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https://@[::ffff:1.2.3.4]  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://\\u:@localhost:00080/ ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://\\0x7f.1:00080?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs://\\a.example:/é ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp:\\\\%40@08.1#é ",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x://@a~b:0/?#",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://u:@1.2.3.4.5/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "http:///a*b:00080/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp:@@[::1.2.3]:-1#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a@b@a.example:-1 ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://.:65535/?#",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/\\/%40@[1:2:3:4:5:6:1.2.3.4]/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:///a@b@.:65536/ ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://:p@0x7F000001#",
+      "verdict": "url"
+    },
+    {
+      "url": " https:@١.example ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http:/\\/:@localhost:-1#f ",
+      "verdict": "url"
+    },
+    {
+      "url": "https::p@%zz:65535\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps://@a*b:1a/?#",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs:///a b/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://@localhost:-1#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps:%40@[::ffff:1.2.3.4]:99999999999999999999/#",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https://a b:/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps:/a@b@1.2.3.4.:443#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp:a|b:-1#é ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://a.example:443#f",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:/\\/%40@09:-1?#",
+      "verdict": "url"
+    },
+    {
+      "url": " https://u@..?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS:/u:p@08.1:65536/",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://:@a|b#f ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://a_b:443?q",
+      "verdict": "url"
+    },
+    {
+      "url": "http:///:@0x/# ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS:/\\/%zz:0#f ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://%zz/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs:/@a b:65535\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://\\09:99999999999999999999/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp://\\u:@a!b:00080/a b",
+      "verdict": "url"
+    },
+    {
+      "url": " https:@@..\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS:///%40@a<b:-1/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp://%40@a]b:00080/  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:@@a|b:00080#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://a@b@a^b:99999999999999999999/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https://0x7F000001?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:///@4294967296:443/#",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS:/a b:1a?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x:///:@a<b:?q ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:/\\/:p@a%2eb:0#f",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/:p@a./é",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS://@1.2.3.256:65536/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:///a@b@1.2.3.4:0#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs:/\\/u@[::1.2.3]:65535?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/\\/:p@a b#f",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp://u@bücher.example ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https:/a@b@[::01.2.3.4]:99999999999999999999#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp:\\\\bücher.example:443?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS://u@a*b#",
+      "verdict": "url"
+    },
+    {
+      "url": "http://\\0x:65535?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://u:p@[1:2:3:4:5:6:7:8:9]#é",
+      "verdict": "url"
+    },
+    {
+      "url": " https://A.EXAMPLE:\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://.:-1 ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp:///%40@0x7f.1:0/#",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://a@b@a.example。com#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x://@a~b:443/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:///u:@[::1.2.3]:-1/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:a|b:0/ ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS:/u:p@a.example。com?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps://..:0/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://a%2eb:443/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://localhost:00080?q",
+      "verdict": "url"
+    },
+    {
+      "url": "  http:/\\/u@[::1.2.3]:0/ ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS:١.example:#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://\\a@b@./a b",
+      "verdict": "url"
+    },
+    {
+      "url": " https://1.2.3.4.5:-1/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp:///@09/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp:/:p@[::1:443/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://:p@0x#é",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs://\\u:p@a~b:99999999999999999999#é ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs://:p@4294967295:0?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x://a.example/#",
+      "verdict": "url"
+    },
+    {
+      "url": " https:u:p@a.example。com:443/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:///%41.example  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://\\08.1/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp://1.2.3.4.5:0\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://a%2eb/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/[1:2:3:4:5:6:7:8]:-1/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://\\%40@a<b:65535\\x",
+      "verdict": "url"
+    },
+    {
+      "url": " http://@@bücher.example:65535#é",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:@@[::1.2.3]:1a#é",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp://:p@a b:99999999999999999999/é ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://%41.example:0#f",
+      "verdict": "url"
+    },
+    {
+      "url": " https:///:@a b:00080/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://a.xn--/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://\\[::ffff:1.2.3.4]:1a/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://%40@[::1:443/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "http://u@[::1:99999999999999999999/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://a]b/  ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:\\\\a..b:/?#",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://[g::1]:-1/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:\\\\a~b:65536/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:\\\\a*b#é ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs:/\\/a%00b:00080\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs:///u:@[::1:0",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs://a|b?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x:[::01.2.3.4]:0\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://[1:2:3:4:5:6:1.2.3.4]#f",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x:///[1:2:3:4:5:6:7:8:9]#f",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://:@1.2.3.4:65536/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:u:@%C3%BC.example/  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs://@@a.:65535/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x://u@a b:443?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://%40@4294967296/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://0x:1a/# ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp:/:p@a*b/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://\\%40@a]b:65535/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps://@@1.2.3.256:",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://\\%40@%41.example:443?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:\\\\@@1.2.3:443\\x",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x:///:p@[::01.2.3.4]:0/é",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:///@a./a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": "  https::p@.?q ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp://A.EXAMPLE:-1/#",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS://a@b@a.example。com:99999999999999999999 ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://u:p@08.1:99999999999999999999/",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:/\\/u:@[1:2:3:4:5:6:7:8:9]/?#",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS:/\\/u@[::1]/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS://a<b?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp:/\\/@[::1.2.3]:65536#f",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://\\u:p@a b/#",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x:\\\\@[1:2:3:4:5:6:1.2.3.4]:443\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:%40@%C3%BC.example:-1/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:u@1.2.3.256/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://@.:00080/  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps:/a@b@[::1.2.3]:#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://\\:-1/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/0x7f.1:65536/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs:a@b@0x7F000001/é",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/\\/u:@0x7F000001:-1/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https://%40@a]b:65535?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS:[::1]:00080#é ",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x:\\\\[::01.2.3.4]:443/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x://\\0x7F000001:#",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp://a@b@localhost:65536/é",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps:\\\\a.xn--:65536/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp://u:@١.example/  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/\\/localhost:00080#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://a@b@[1::2::3]:/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/\\/:@0x:99999999999999999999/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://:@08.1/# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs://:p@..?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS://u@1.2.3.4:-1#f",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp://\\%40@08.1:0/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:%40@١.example:/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:///0x7f.1:443?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:\\\\u:p@1.2.3.4:1a#f ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS:/\\/u:@XN--ab?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp://١.example\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp:/a.example?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS:@a!b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS:/\\/:@[1:2:3:4:5:6:1.2.3.4]:0/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp://a@b@A.EXAMPLE:1a?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps://u:p@:-1/  ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS://1.2.3/# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:\\\\@a*b:1a/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/\\/u@[1:2:3:4:5:6:7:8:9]:1a/#",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp:localhost:65535/?#",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://a!b:443#é",
+      "verdict": "url"
+    },
+    {
+      "url": " https://u:p@:443?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/\\/@1.2.3.4.:1a?q ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps:@@1.2.3\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://\\a.example:65535/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:\\\\:@[::1]:65536# ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp://u@1.2.3.4:00080#f",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs:\\\\u:p@%zz?q",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://u:p@a%00b:0/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "https:bücher.example:1a/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:bücher.example:#é",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://[1:2:3:4:5:6:7:8:9]:1a#é ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs://u:@a%:65536/ ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:///u:@08.1:65535#f ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/1.2.3.4.5:1a/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS:/\\/:@[::1:443?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://%40@a<b:65536\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp:/a@b@a.xn--:99999999999999999999?#",
+      "verdict": "url"
+    },
+    {
+      "url": " http://\\:p@bücher.example:0/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://u:@a.example:00080/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://\\[g::1]/# ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:/a b:1a/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps://[::ffff:1.2.3.4]:-1#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x:\\\\[::ffff:1.2.3.4]:65535/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS://\\?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https://\\:@[::01.2.3.4]:-1?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://%40@[::1.2.3]/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://@١.example:0?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps:u@١.example:0/# ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/u:p@a*b:1a#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/a]b:443/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:///a@b@..:65536#é",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS:\\\\u:p@a^b:1a/# ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://@@1.2.3:443?q",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps://\\a<b#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://:p@[1:2:3:4:5:6:7:8]:00080?q",
+      "verdict": "url"
+    },
+    {
+      "url": "http:\\\\1.2.3.4.5:0/#",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x://..:65536\\x",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/[::1.2.3]:443/é",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp:///[1:2:3:4:5:6:7:8]:-1/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:///١.example  ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:\\\\a*b#f ",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x://0x7f.1:65536/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://@a<b:00080?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://a@b@[1:2:3:4:5:6:1.2.3.4]:0/ ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://[::01.2.3.4]:65536/ ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://xn--abc  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:\\\\0x/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": "http:///1.2.3.4:65536/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp://:@a.xn--?# ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/@[::1/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http::@a!b/?#",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs:/a b:/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "http:\\\\[::ffff:1.2.3.4]:99999999999999999999\\x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://0x7F000001/# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:u:@0x#é",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/a@b@1.2.3.256:/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://\\A.EXAMPLE:1a/  ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://\\1.2.3.4.5:-1/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/\\/a@b@1.2.3:-1/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS:\\\\a@b@09:65535/  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://@1.2.3:/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS:\\\\a@b@a<b:65536?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS://XN--ab:99999999999999999999#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://a@b@[::01.2.3.4]#f ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/a.example。com/# ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp:/%40@..:65535# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/u:@[1:2:3:4:5:6:7:8]:443/é ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/\\/:00080?q",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://u:@a.example。com?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://\\bücher.example:65535/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps://:p@4294967296:443\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/bücher.example/?#",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs:///u:@[1:2:3:4:5:6:7:8]?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps://\\u@a b\\x",
+      "verdict": "url"
+    },
+    {
+      "url": "https://\\@@a]b:00080#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps:///u:@a<b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://1.2.3.4./a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:\\\\%40@a*b:1a/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps:/\\/u@[::1]?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http:\\\\u@localhost:1a?#",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://\\a@b@:-1/é ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:\\\\[::ffff:1.2.3.4]:00080  ",
+      "verdict": "url"
+    },
+    {
+      "url": "http:///@a%:65536\\x",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/\\/u@[g::1]:1a/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://\\a%00b:00080  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps://\\u:p@%zz:1a#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x://a.example:1a#f ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:\\\\u@[::01.2.3.4]:99999999999999999999?q",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:///[::ffff:1.2.3.4]:00080/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/\\/1.2.3.256:00080\\x",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS:///@a*b:#é ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:\\\\u:p@XN--ab/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs://@A.EXAMPLE:65536/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:@@0x7f.1\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:\\\\1.2.3.256#",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs://:p@A.EXAMPLE:0/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://\\u@a|b:99999999999999999999?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x:/u:p@0x7f.1:00080/é ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a@b@[::1.2.3]:65535?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "http:\\\\%40@1.2.3:0/",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https://%40@1.2.3.4.5:00080?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:\\\\:@a~b:99999999999999999999#é ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs://@a.xn--?#",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS://a@b@[g::1]:00080/",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https:/\\/..:99999999999999999999/",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp:/\\/a@b@bücher.example# ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/a@b@1..2:-1#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http:/\\/%40@%zz\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps://\\%40@a.example:65536/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x://[::1]:99999999999999999999/?#",
+      "verdict": "url"
+    },
+    {
+      "url": "https://\\4294967296:\\x",
+      "verdict": "url"
+    },
+    {
+      "url": "https:///a%2eb:443/é",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs:/@a.example。com/  ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://\\:@a]b:443#f ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x://4294967296:1a/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://a@b@1..2:443/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http:/\\/@1.2.3.4.5:1a?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://@0x:-1/ ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:/\\/08.1/ ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:XN--ab:1a/?#",
+      "verdict": "url"
+    },
+    {
+      "url": " https:\\\\0x:65536#é ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://a]b:0/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs:///a*b:443#",
+      "verdict": "url"
+    },
+    {
+      "url": " https://:@a_b:99999999999999999999?q ",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x:/@@a*b/",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x://\\%40@09:1a/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://u:p@a.:1a?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS:/%40@localhost:0/é ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https:/\\/:@[1:2:3:4:5:6:7:8:9]/#",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps:\\\\4294967296?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/\\/:0/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://u:p@a^b:1a/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://\\@0x7f.1#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/a.xn--?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS://a..b:99999999999999999999?#",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp://\\u@a.example。com ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://@@4294967295:65535\\x",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps://@@١.example:0/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/\\/..:65536/?#",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://u:@#f ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS://\\:@a.example。com:/ ",
+      "verdict": "url"
+    },
+    {
+      "url": "http:@1.2.3.4.:/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:/@@localhost:0/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs:/u:@bücher.example:00080/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp:\\\\:@[1::2::3]:65535/ ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp://a@b@4294967295/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp:@@1.2.3.4.5:65535/é",
+      "verdict": "url"
+    },
+    {
+      "url": " https://\\@1.2.3.4.:65536/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:u:p@a.:00080  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps://\\bücher.example/",
+      "verdict": "url"
+    },
+    {
+      "url": "http://1..2:1a  ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:/\\/a@b@08.1:443/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/XN--ab#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs:/\\/a@b@[1::2::3]:99999999999999999999/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/\\/a]b?#",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp://a*b:65535?#",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS:/a@b@%zz:# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:///u:@4294967295:00080/",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs://a@b@08.1: ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp:/08.1  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://@a~b/#",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://u:@%41.example\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs:/[1:2:3:4:5:6:7:8:9]:1a#",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://%40@XN--ab:0/?#",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/\\/a.xn--/?#",
+      "verdict": "url"
+    },
+    {
+      "url": " https://%C3%BC.example:1a/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": "https::p@1.2.3.4:-1/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:///:@..#f",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs://[g::1]:0/# ",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x://@@a%00b/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https:///a.",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs:[::1.2.3]/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://xn--abc:65535?q ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/u:@[1:2:3:4:5:6:7:8:9]:65536/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/u:@a^b/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://@[1::2::3]?q",
+      "verdict": "url"
+    },
+    {
+      "url": "https://%40@a|b/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps://a b/é",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/\\/0x7f.1:65536/",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps:\\\\:@1..2/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://:@1.2.3?q",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp://u@a!b:65536  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:\\\\@localhost:99999999999999999999# ",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x:/u:@a%:-1/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": " http://xn--abc:65535/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/.:/  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/\\/@a%:0/",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://a@b@a_b:-1/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps:///a b:99999999999999999999?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs:///@a^b:65536/?#",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x://a@b@bücher.example:-1  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http:/\\/١.example:1a#f ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https://:@0x:443#f",
+      "verdict": "url"
+    },
+    {
+      "url": "https://u@%41.example:1a/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:///a*b:65536#é",
+      "verdict": "url"
+    },
+    {
+      "url": "  http:\\\\0x7F000001:0?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://\\%40@bücher.example/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/\\/@@1..2#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://\\1.2.3.4.:99999999999999999999#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://\\1.2.3.4.?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://u:p@.:65535/ ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://1..2",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https://@%41.example:443 ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:/\\/1.2.3.4:65536\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps:\\\\:p@[::1.2.3]:0?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:\\\\u@%41.example/é",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x:/u:@1.2.3.256:#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps:/\\/%40@a.example:1a#é ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://@@a]b#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://@[1:2:3:4:5:6:7:8:9]:-1/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:/a@b@a.example:1a",
+      "verdict": "url"
+    },
+    {
+      "url": " https:0x?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs::p@1.2.3.4.:65535/# ",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x:@a.example:99999999999999999999?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://a<b:-1/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://a!b/?#",
+      "verdict": "url"
+    },
+    {
+      "url": " https:0x:65535\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://u:@4294967296:0#é",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x://\\:p@xn--abc:00080/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://:@0x7F000001:0/#",
+      "verdict": "url"
+    },
+    {
+      "url": "http:\\\\u:p@0x7F000001/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://xn--abc#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/a@b@bücher.example/  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:\\\\a.example。com:65535?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp:/a|b:65535/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/\\/a<b\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/%40@%C3%BC.example:00080#é ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://[1:2:3:4:5:6:7:8:9]:443/?#",
+      "verdict": "url"
+    },
+    {
+      "url": " https://u:p@[g::1]:1a/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https::@[1:2:3:4:5:6:7:8:9]:99999999999999999999/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:\\\\@[1:2:3:4:5:6:7:8:9]:65536/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a_b:00080#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://:@4294967295:00080/",
+      "verdict": "url"
+    },
+    {
+      "url": "https://u:@..:65536/#",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/\\/@@0x7f.1:1a#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:\\\\:@09:00080/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:\\\\a@b@[1::2::3]:65536/",
+      "verdict": "url"
+    },
+    {
+      "url": "https://@@a<b:-1\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:\\\\[g::1]:00080/#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs://\\u:p@xn--abc:00080#é",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps://@[1:2:3:4:5:6:7:8:9]:443?q ",
+      "verdict": "url"
+    },
+    {
+      "url": " http://1.2.3.256:99999999999999999999/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS://[::01.2.3.4]:443/a#b#c",
+      "verdict": "url"
+    },
+    {
+      "url": "  http://a%:1a#f  ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:/@@[::1]:1a/",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp://%zz:99999999999999999999#é",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://u@.:443/#",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://XN--ab:99999999999999999999#é",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs:\\\\a@b@a.example。com:1a/a b",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS://0x7f.1:65536  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/\\/a^b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp:\\\\@@[::ffff:1.2.3.4]#é ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps://\\a..b:65536/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/a%00b:65535#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp://a@b@a~b:65536#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp://a^b:-1  ",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp:/\\/:p@a.:\\x",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://\\%40@bücher.example:99999999999999999999 ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs://a.example:1a/#",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/[::1.2.3]:443?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:/a]b:0\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:///[1::2::3]/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a@b@4294967295/",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:xn--abc/?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https://\\XN--ab:443/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS://:@1..2#",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://\\A.EXAMPLE:65536/ ",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps:///u@xn--abc:00080/ ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps:/a*b/a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https::@0x?q ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://@@bücher.example:1a/?#",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://\\a.xn--?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:/u@a..b:65535/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps://@@xn--abc:00080/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://1..2:0/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp://\\:@A.EXAMPLE:1a/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS:///a~b:-1/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS:/:p@0x7f.1:00080 ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://u@a%:65536#é",
+      "verdict": "url"
+    },
+    {
+      "url": " https://١.example?q ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://u:p@[g::1]:-1/  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://@@1.2.3:65535\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https:/:@4294967295:1a/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:///@@a]b:",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:///@@0x7f.1:00080/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp:/\\/a.example/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp:///u:@1.2.3.4:99999999999999999999\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://a%2eb:?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://u:@a%/# ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://a./a#b#c ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://\\1.2.3.256/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:/\\/%40@a_b:/# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/\\/:@[g::1]:65535?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs://\\a%:65535/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/\\/08.1:1a#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://\\a!b\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x:///1.2.3.4.5:1a/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS://\\u:@bücher.example/a b",
+      "verdict": "url"
+    },
+    {
+      "url": " ftp://\\:@a_b:99999999999999999999/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://u:@[g::1]:-1/",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps:u:p@[::ffff:1.2.3.4]:?#",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:/@@a%00b:65535 ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http:/[::1:443\\x ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs:/a@b@4294967296:0#",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS://4294967295#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://@a~b:-1?#",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp:u:p@1.2.3.4:/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs://%C3%BC.example/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://[::1.2.3]?#",
+      "verdict": "url"
+    },
+    {
+      "url": " http://\\%C3%BC.example/é ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https:/%40@a.xn--\\x",
+      "verdict": "url"
+    },
+    {
+      "url": " https+x:/a.xn--:0#é",
+      "verdict": "url"
+    },
+    {
+      "url": " ht tps:/:@1..2:443#  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https::@a|b:-1/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://4294967295:00080/é",
+      "verdict": "url"
+    },
+    {
+      "url": "https://\\a@b@a!b\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS:///a@b@..:00080/# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://\\%40@a%00b/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": " https://1.2.3:-1/é",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://u:p@%C3%BC.example?#",
+      "verdict": "url"
+    },
+    {
+      "url": "  HTTPS://a!b:-1/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://a~b:/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://u:p@a_b:0#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://09:/  ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS://\\u@localhost:00080/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://:p@:99999999999999999999#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs://A.EXAMPLE:65536/é ",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:///u@1.2.3.4\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ht tps://\\%40@a*b:?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  hTtPs://:@1.2.3.4\\x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  1https://:p@a<b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https:/%41.example:00080/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "https://@0x7f.1:65536",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/\\/%zz:65536/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "ftp:///a@b@[::1:00080#é",
+      "verdict": "url"
+    },
+    {
+      "url": "https://%40@%41.example:443#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs:/\\/u:p@a]b:/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  ftp:/\\/%40@%zz:443/",
+      "verdict": "url"
+    },
+    {
+      "url": " http://@a~b#é ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://%40@0x:?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " http://\\u@a%:65536\\x",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x://:p@[g::1]:99999999999999999999  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://\\[::01.2.3.4]/?# ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS:\\\\u:@[::1:?q  ",
+      "verdict": "url"
+    },
+    {
+      "url": "1https://\\:@a.example。com:1a  ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://u:@a]b#f ",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x:\\\\@@%C3%BC.example:00080/",
+      "verdict": "url"
+    },
+    {
+      "url": "https:/\\/١.example:99999999999999999999/#",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS://xn--abc/chirp/v1/x/objects/x ",
+      "verdict": "url"
+    },
+    {
+      "url": " HTTPS://1.2.3.4./é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "https:\\\\a@b@[1:2:3:4:5:6:1.2.3.4]:/a#b#c  ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://\\١.example:99999999999999999999/#",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs:/u@[1::2::3]?#  ",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs:///1.2.3:1a/a b  ",
+      "verdict": "url"
+    },
+    {
+      "url": "ht tps://1.2.3.4./chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": "  https+x://1.2.3.4:0#f",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https://u:p@0x:65536#f",
+      "verdict": "url"
+    },
+    {
+      "url": " hTtPs://u:p@[::1:443/#",
+      "verdict": "url"
+    },
+    {
+      "url": " http://@@1.2.3.256:99999999999999999999/a b ",
+      "verdict": "url"
+    },
+    {
+      "url": "https://@@a%:1a/#",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs://a@b@[::01.2.3.4]:65536/é",
+      "verdict": "url"
+    },
+    {
+      "url": "https+x:\\\\[::ffff:1.2.3.4]/chirp/v1/x/objects/x  ",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS://a%:65535#",
+      "verdict": "url"
+    },
+    {
+      "url": "hTtPs:\\\\%zz:0#f",
+      "verdict": "url"
+    },
+    {
+      "url": " 1https:/[1::2::3]/chirp/v1/x/objects/x",
+      "verdict": "url"
+    },
+    {
+      "url": "HTTPS://\\:p@A.EXAMPLE/a b",
+      "verdict": "url"
+    },
+    {
+      "url": "  https://[1:2:3:4:5:6:7:8:9]:00080#é  ",
+      "verdict": "url"
+    },
+    {
+      "url": " https://4294967296/# ",
+      "verdict": "url"
+    },
+    {
+      "url": "  http:a@b@[::ffff:1.2.3.4]/é  ",
+      "verdict": "url"
+    },
+    {
+      "url": "http://:@.?q",
+      "verdict": "url"
+    }
+  ],
+  "note": "the classifier (claim: bucket-token, entry, outcome, front, piece, funding, hold, or empty for nothing) and the BRC-26 advertisement check as the SDK makes it (advertisement: ok, or refused with the rule that failed); a url rule marked /narrowed is an internationalised host this Go codec refuses and the WHATWG parser may admit; frontUrls: the same urls under a front statement's url rule (spec section 8.2), ok or url, with no narrowing"
 }

@@ -26,7 +26,9 @@ import (
 // it watches the hosts for eligible advertisements of the entry's root,
 // records when it first sees each (its own clock, on an advertisement it
 // verified mined against its own headers and held to section 9.3's
-// eligibility), ranks them by that time with ties to the lower txid, and
+// eligibility), ranks them by that time with ties to the lower tie key
+// (storerec.TieKey: the advertisement outpoint with the entry's
+// commitment), and
 // challenges each candidate in rank order with a settlement challenge of
 // min(checkC, freeC) samples, within the candidate's terms (freeC, minAge,
 // minBounty), answered free. A candidate that does not pass is skipped. The
@@ -247,16 +249,29 @@ func (r *Race) Passed() []*Cand {
 }
 
 // Ranked are the candidates in the writer's ranking: by first sight, ties
-// to the lower advertisement txid (display order).
+// to the lower tie key of the advertisement first seen (spec section 9.4,
+// storerec.TieKey).
 func (r *Race) Ranked() []*Cand {
 	out := slices.Clone(r.Cands)
+	keys := make(map[*Cand][32]byte, len(out))
+	for _, c := range out {
+		keys[c] = r.tieKey(c.First, c.FirstVout)
+	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].FirstSeen != out[j].FirstSeen {
 			return out[i].FirstSeen < out[j].FirstSeen
 		}
-		return out[i].First < out[j].First
+		ki, kj := keys[out[i]], keys[out[j]]
+		return bytes.Compare(ki[:], kj[:]) < 0
 	})
 	return out
+}
+
+// tieKey is storerec.TieKey of an advertisement outpoint (display txid)
+// for the race's entry.
+func (r *Race) tieKey(txid string, vout uint32) [32]byte {
+	h, _ := parseDisplay(txid)
+	return storerec.TieKey(h, vout, r.C())
 }
 
 // Open reports whether the race still watches and judges.
@@ -362,7 +377,7 @@ func (p *Publisher) watch(ctx context.Context, r *Race) error {
 	}
 	root := hex.EncodeToString(e.Root[:])
 	// One sighting time per watch: advertisements first seen in the same
-	// look tie on time, and the rank breaks the tie by the lower txid.
+	// look tie on time, and the rank breaks the tie by the lower tie key.
 	now := p.cfg.Now().UnixNano()
 	var errs []string
 	for _, h := range rd.Hosts {
@@ -429,8 +444,9 @@ func (p *Publisher) sight(r *Race, ad *storerec.Advertisement, txid string, vout
 			c.URL, c.Expiry = ad.URL, ad.Expiry
 		}
 		// The same advertiser's other advertisement, seen in the same
-		// look, keeps the rank of the lower txid.
-		if now == c.FirstSeen && txid < c.First {
+		// look, keeps the rank of the lower tie key: an advertiser is
+		// counted once, at its first place.
+		if now == c.FirstSeen && r.tieLess(txid, vout, c.First, c.FirstVout) {
 			c.First, c.FirstVout, c.FirstExpiry = txid, vout, ad.Expiry
 		}
 		return
@@ -438,6 +454,11 @@ func (p *Publisher) sight(r *Race, ad *storerec.Advertisement, txid string, vout
 	r.Cands = append(r.Cands, &Cand{Advertiser: k, First: txid, FirstVout: vout, FirstExpiry: ad.Expiry, FirstSeen: now,
 		URL: ad.URL, Expiry: ad.Expiry, Status: CandSeen})
 	p.cfg.Logf("race %s: advertiser %s seen (%s)", short(r.Entry), short(k), short(txid))
+}
+
+func (r *Race) tieLess(txid string, vout uint32, other string, otherVout uint32) bool {
+	a, b := r.tieKey(txid, vout), r.tieKey(other, otherVout)
+	return bytes.Compare(a[:], b[:]) < 0
 }
 
 // rootLen is the root node's length: from the local store, else from an

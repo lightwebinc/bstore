@@ -64,7 +64,7 @@ advertisement check under the Go fuzzer.
 ## Readings the codec takes
 
 These are readings of the spec, pinned by the vectors. Rows C1 to C5 of
-frozen.md section 14 are clarifications pending the owner's confirmation;
+frozen.md section 14 are clarifications the owner signed;
 everything below is the codec's.
 
 **Types and rules.** A fixed-length byte string of another length is
@@ -158,7 +158,14 @@ TypeScript twin, which runs the WHATWG parser itself, decides. The narrowing
 only ever refuses: the Go codec never admits an advertisement the SDK
 refuses. Hosts are the TypeScript twin's. The port follows the SDK's check
 as ts-stack's `@bsv/sdk` 2.8.10 has it; the SDK release bcommon pins does
-not carry it.
+not carry it. What is frozen is this port as the vectors pin it, not a
+later SDK release (owner ruling, 2026-10-05).
+
+**Front statement urls.** The lexical rule of spec section 8.2, then the
+same WHATWG parse, with the narrowing made the rule: a host that is not
+ASCII after percent-decoding, or has a label beginning `xn--`, is refused
+by both codecs, so Go and TypeScript decide every front url alike
+(`script-v1.json` `frontUrls`).
 
 **Transactions.** An output of more than 2^53 - 1 satoshis anywhere in the
 BEEF is refused as `beef` before any rule, as bchat does (the TypeScript
@@ -166,8 +173,11 @@ SDK cannot parse one, and the twin checks it too). A transaction that
 claims nothing and holds an advertisement or a hold-shaped output is a mined
 object, whatever its output 0; otherwise a sweep needs one or two outputs.
 
-**Settlement.** Ties in first sight go to the lower advertisement txid in
-display order, as the contract orders txids in answers; the owner's batch
+**Settlement.** Ties in first sight go to the lower tie key,
+`SHA-256(txid || vout || C)` over the txid in hash byte order, the output
+index as 4 bytes little-endian and the entry's commitment, compared as bytes
+(spec section 9.4, amendment A1; `storerec.TieKey`, `tieKey` in the twin);
+the owner's batch
 breaks a tie in `created` by the lower commitment in hash byte order, as a
 record holds it. An advertiser is ranked at its first-seen advertisement,
 before passing and cancellations are applied. An advertisement is eligible

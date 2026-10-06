@@ -1,6 +1,7 @@
 package vectors
 
 import (
+	"bytes"
 	"fmt"
 
 	"github.com/bsv-blockchain/go-sdk/wallet"
@@ -82,8 +83,35 @@ func genSettle(files map[string][]byte) error {
 	}
 	{
 		a, b := ad("a", Bob, 2000), ad("b", Carol, 2000)
-		scens = append(scens, scen{"a tie in first sight goes to the lower txid, display order", 100, 1, 2,
+		scens = append(scens, scen{"a tie in first sight goes to the lower tie key, SHA-256(txid || vout LE32 || C)", 100, 1, 2,
 			[]storerec.Candidate{cand(a, 10, true), cand(b, 10, true)}})
+	}
+	{
+		// Bob ground his txid to all zeros, the lowest in either byte
+		// order; Carol's txid is higher in both, and her tie key lower.
+		low := &storerec.Ad{Advertiser: Bob.Pub(), Root: root, Expiry: 2000}
+		zk := storerec.TieKey(low.Txid, 0, c)
+		var b *storerec.Ad
+		for i := 0; b == nil; i++ {
+			x := ad(fmt.Sprintf("b ground %d", i), Carol, 2000)
+			k := storerec.TieKey(x.Txid, 0, c)
+			if bytes.Compare(k[:], zk[:]) < 0 {
+				b = x
+			}
+		}
+		scens = append(scens, scen{"grinding a low txid no longer wins a tie: an all-zero txid loses to a lower tie key", 100, 1, 2,
+			[]storerec.Candidate{cand(low, 10, true), cand(b, 10, true)}})
+	}
+	{
+		a, b := ad("same tx", Bob, 2000), ad("same tx", Carol, 2000)
+		b.Vout = 1
+		scens = append(scens, scen{"two advertisements of one transaction tie: the output index is in the key", 100, 1, 2,
+			[]storerec.Candidate{cand(a, 10, true), cand(b, 10, true)}})
+	}
+	{
+		a, a2, b := ad("a", Bob, 2000), ad("a2", Bob, 2500), ad("b", Carol, 2000)
+		scens = append(scens, scen{"one advertiser's two advertisements in one look: counted once, at the lower tie key", 1000, 2, 3,
+			[]storerec.Candidate{cand(a, 10, true), cand(a2, 10, true), cand(b, 10, true)}})
 	}
 	{
 		a, b, cc := ad("a", Bob, 2000), ad("b", Carol, 2000), ad("c", Dave, 2000)
@@ -154,6 +182,16 @@ func genSettle(files map[string][]byte) error {
 		}
 		scens = append(scens, scen{"16 payees of 10 satoshis: ranks whose payout is 0 get no output", 10, 1, 16, cs})
 	}
+	// Tie keys alone, for the twin.
+	var ties []map[string]any
+	for _, tc := range []struct {
+		txid [32]byte
+		vout uint32
+		c    [32]byte
+	}{{[32]byte{}, 0, c}, {[32]byte{}, 1, c}, {label("ad a"), 0, c}, {label("ad a"), 0xfffffffe, c}, {label("ad a"), 0, label("other entry")}} {
+		k := storerec.TieKey(tc.txid, tc.vout, tc.c)
+		ties = append(ties, map[string]any{"txid": displayHex(tc.txid), "vout": tc.vout, "commitment": h32(tc.c), "key": h32(k)})
+	}
 	var settle []map[string]any
 	for _, s := range scens {
 		res := storerec.Settle(c, s.r, s.t, s.K, s.cands)
@@ -180,7 +218,8 @@ func genSettle(files map[string][]byte) error {
 			"settled": res.Settled, "dropped": dv, "payees": pv})
 	}
 	return put(files, "settle-v1.json", map[string]any{
-		"note":        "payouts for k 1 to 16 and assorted R (BRC-178's two worked examples are R 12 k 5 and R 20 k 3); derivation prefixes, suffixes and the BRC-29 payment key; rankings and settlements: first sight, ties to the lower txid in display order, renewal successors, cancellations dropped with t counted again",
+		"note":        "payouts for k 1 to 16 and assorted R (BRC-178's two worked examples are R 12 k 5 and R 20 k 3); derivation prefixes, suffixes and the BRC-29 payment key; tie keys: SHA-256 over the txid in hash byte order, the vout as 4 bytes little-endian and the commitment C, in hash byte order (txid shown in display order); rankings and settlements: first sight, ties to the lower tie key compared as bytes, renewal successors, cancellations dropped with t counted again",
+		"tieKeys":     ties,
 		"payouts":     payouts,
 		"derivations": derivs,
 		"settlements": settle,
@@ -188,7 +227,7 @@ func genSettle(files map[string][]byte) error {
 }
 
 func adView(a *storerec.Ad) map[string]any {
-	v := map[string]any{"txid": displayHex(a.Txid), "advertiser": hx(a.Advertiser), "root": h32(a.Root), "expiry": a.Expiry, "spent": a.Spent}
+	v := map[string]any{"txid": displayHex(a.Txid), "vout": a.Vout, "advertiser": hx(a.Advertiser), "root": h32(a.Root), "expiry": a.Expiry, "spent": a.Spent}
 	var by []map[string]any
 	for _, s := range a.SpentBy {
 		by = append(by, adView(s))

@@ -170,7 +170,12 @@ func CheckMetaKey(s string) bool {
 
 // CheckFrontURL holds a front statement's url to spec section 8.2:
 // "https://", a non-empty authority without user information, no query or
-// fragment, 12 to 512 bytes of 0x21 to 0x7e, not ending in "/".
+// fragment, 12 to 512 bytes of 0x21 to 0x7e, not ending in "/"; and the
+// WHATWG parse the advertisement check runs (an https URL with a non-empty
+// host, no username, password or fragment), its host ASCII after
+// percent-decoding with no label beginning "xn--". The last rule is
+// httpsURL's narrowing, made the rule here, so that Go and TypeScript
+// decide every front url alike.
 func CheckFrontURL(s string) error {
 	if len(s) < MinURL || len(s) > MaxURL || !strings.HasPrefix(s, "https://") || strings.HasSuffix(s, "/") {
 		return ErrURL
@@ -185,6 +190,9 @@ func CheckFrontURL(s string) error {
 		auth = auth[:i]
 	}
 	if auth == "" || strings.IndexByte(auth, '@') >= 0 {
+		return ErrURL
+	}
+	if ok, _ := httpsURL(s); !ok {
 		return ErrURL
 	}
 	return nil

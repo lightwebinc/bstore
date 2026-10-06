@@ -2,6 +2,7 @@ package storerec
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"math"
@@ -48,6 +49,7 @@ func DerivationSuffix(rank int) string {
 // Ad is one advertisement as the writer's client knows it at settlement.
 type Ad struct {
 	Txid       [32]byte // hash byte order
+	Vout       uint32
 	Advertiser []byte
 	Root       [32]byte
 	Expiry     uint64
@@ -89,27 +91,36 @@ type Candidate struct {
 	Passed    bool
 }
 
-// displayLess orders two txids by their display order (the byte-reversed
-// hex), which is how the contract orders txids in JSON and in answers.
-func displayLess(a, b [32]byte) bool {
-	for i := 31; i >= 0; i-- {
-		if a[i] != b[i] {
-			return a[i] < b[i]
-		}
-	}
-	return false
+// TieKey is the key that breaks a tie in first sight (spec section 9.4,
+// as amended): SHA-256 over 68 bytes, the advertisement's txid in hash byte
+// order (32), its output index as 4 bytes little-endian, and the entry's
+// commitment C (32). The lower key, compared as bytes, ranks first. C does
+// not exist until the entry does, so no advertiser can grind a txid toward
+// a low key before it.
+func TieKey(txid [32]byte, vout uint32, c [32]byte) [32]byte {
+	var b [68]byte
+	copy(b[:32], txid[:])
+	binary.LittleEndian.PutUint32(b[32:36], vout)
+	copy(b[36:], c[:])
+	return sha256.Sum256(b[:])
 }
 
-// Rank orders candidates as the writer's client does (spec section 9.4):
-// by first sight, ties to the lower advertisement txid (display order);
-// each advertiser counted once, at its first place; the anyone key never.
-func Rank(cands []Candidate) []Candidate {
+// Rank orders candidates as the writer's client does for the entry whose
+// commitment is c (spec section 9.4): by first sight, ties to the lower
+// TieKey; each advertiser counted once, at its first place; the anyone key
+// never.
+func Rank(c [32]byte, cands []Candidate) []Candidate {
 	out := append([]Candidate(nil), cands...)
+	keys := make(map[*Ad][32]byte, len(out))
+	for _, x := range out {
+		keys[x.Ad] = TieKey(x.Ad.Txid, x.Ad.Vout, c)
+	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].FirstSeen != out[j].FirstSeen {
 			return out[i].FirstSeen < out[j].FirstSeen
 		}
-		return displayLess(out[i].Ad.Txid, out[j].Ad.Txid)
+		ki, kj := keys[out[i].Ad], keys[out[j].Ad]
+		return bytes.Compare(ki[:], kj[:]) < 0
 	})
 	seen := map[string]bool{}
 	var ranked []Candidate
@@ -152,7 +163,7 @@ type Settlement struct {
 // payout is 0 is left out of Payees but keeps its number.
 func Settle(c [32]byte, r uint64, t, K int, cands []Candidate) Settlement {
 	var passed []Candidate
-	for _, x := range Rank(cands) {
+	for _, x := range Rank(c, cands) {
 		if x.Passed {
 			passed = append(passed, x)
 		}

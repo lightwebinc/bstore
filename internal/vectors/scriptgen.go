@@ -209,9 +209,19 @@ func genScript(files map[string][]byte) error {
 	noHold := samplePut()
 	noHold.Hold = nil
 	addE("an entry without hold terms", Bob, root, adURL(root), minExp, rl, noHold)
+	// A front statement's url (spec section 8.2) over the same corpus.
+	var fronts []map[string]any
+	for _, u := range urlCorpus() {
+		v := "ok"
+		if storerec.CheckFrontURL(u) != nil {
+			v = "url"
+		}
+		fronts = append(fronts, map[string]any{"url": u, "verdict": v})
+	}
 	return put(files, "script-v1.json", map[string]any{
 		"eligibility": elig,
-		"note":        "the classifier (claim: bucket-token, entry, outcome, front, piece, funding, hold, or empty for nothing) and the BRC-26 advertisement check as the SDK makes it (advertisement: ok, or refused with the rule that failed); a url rule marked /narrowed is an internationalised host this Go codec refuses and the WHATWG parser may admit",
+		"frontUrls":   fronts,
+		"note":        "the classifier (claim: bucket-token, entry, outcome, front, piece, funding, hold, or empty for nothing) and the BRC-26 advertisement check as the SDK makes it (advertisement: ok, or refused with the rule that failed); a url rule marked /narrowed is an internationalised host this Go codec refuses and the WHATWG parser may admit; frontUrls: the same urls under a front statement's url rule (spec section 8.2), ok or url, with no narrowing",
 		"cases":       cases,
 	})
 }

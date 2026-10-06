@@ -13,8 +13,8 @@ bounty** that it pays, by rank, to the first providers to advertise and pass
 a challenge. Anyone may buy more time from a provider (a renewal) or a proof
 that a provider still holds an object (a **challenge**): a sample of 4 KiB
 segments chosen by a seed made of a recent block's hash, the buyer's nonce
-and the provider's key, which the provider does not control (clarification
-pending owner confirmation, frozen.md section 14, row C12), each proven into
+and the provider's key, which the provider does not control (signed
+clarification, frozen.md section 14, row C12), each proven into
 the object's **proof root**, which the object entry commits to. The bucket's
 owner orders the bucket by a chain of mined **bucket tokens**; each token
 commits to the bucket's whole key map, so that a reader proves what a key
@@ -331,7 +331,7 @@ distinct blob, each branch node and the root node. A blob shared by two
 positions, or by two closures, is published once per closure that needs it.
 Profile 1's rules (exactly 4 MiB non-final blobs, fanout 256, the canonical grouping) are the closure's; a provider validates them before it holds. A bstore root node carries **no extension**: no `mediaType`, whose value the entry's `contentType` already carries, so that equal content has one root whoever writes it, and copying, deduplication and bridging never meet two roots for one content. A provider refuses to hold a root with an extension.
 
-How a closure is checked (clarifications pending owner confirmation, frozen.md section 14, rows C1 to C4; C6 and C7 there clarify sections 7.1 and 8.2):
+How a closure is checked (signed clarifications, frozen.md section 14, rows C1 to C4; C6 and C7 there clarify sections 7.1 and 8.2):
 
 - **C1.** A root node of CHIRP version 1 with a minor version above 0 is refused (`root`): bstore reads version 1.0 alone, as bcommon's decoder does, and never reads a later minor version as 1.0.
 - **C2.** bstore checks that a root carries no extension itself: a root with any extension (`len(Root.Extensions) != 0`), advisory or not, is refused (`root`), because bcommon's decoder keeps an advisory extension rather than refusing it.
@@ -424,8 +424,8 @@ An answerer MUST answer 422 `unknown-root` unless `root` is a root it holds (or 
 Neither party picks the seed alone: the miners make the block, the buyer
 draws the nonce after it, and `provider` gives two advertisers of one root
 different samples, so that one cannot answer from another's response. What the buyer's choice of nonce lets it do, and what a later on-chain use
-must keep from the prover, is clarification C12 (pending owner
-confirmation, frozen.md section 14).
+must keep from the prover, is clarification C12 (signed,
+frozen.md section 14).
 
 `range` lets a later partial-hosting profile challenge only the blobs a
 host claims. A complete host answers a request with `range` like any other.
@@ -618,7 +618,7 @@ An outcome is attributed to the request's `answerer`, and to its `provider` only
 | 1 | `bucket` | text | the bucket identifier |
 | 2 | `front` | bytes(33) | the front's identity key |
 | 3 | `advertiser` | bytes(33) | the advertiser the front answers for |
-| 4 | `url` | text | the front's base URL: `https://`, no user information, query or fragment, 12 to 512 bytes of `0x21` to `0x7e`, not ending in `/` |
+| 4 | `url` | text | the front's base URL: `https://`, no user information, query or fragment, 12 to 512 bytes of `0x21` to `0x7e`, not ending in `/`; and it parses under the WHATWG URL parser as the advertisement check parses an advertisement's url (section 9.1): scheme `https:`, a non-empty host, no username, password or fragment; its host, percent-decoded, is ASCII and has no label beginning `xn--` (any case), so that no internationalised name is mapped (UTS #46) and every implementation decides alike (`https://:1/x` and `https://1.2.3.256/x` are refused) |
 | 5 | `created` | uint | Unix milliseconds |
 
 Keys 6 and above are unknown; at most 2,048 bytes encoded. Refused in the
@@ -638,7 +638,11 @@ from its advertisement (section 10.1).
 
 A provider advertises a held root with a BRC-26 advertisement exactly as
 the SDK creates and validates it (ts-stack `@bsv/sdk`
-`storage/UHRPAdvertisementValidation.ts`): an output whose locking script is
+`storage/UHRPAdvertisementValidation.ts`, as of `@bsv/sdk` 2.8.10). The
+frozen check is that behaviour as bstore's port has it, pinned by bstore's
+own vectors (`script-v1.json`, section 22), not whatever a later SDK
+release does: an SDK change that would decide a vector otherwise does not
+change what bstore admits or counts. The check is of an output whose locking script is
 a canonical PushDrop of six fields, `hostIdentityKey` (33 bytes), `hash` (the
 CHIRP root hash), `url` (a credential-free HTTPS URL of 1 to 2048 bytes),
 `expiryTime` and `fileSize` (positive CompactSize integers: Unix seconds,
@@ -692,7 +696,7 @@ An advertisement that already exists for the root (the provider held it for anot
 The writer's own client judges the race, as BRC-178 makes the client the
 judge of arrival time. It records when it first sees each eligible
 advertisement (from any host it asks, or from the plane), ranks them by
-that time, ties to the lower advertisement txid, and challenges the
+that time, ties broken by the tie key below, and challenges the
 candidates in rank order with section 7 challenges of `checkC` samples,
 answered at the advertiser's front (section 10.1). A candidate that does not pass is skipped and the next moves up; a failure MAY be published as an outcome record. The race closes when `K` distinct advertisers have passed, or when the writer's own race window ends (its policy, not frozen), or at `deadline`, whichever is first; the writer settles only if at least `t` have passed by then.
 
@@ -702,6 +706,32 @@ with hold terms whose `root` the provider advertises, before the entry's
 `deadline`, when the provider's own section 9.3 checks of the bounty pass
 (the hold output exists, is mined, is the writer's, holds `satoshis`, is
 unspent, and is worth at least the provider's own minimum), with `c` at most `min(checkC, freeC)`, `freeC` being the maximum the provider publishes in its terms (at least 30), and at most two per hold outpoint and advertiser, whatever entries name it, and only when the hold output is at least `minAge` blocks deep, `minAge` being a number of blocks the provider publishes in its terms (0 to 1008). A hold output in the block at height `h` is `tip - h + 1` blocks deep at the provider's tip `tip` (one confirmation is 1 deep); `minAge` 0 and 1 both require only that it is mined, which the bounty check requires anyway. A `minAge` longer than the writer's race window prices that provider's settlement challenge in effect: a writer SHOULD mine its hold output well before it publishes the entry, by at least the largest `minAge` among the providers it wants. The writer challenges each candidate with `min(checkC, freeC)` samples for that candidate's `freeC`; it MAY pay for more at the provider's price. A provider competes for a bounty when it advertises the root with an advertisement eligible under section 9.3; one that does not owes nothing. Every other challenge is the provider's to price. These conditions make the free answers cost the writer a bounty locked, unspent and worth the provider's minimum, per two answers, so that cheap entries naming a popular root cannot drain the root's advertisers; the writer can reclaim the bounty later, so what it pays is locked capital and fees, and a provider MAY also rate-limit free challenges per writer and per hold transaction. A writer can still respend a hold output into a new one and so restart the two-per-outpoint count; `minAge` makes each restart cost that many blocks of locked capital and one mined transaction (which may carry 16 hold outputs, so up to 32 free answers per advertiser per restart). That residual is stated in section 20.
+
+**The tie key** (amended 2026-10-05, owner approved; frozen.md section
+15, row A1). Advertisements first seen at one time (in one look at the
+hosts, row C18) tie, and the tie goes to the lower tie key:
+
+```text
+tieKey = SHA-256( txid || vout || C )
+```
+
+over exactly 68 bytes: `txid`, the advertisement's transaction id in hash
+byte order (the 32 bytes as SHA-256d produces them and as an outpoint
+serialises them, the reverse of the display hex); `vout`, its output index
+as 4 bytes little-endian; and `C`, the commitment of the entry whose bounty
+is raced (`C = txid(K)`, section 1), its 32 bytes in hash byte order. Two tie keys are
+compared as 32-byte unsigned strings, byte 0 first, and the lower ranks
+first; an advertiser is counted once, at its first place, so two of its
+advertisements in one look place it at the lower of their keys. A renewal
+successor keeps its original's first sight and its original's tie key.
+Because `C` does not exist until the entry does, no advertiser can grind a
+txid toward a low key before the entry is made: an advertisement that
+existed before the entry has a key no lower in expectation than any other.
+A provider that advertises only after the entry exists can still grind its
+new advertisement, but it then ties only with the advertisements first
+seen in the same look, and every advertisement an earlier look found ranks
+ahead of it. The rule it replaces broke ties by the lower txid, which a
+provider could grind in advance.
 
 The writer's ranking is its own and is not auditable by anyone else; a
 provider that believes it was passed over has its own outcome records and
@@ -1137,7 +1167,7 @@ answered as latest. Only the owner can cause it, and the way on is a new
 bucket chain. Where two rooted tokens share a `seq` after a reorganisation,
 each is folded on its own; an answer uses the one whose proof verifies in
 the host's headers, else the lowest txid. The latest tokens are those of the
-branch on the current chain (clarification pending owner confirmation,
+branch on the current chain (signed clarification,
 frozen.md section 14, row C8): walking down from the highest `seq` that holds
 a candidate, the candidates at the first `seq` where any token's proof
 verifies in the host's headers, so a longer branch a reorganisation orphaned
@@ -1190,6 +1220,15 @@ its outputs is a double spend: hosts stop answering it, drop it and keep the ret
 position unreadable (`incomplete`): the owner's next token SHOULD replace or
 remove the key. Retraction reaches honest hosts only; a copy anyone kept
 stays a copy, and an S3 delete is a delete entry and a removal in a token, not a sweep.
+
+A sweep that also creates a hold output or an advertisement retracts
+nothing. Section 12.1 admits such a transaction as an advertisement's or a
+hold output's transaction, a mined object that is not a sweep, so hosts
+never match its inputs against carriers and every carrier it spends stays
+answered. A writer, a buyer or a front that means to retract MUST sweep in
+a transaction of its own, with no hold output and no advertisement among its
+outputs; bstore's tooling never builds such a mixed transaction (it refuses
+to, for a sweep and for a reclaim alike).
 
 ### 12.5 Restore and reorganisations
 
@@ -1341,7 +1380,7 @@ verify is not used, the host is named, and the reader says so (exit 3).
 A reader holds, per bucket chain, the highest `seq` it has verified. It
 asks `bucket`, verifies every token answered against its own headers, walks
 back by `prev` to a token it already holds or to `seq` 0 (by `bucket-seq`,
-or `chain` when it pays), and checks `bucket-id` at `seq` 0 (how without the token's parent: clarification pending owner confirmation, frozen.md section 14, row C15). A token answered
+or `chain` when it pays), and checks `bucket-id` at `seq` 0 (how without the token's parent: signed clarification, frozen.md section 14, row C15). A token answered
 with a `seq` below the one it holds is a `rollback`. With a spend source
 (bcommon `chainview` or `nodeapi`), the reader checks that the latest
 token's output is unspent; without one it says the bucket may be stale.
@@ -1410,7 +1449,7 @@ a key S3 would accept but section 2 refuses (a control character) is refused wit
 | `CopyObject` | a new put entry naming the same `root`, `size`, `contentHash` and `proofRoot` as the source's current entry, and, as S3's default `COPY` metadata directive does, its `contentType`, `etag` and `meta`; with `REPLACE` the request's content type and metadata instead, and the same `etag`. Within one bucket no piece is published again, and providers already holding the root may advertise it for a new bounty; across buckets the gateway publishes the closure's pieces again on the destination's blob topic, whose providers have not seen them |
 | `DeleteObject` | a delete entry; `204`. The key leaves the map at the next token, as a removal (section 3.4); a delete of a key the map does not hold is named in the next token's `consumed`, never a removal, so it is applied once and never again |
 | `HeadObject`, `GetObject` | `object` at the hosts configured, the checks of section 15.2 (steps 1 to 5 for a head, which never asks a provider), blobs from the advertisers of `ads`; a `Range` maps to the blobs it overlaps, each verified before any byte is sent |
-| `ListObjectsV2` | `list` pages, proven complete per page (section 11.3); a key a page names as unheld (role 2) is listed from its entry fetched by `entry` at another host, and if no host produces it the listing answers 503; `Delimiter` is applied by the gateway to the proven page; `ContinuationToken` is the base64 of the last key (after a common prefix: clarification pending owner confirmation, frozen.md section 14, row C14); `MaxKeys` at most 1000 |
+| `ListObjectsV2` | `list` pages, proven complete per page (section 11.3); a key a page names as unheld (role 2) is listed from its entry fetched by `entry` at another host, and if no host produces it the listing answers 503; `Delimiter` is applied by the gateway to the proven page; `ContinuationToken` is the base64 of the last key (after a common prefix: signed clarification, frozen.md section 14, row C14); `MaxKeys` at most 1000 |
 | `ListBuckets` | the configured buckets |
 | everything else (versioning, ACLs, policies, lifecycle, tagging, object lock, encryption headers, presigned POST) | `NotImplemented` |
 
@@ -1423,7 +1462,7 @@ a key S3 would accept but section 2 refuses (a control character) is refused wit
   is informative; integrity is the CHIRP root and the content hash. An
   entry without `etag` is answered with `"<64 hex of root>-1"`, which such
   clients read as a multipart ETag and do not compare.
-- **`x-amz-checksum-sha256`** is the base64 of `contentHash`, with `x-amz-checksum-type: FULL_OBJECT`, for multipart objects too; S3 itself gives SHA-256 multipart objects only a composite checksum, so this is a deviation, and clients that check the value still pass A ranged answer carries neither (clarification pending owner confirmation, frozen.md section 14, row C13).
+- **`x-amz-checksum-sha256`** is the base64 of `contentHash`, with `x-amz-checksum-type: FULL_OBJECT`, for multipart objects too; S3 itself gives SHA-256 multipart objects only a composite checksum, so this is a deviation, and clients that check the value still pass A ranged answer carries neither (signed clarification, frozen.md section 14, row C13).
 - **`x-amz-meta-bstore-root`** is the hex of `root`; `x-amz-meta-*` the entry's `meta`. User metadata keys starting `bstore-` are reserved and refused on a put.
 - **`Content-Type`** is the entry's `contentType`. On a put the gateway lowercases the client's value and strips its parameters; with none, or one that breaks section 4.1's rule, it records `application/octet-stream`.
 - **`Last-Modified`** is the entry's `created`: the writer's claim. The
@@ -1431,7 +1470,7 @@ a key S3 would accept but section 2 refuses (a control character) is refused wit
 - **Consistency.** A gateway reads its own pending entries at once; other
   gateways see a write when a token anchors it. S3's strong read-after-write
   consistency holds only at the writing gateway.
-- **Not found.** `NoSuchKey` when the host's answer proves the key absent (section 11.3), or, at the writing gateway, when its own pending delete is newer than the anchored entry; `503 SlowDown` when no host answers at all, because an empty answer proves nothing, or when the map names the key's entry and no host produces it. When no host answers, the writing gateway's own pending put still answers and its pending delete does not (clarification pending owner confirmation, frozen.md section 14, row C16).
+- **Not found.** `NoSuchKey` when the host's answer proves the key absent (section 11.3), or, at the writing gateway, when its own pending delete is newer than the anchored entry; `503 SlowDown` when no host answers at all, because an empty answer proves nothing, or when the map names the key's entry and no host produces it. When no host answers, the writing gateway's own pending put still answers and its pending delete does not (signed clarification, frozen.md section 14, row C16).
 - **Errors in flight.** A blob that fails its hash at every advertiser after
   headers were sent ends the response early; the declared
   `Content-Length` makes the truncation visible to the client.
@@ -1509,7 +1548,8 @@ over leaves of arbitrary bytes (it takes 32-byte leaves today), which the
 proof tree and the key map both need, and a CHIRP Profile 1 codec (node
 encoding, canonical construction, closure validation), which any
 application that stores bytes needs. The BRC-26 advertisement check
-follows the SDK's validation byte for byte, with the SDK's own vectors.
+follows the SDK's validation byte for byte, as ported and pinned by
+bstore's vectors (section 9.1), with the SDK's own vectors.
 
 ## 19. Size and rate bounds
 
@@ -1704,11 +1744,11 @@ pin byte for byte the rows of frozen.md marked "vectors".
 | `derivation-v1.json` | the registry values; the keys each test identity derives for every key id; bucket identifiers, topics and bucket ids |
 | `hex-v1.json` | bucket records, entries of each kind, pieces, outcome records, front statements, requests and response bodies; their encodings |
 | `refusal-v1.json` | every step of every refusal order, case by case |
-| `script-v1.json` | the classifier: claiming, token, funding-shaped, hold-shaped, advertisement and refused scripts |
+| `script-v1.json` | the classifier: claiming, token, funding-shaped, hold-shaped, advertisement and refused scripts; the advertisement check over a url corpus; the same corpus under a front statement's url rule (section 8.2) |
 | `map-v1.json` | key maps and their roots; folds of change lists with puts `[key, C]` and removals `[key, Z, D]`, `map-mismatch` cases (a removal of an absent key, a put the key already names, a commitment an earlier token named); batches the tooling resolves by commitment: several entries for one key (the last by `created` then commitment wins, the rest consumed), a delete of an absent key consumed, and an applied delete found again after a later put, skipped; inclusion, absence and page-completeness contexts, with dishonest pages each check of section 11.3 refuses (a role 0 inside or after the range, a role 1 inside or before it, an empty page bracketing nothing, a short page without role 1) |
 | `proof-v1.json` | proof roots for 0, 1, 4,095, 4,096, 4,097 bytes, one blob, one blob plus one byte, 25 and 257 blobs (by deterministic content); index derivations for given seeds; audit paths; responses that pass and fail at each step of section 7.4 in sample-major order, including a wrong-length path (invalid at `count`), a fetched segment that fails while its blob verifies (rechecked from the blob: a pass when it then verifies, invalid when not) and a blob that does not verify (unretrievable) |
-| `settle-v1.json` | payouts for `k` 1 to 16 and assorted `R`, the BRC-178 examples among them; derivation prefixes and suffixes; rankings where a renewed advertisement keeps its original first sight and where a cancelled payee is dropped, the ranks below move up and `t` is counted again |
+| `settle-v1.json` | payouts for `k` 1 to 16 and assorted `R`, the BRC-178 examples among them; derivation prefixes and suffixes; tie keys (section 9.4); rankings where ties break by the tie key, a txid ground to all zeros does not win a tie, a renewed advertisement keeps its original first sight and where a cancelled payee is dropped, the ranks below move up and `t` is counted again |
 | `transaction-v1.json` | carriers, tokens, advertisements, hold outputs and sweeps admitted and refused by each rule of section 12.1, and transactions that only spend held outputs, refused |
 | `query-v1.json` | every class and every value rule, admitted and refused |
-| `chirp-v1.json` | BRC-167's own vectors: bcommon's file of that name at the tag go.mod pins, read from that module by bstore's tests (clarification pending owner confirmation, frozen.md section 14, row C5) |
+| `chirp-v1.json` | BRC-167's own vectors: bcommon's file of that name at the tag go.mod pins, read from that module by bstore's tests (signed clarification, frozen.md section 14, row C5) |
 | `closure-v1.json` | bstore's checks of a closure (section 5, rows C1 to C4): the root's rules, the closure's refusals as labels, the 2^43-byte bound, the proof root |

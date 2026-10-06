@@ -27,6 +27,30 @@ import (
 // An entry a token already anchored stays anchored: a key leaves a map by
 // a delete entry and the owner's next token, never by a sweep.
 
+// ErrMixedSweep refuses a sweep or a reclaim that would also create a hold
+// output or an advertisement. Such a transaction is a mined object (spec
+// section 12.1), not a sweep, so it would retract nothing (spec section
+// 12.4); the tooling never builds one.
+var ErrMixedSweep = errors.New("publish: a sweep or reclaim may not also create a hold output or an advertisement: it would retract nothing (spec section 12.4)")
+
+// refuseMixed is ErrMixedSweep when an output of tx is hold-shaped or an
+// advertisement the SDK's check admits.
+func refuseMixed(tx *transaction.Transaction) error {
+	for i, o := range tx.Outputs {
+		if o.LockingScript == nil {
+			continue
+		}
+		s := []byte(*o.LockingScript)
+		if storerec.Classify(s) == storerec.ClaimHold {
+			return fmt.Errorf("%w: output %d is a hold output", ErrMixedSweep, i)
+		}
+		if _, err := storerec.DecodeAdvertisement(s); err == nil {
+			return fmt.Errorf("%w: output %d is an advertisement", ErrMixedSweep, i)
+		}
+	}
+	return nil
+}
+
 // SweepRecord is one tree's sweep.
 type SweepRecord struct {
 	Kind   string         `json:"kind"`
@@ -186,6 +210,9 @@ func (p *Publisher) sweepTree(ctx context.Context, kt KillTree) (*SweepRecord, e
 	}
 	tx, err := carrier.Sweep(ctx, p.wallet, p.wallet.Originator, carrierParams(derivationOf(kt.Kind)), tree, vouts,
 		fee.Tx, fee.Vout, fee.Unlocker, change, p.cfg.Fees.SatPerByte, p.cfg.Fees.Floor)
+	if err == nil {
+		err = refuseMixed(tx)
+	}
 	if err != nil {
 		pay.GiveBack()
 		return nil, err

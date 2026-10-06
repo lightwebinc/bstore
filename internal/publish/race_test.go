@@ -1,6 +1,7 @@
 package publish
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -313,28 +314,56 @@ func TestReclaimAfterTheDeadline(t *testing.T) {
 	}
 }
 
-// The writer's ranking: by first sight, ties to the lower txid; a renewal
-// keeps the original's sight.
+// The writer's ranking: by first sight, ties to the lower tie key
+// (storerec.TieKey of the advertisement outpoint with the entry's
+// commitment), so a txid ground low wins nothing; a renewal keeps the
+// original's sight.
 func TestRankingByFirstSight(t *testing.T) {
-	race := &Race{Cands: []*Cand{
-		{Advertiser: "b", First: "bb", FirstSeen: 5},
-		{Advertiser: "a", First: "cc", FirstSeen: 5},
-		{Advertiser: "c", First: "aa", FirstSeen: 9},
-		{Advertiser: "d", First: "ff", FirstSeen: 1},
+	entry := strings.Repeat("e7", 32)
+	disp := func(h [32]byte) string {
+		var r [32]byte
+		for i := range h {
+			r[i] = h[31-i]
+		}
+		return hex.EncodeToString(r[:])
+	}
+	race0 := &Race{Entry: entry}
+	c := race0.C()
+	zero := strings.Repeat("00", 32)
+	zk := storerec.TieKey([32]byte{}, 0, c)
+	// A txid whose key beats the all-zero txid's under this entry.
+	var beat string
+	for i := 0; beat == ""; i++ {
+		h := sha256.Sum256([]byte{byte(i), byte(i >> 8)})
+		if k := storerec.TieKey(h, 0, c); bytes.Compare(k[:], zk[:]) < 0 {
+			beat = disp(h)
+		}
+	}
+	race := &Race{Entry: entry, Cands: []*Cand{
+		{Advertiser: "b", First: zero, FirstSeen: 5},
+		{Advertiser: "a", First: beat, FirstSeen: 5},
+		{Advertiser: "c", First: zero, FirstVout: 1, FirstSeen: 9},
+		{Advertiser: "d", First: strings.Repeat("ff", 32), FirstSeen: 1},
 	}}
 	var got []string
 	for _, c := range race.Ranked() {
 		got = append(got, c.Advertiser)
 	}
-	if strings.Join(got, "") != "dbac" {
-		t.Fatalf("ranked %v", got)
+	if strings.Join(got, "") != "dabc" {
+		t.Fatalf("ranked %v: the ground all-zero txid won its tie", got)
 	}
 	p := &Publisher{cfg: Config{Logf: t.Logf, Now: time.Now}}
-	r := &Race{}
+	r := &Race{Entry: entry}
 	ad := &storerec.Advertisement{Host: []byte{2, 1}, Expiry: 100, URL: "u1"}
-	p.sight(r, ad, "22", 0, 10)
-	p.sight(r, &storerec.Advertisement{Host: []byte{2, 1}, Expiry: 200, URL: "u2"}, "33", 0, 20)
-	if len(r.Cands) != 1 || r.Cands[0].FirstSeen != 10 || r.Cands[0].First != "22" || r.Cands[0].URL != "u2" {
+	p.sight(r, ad, zero, 0, 10)
+	p.sight(r, &storerec.Advertisement{Host: []byte{2, 1}, Expiry: 200, URL: "u2"}, strings.Repeat("33", 32), 0, 20)
+	if len(r.Cands) != 1 || r.Cands[0].FirstSeen != 10 || r.Cands[0].First != zero || r.Cands[0].URL != "u2" {
 		t.Fatalf("a renewal: %+v", r.Cands[0])
+	}
+	// The same advertiser's other advertisement in the same look: the
+	// lower tie key is its place, not the lower txid.
+	p.sight(r, &storerec.Advertisement{Host: []byte{2, 1}, Expiry: 100, URL: "u3"}, beat, 0, 10)
+	if r.Cands[0].First != beat {
+		t.Fatalf("same look: kept %s", r.Cands[0].First)
 	}
 }

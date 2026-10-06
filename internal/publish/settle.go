@@ -117,7 +117,7 @@ const maxAdHops = 16
 // which is the one storerec.Ad.Live follows), each outpoint asked once,
 // at most maxAdHops of them.
 func (p *Publisher) adChain(ctx context.Context, txid string, vout uint32, adv []byte, root [32]byte, expiry uint64, _ int) (*storerec.Ad, error) {
-	first := &storerec.Ad{Advertiser: adv, Root: root, Expiry: expiry}
+	first := &storerec.Ad{Advertiser: adv, Root: root, Expiry: expiry, Vout: vout}
 	first.Txid, _ = parseDisplay(txid)
 	cur := first
 	seen := map[string]bool{}
@@ -153,7 +153,7 @@ func (p *Publisher) adChain(ctx context.Context, txid string, vout uint32, adv [
 			if err != nil || string(ad.Host) != string(adv) || ad.Hash != root || ad.Expiry <= cur.Expiry {
 				continue
 			}
-			next = &storerec.Ad{Advertiser: adv, Root: root, Expiry: ad.Expiry}
+			next = &storerec.Ad{Advertiser: adv, Root: root, Expiry: ad.Expiry, Vout: uint32(i)}
 			next.Txid, _ = parseDisplay(by)
 			txid, vout = by, uint32(i)
 			break
@@ -574,6 +574,10 @@ func (p *Publisher) reclaimHold(ctx context.Context, hold *HoldRecord) (*Reclaim
 	in := hold.Sats + fee.Tx.Outputs[fee.Vout].Satoshis
 	cost := max(p.cfg.Fees.Floor, p.cfg.Fees.SatPerByte*uint64(10+2*150+34))
 	tx.AddOutput(&transaction.TransactionOutput{Satoshis: in - cost, LockingScript: change})
+	if err := refuseMixed(tx); err != nil {
+		pay.GiveBack()
+		return nil, err
+	}
 	if err := tx.Sign(); err != nil {
 		pay.GiveBack()
 		return nil, err
