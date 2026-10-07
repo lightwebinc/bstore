@@ -145,7 +145,7 @@ func (p *Provider) arrived(h [32]byte, data []byte, root [32]byte, stored bool) 
 		in.mu.Unlock()
 	}
 	if w := p.walk(root, h == root); w != nil {
-		w.inc.Add(data)
+		w.inc.AddHashed(h, data)
 	}
 }
 
