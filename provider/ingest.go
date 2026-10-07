@@ -302,6 +302,7 @@ func (p *Provider) keepPiece(data []byte, rootHex, bucket, writer string) string
 			return ""
 		}
 	}
+	stored := false
 	if !p.store.Has(h) {
 		if why := p.room(uint64(len(data)), writer); why != "" {
 			return why
@@ -316,8 +317,9 @@ func (p *Provider) keepPiece(data []byte, rootHex, bucket, writer string) string
 		p.st.Unclaimed[hh] = &Unclaimed{Root: rootHex, Bucket: bucket, Writer: writer, Size: uint64(len(data)), At: p.now().Unix()}
 		p.dirty = true
 		p.mu.Unlock()
+		stored = true
 	}
-	p.arrived(h, data, mustHash(rootHex))
+	p.arrived(h, data, mustHash(rootHex), stored)
 	p.mu.Lock()
 	wanted := false
 	for _, e := range p.st.Entries {

@@ -268,6 +268,7 @@ func (p *Provider) verifyRoot(ctx context.Context, rootHex string, entries []*En
 		for _, x := range entries {
 			p.decide(x.C, "root: not profile 1's canonical construction")
 		}
+		p.inc.forget(root, c.Blobs)
 		return false, nil
 	}
 	pr, bytesHeld, err := p.writeProofFiles(rootHex, c)

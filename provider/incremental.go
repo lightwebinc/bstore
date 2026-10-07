@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"slices"
 	"sync"
 
 	"github.com/lightwebinc/bcommon/chirp"
@@ -21,13 +22,14 @@ import (
 // and continues as more arrive.
 
 // maxPre bounds the pieces whose leaves are kept (32 KiB a blob), maxRoots
-// the roots whose walk is kept, and rootBuffer the bytes each walk keeps of
-// pieces that arrived ahead of it (a piece not kept is read back from the
-// store when the walk reaches it): at most 64 x 8 MiB.
+// the roots whose walk is kept (least recently used dropped first), and
+// rootBuffer the bytes each walk keeps of pieces that arrived ahead of it (a
+// piece not kept is read back from the store when the walk reaches it): at
+// most 64 x 4 MiB, besides the piece each walk waits for.
 const (
 	maxPre     = 1024
 	maxRoots   = 64
-	rootBuffer = 2 * chirp.ChunkSize
+	rootBuffer = chirp.ChunkSize
 )
 
 type preBlob struct {
@@ -60,13 +62,18 @@ func (in *incremental) blob(h [32]byte) *preBlob {
 	return in.pre[h]
 }
 
-// walk returns root's walk, made on demand over the store.
-func (p *Provider) walk(root [32]byte) *closureWalk {
+// walk returns root's walk, made on demand over the store when create is
+// true, or nil.
+func (p *Provider) walk(root [32]byte, create bool) *closureWalk {
 	in := p.inc
 	in.mu.Lock()
 	defer in.mu.Unlock()
 	if w := in.walks[root]; w != nil {
+		in.touch(root)
 		return w
+	}
+	if !create {
+		return nil
 	}
 	fetch, wrong := storerec.CheckedFetch(p.fetch)
 	w := &closureWalk{inc: chirp.NewIncremental(root, fetch, storerec.ClosureLimits, rootBuffer), wrong: wrong}
@@ -82,7 +89,7 @@ func (p *Provider) walk(root [32]byte) *closureWalk {
 // checkClosure is storerec.VerifyCHIRP's answer for root from its walk:
 // only what the walk has not yet reached is read and hashed.
 func (p *Provider) checkClosure(root [32]byte) (*chirp.Closure, error) {
-	w := p.walk(root)
+	w := p.walk(root, true)
 	c, err := w.inc.Check()
 	if err != nil {
 		return nil, storerec.ClosureError(err, w.wrong())
@@ -90,10 +97,33 @@ func (p *Provider) checkClosure(root [32]byte) (*chirp.Closure, error) {
 	return c, nil
 }
 
+// touch moves root to the back of the eviction order; in.mu is held.
+func (in *incremental) touch(root [32]byte) {
+	for i, r := range in.wfifo {
+		if r == root {
+			in.wfifo = append(in.wfifo[:i], in.wfifo[i+1:]...)
+			break
+		}
+	}
+	in.wfifo = append(in.wfifo, root)
+}
+
 // arrived does a piece's share of the closure check: its leaves when it can
-// be a blob, and the root's walk moved on. data hashes to h and is stored.
-func (p *Provider) arrived(h [32]byte, data []byte, root [32]byte) {
+// be a blob, and the root's walk moved on. data hashes to h; stored is true
+// when this request wrote it to the store. A piece the store already held
+// is not taken from the request: the walk reads the store's copy, hashing
+// it, so a damaged copy is never vouched for by a good one sent again. A
+// walk is started only by its root's own piece, so a walk dropped while its
+// closure arrives is not started again by every later piece (each would
+// read back what the store holds); the evaluation's check resumes it once.
+func (p *Provider) arrived(h [32]byte, data []byte, root [32]byte, stored bool) {
 	in := p.inc
+	if !stored {
+		if w := p.walk(root, false); w != nil {
+			w.inc.Advance()
+		}
+		return
+	}
 	if len(data) <= storerec.BlobSize && in.blob(h) == nil {
 		leaves := make([]byte, 0, 32*((len(data)+storerec.SegmentSize-1)/storerec.SegmentSize))
 		var lh [][32]byte
@@ -114,14 +144,19 @@ func (p *Provider) arrived(h [32]byte, data []byte, root [32]byte) {
 		}
 		in.mu.Unlock()
 	}
-	p.walk(root).inc.Add(data)
+	if w := p.walk(root, h == root); w != nil {
+		w.inc.Add(data)
+	}
 }
 
 // forget drops what was kept for a root once it is decided.
 func (in *incremental) forget(root [32]byte, blobs []chirp.Child) {
 	in.mu.Lock()
 	defer in.mu.Unlock()
-	delete(in.walks, root)
+	if in.walks[root] != nil {
+		delete(in.walks, root)
+		in.wfifo = slices.DeleteFunc(in.wfifo, func(r [32]byte) bool { return r == root })
+	}
 	for _, b := range blobs {
 		delete(in.pre, b.Hash)
 	}
