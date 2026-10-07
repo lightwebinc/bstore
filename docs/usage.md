@@ -20,45 +20,37 @@ home up: the wallet is the identity.
 
 ```console
 $ bstore init -network main -node https://node.example.com \
-    -settle arcade:https://arcade.example.com -headers https://headers.example.com \
+    -settle arcade:https://arcade.example.com -headers woc:main \
     -hosts https://overlay.example.com -facade https://plane.example.com
 identity 02...
 $ bstore fund
 identity     02...
 fund address 1...
 pool         0 output(s), 0 satoshis
-$ bstore fund -from 850000
+$ bstore fund -txid <txid>
 ```
 
-`fund -from H` takes what was paid to the fund address in blocks `H` to the
-tip into the pool; on a test network `fund -blocks N` mines `N` blocks to it
-through the node's RPC. `doctor` reports the home and whether everything it
-names answers, and changes nothing. `terms URL` prints a provider's terms
-(its front, ending `/bstore/v1`) or a host's `ls_bstore` terms.
+**Funding.** Send a small amount from your own wallet to the fund address,
+wait for it to be mined, and import it with `fund -txid TXID`: every output
+of it that pays the fund address and that the node shows unspent goes into
+the pool, its proof checked against the header source first. Importing the
+same payment again adds nothing; an output already spent is left out. On
+testnet use `-network test` and `-headers woc:test`.
+
+`fund -blocks N` and `fund -from H [-to H]` are **coinbase: only on a
+regtest chain you run (development and tests)**. `-blocks` mines `N` blocks
+to the fund address through the node's RPC (`settle rpc:URL`); `-from`
+takes the coinbase outputs paying the fund address in blocks `H` to the tip
+into the pool, and finds no ordinary payment.
+
+`doctor` reports the home and whether everything it names answers, and
+changes nothing. `terms URL` prints a provider's terms (its front, ending
+`/bstore/v1`) or a host's `ls_bstore` terms.
 
 ### config.json
 
-An unknown key is refused.
-
-| Key | Default | Meaning |
-| --- | --- | --- |
-| `network` | required | `main`, `test` or `regtest` |
-| `node`, `settle` (`rpc_user`, `rpc_pass`, `arcade_key`), `headers` | required | the node's asset API (proofs, spends, the tip), the settlement leg (`rpc:`, `tcp:` or `arcade:`), the header source |
-| `hosts` | required | the overlay hosts asked and written to |
-| `facade` | none | the plane: pieces and records are submitted to it once |
-| `providers` | none | providers' submit routes: without a facade, entries (and piece carriers) go to each |
-| `uploads` | none | providers' public URLs: without a facade, a closure goes to each by BRC-167 upload session instead of as piece carriers |
-| `quorum` | 1 | hosts that must take an entry when there is no facade |
-| `ca`, `fetch_private` | none, false | certificates trusted besides the system's; whether advertised URLs at loopback, private or link-local addresses are reached |
-| `bounty` | none | what a put asks for unless told otherwise: `satoshis`, `t`, `k`, `retention_seconds`, `deadline_blocks`, `check_c` |
-| `hold_ahead` | 8 | mined hold outputs of a bounty kept ready |
-| `race_window_seconds` | 3600 | the writer's race window |
-| `publish_outcomes` | true | publish failed settlement challenges and every challenge's outcome as outcome records |
-| `piece_tree`, `entry_tree` | 256, 16 | outputs of a new funding tree (outcome trees take `entry_tree`); the next tree of each kind is minted ahead, in the background, so a put of up to `piece_tree` pieces never waits for a block |
-| `fee_sat_per_byte`, `fee_floor` | 1, 250 | the fee policy |
-| `accept_threshold_sats` | 25000000 | a settlement whose largest payout is at or below it is remitted once arcade says the network took it and the node shows its inputs spent by it alone, before it mines (race state `remitted`); above it, remitted once mined. Needs `settle = arcade:<url>` |
-| `accept_payer_limit`, `accept_total_limit`, `accept_window_seconds`, `accept_watch_seconds` | one and ten thresholds, 3600, 0 | the rest of the acceptance rule, as for a provider ([provider.md](provider.md)) |
-| `buckets`, `bucket` | none | the chains this home reads and writes (`{"bucket", "owner", "id"}`), and the one used unless `-bucket` names another |
+`init` writes it; an unknown key is refused. Every key, its default and an
+example are in [configuration.md](configuration.md#configjson).
 
 ## The owner
 
@@ -220,7 +212,7 @@ $ bstore settle
 
 `settle` pays by rank (spec section 9.5). It first checks each payee's
 advertisement unspent by positive evidence from the node, a renewal
-successor counting as unspent; a cancelled one is dropped, the ranks below
+successor counting as unspent; a canceled one is dropped, the ranks below
 move up, the next passed candidate fills the last place, and `t` is counted
 again. One transaction spends the hold output and pays rank `i` the
 square-root share `floor(R * sqrt(k - i + 1) / S)`, the remainder to rank 1,
@@ -407,7 +399,7 @@ What the race cannot tell:
   sample proves the advertised URL served the bytes, not whose disk they are
   on: an advertiser that proxies another provider's blob route passes. As
   with keys that are not copies (spec section 9.7), independence is the
-  writer's judgement.
+  writer's judgment.
 - **A front that is not the advertiser** is asked only when the advertiser's
   own front has not answered; then a hostile one can spend the candidate's
   draws, though never fail it by its own answer.

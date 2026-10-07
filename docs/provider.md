@@ -430,7 +430,7 @@ such puts an hour.
 
 ## Operating
 
-### Build and initialise
+### Build and initialize
 
 ```console
 $ make verify
@@ -445,7 +445,7 @@ responses and payouts are bound to: back the directory up.
 
 ### Configure
 
-A JSON file; an unknown key is refused. The required keys:
+A JSON file; an unknown key is refused. The required keys, and `mainnet` on mainnet:
 
 ```json
 {
@@ -454,7 +454,8 @@ A JSON file; an unknown key is refused. The required keys:
   "public_url": "https://provider.example.com/store",
   "node": "https://node.example.com",
   "settle": "arcade:https://arcade.example.com",
-  "headers": "https://headers.example.com",
+  "headers": "woc:main",
+  "mainnet": true,
   "hosts": ["https://overlay.example.com"],
   "buckets": [{"bucket": "example_photos_hmqzvtkwrx"}]
 }
@@ -468,7 +469,7 @@ A JSON file; an unknown key is refused. The required keys:
 | `public_url` | required | the `https` URL the routes are reached at: objects under `<public_url>/chirp/v1/`, the front at `<public_url>/bstore/v1`; no trailing slash, query, fragment or user |
 | `node` | required | a Teranode asset API: proofs, spends, block hashes |
 | `settle` | required | the settlement leg: `tcp:<host:port>`, `rpc:<url>` (with `rpc_user`, `rpc_pass`) or `arcade:<url>` (with `arcade_key`) |
-| `headers` | required | a header source, as bcommon `headers` reads it: `woc:main`, `chaintracks:<url>`, or a bridge URL |
+| `headers` | required | a header source, as bcommon `headers` reads it: `woc:main`, `woc:test`, `chaintracks:<url>`, or a bridge URL |
 | `hosts` | none | overlay hosts advertisements are submitted to, each directly |
 | `facade` | none | a plane facade advertisements are also submitted to |
 | `uhrp_topic` | false | also submit each advertisement to `tm_uhrp` |
@@ -507,12 +508,23 @@ $ ./bstore-provider address -config provider.json
 identity 02...
 fund address 1...
 pool 0 output(s), 0 satoshis
-$ ./bstore-provider rescan -config provider.json -from <height>
+$ ./bstore-provider fund -config provider.json -txid <txid>
 ```
 
-Pay the fund address, then `rescan` from the block that holds the payment
-to take it into the pool. On a test network whose node mines on request,
-`fund -blocks N` mines to the fund address and pools the coinbase.
+Pay the fund address from your own wallet, wait for the payment to be
+mined, then import it by its txid: every output of it paying the fund
+address that the node shows unspent goes into the pool, its proof checked
+against the header source. Set `mainnet: true` on mainnet; with `false`
+the fund address is in the testnet form. Every advertisement and renewal
+is a mined transaction the provider pays for: 50,000 satoshis covers a
+funding tree (`tree_count` 16 outputs of `tree_sats` 1,000) and its fees
+with room to spare.
+
+`rescan -from H` and `fund -blocks N` are **coinbase: only on a regtest
+chain you run (development and tests)**: `-blocks` mines to the fund
+address through the node's RPC and pools the coinbase; `rescan` takes the
+coinbase outputs paying the fund address in blocks `H` to the tip, and
+finds no ordinary payment.
 
 ### Run
 

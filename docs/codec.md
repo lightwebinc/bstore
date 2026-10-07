@@ -152,14 +152,14 @@ rule that failed: `pushdrop`, `field-size`, `host`, `hash`, `url`, `expiry`,
 `file-size`, `signature`, `lock`, `verify`, all under the label
 `advertisement`. The url is parsed as the WHATWG URL parser parses it. The
 Go codec does that for every url whose host is ASCII after percent-decoding
-and has no label beginning `xn--`; an internationalised host, which the
+and has no label beginning `xn--`; an internationalized host, which the
 WHATWG parser maps through UTS #46, the Go codec refuses (rule `url`) and the
 TypeScript twin, which runs the WHATWG parser itself, decides. The narrowing
 only ever refuses: the Go codec never admits an advertisement the SDK
 refuses. Hosts are the TypeScript twin's. The port follows the SDK's check
 as ts-stack's `@bsv/sdk` 2.8.10 has it; the SDK release bcommon pins does
 not carry it. What is frozen is this port as the vectors pin it, not a
-later SDK release (owner ruling, 2026-10-05).
+later SDK release.
 
 **Front statement urls.** The lexical rule of spec section 8.2, then the
 same WHATWG parse, with the narrowing made the rule: a host that is not

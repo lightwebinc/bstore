@@ -200,7 +200,7 @@ A token **names** an entry when the entry's commitment appears in the
 token's `changes` (as a put's `C` or a removal's `D`) or in its `consumed`.
 Every entry the owner's tooling applies is named exactly once, by the token
 that applies it, and the tooling never applies an entry that any token of
-the chain has named: it keeps the set of commitments its chain has named, rebuilt from the chain itself (the rooted tokens it verified, by `chain` or `bucket-seq`), never from a local cache, so that a second instance of the tooling or a reorganisation cannot rename an entry, and skips every entry in it, whatever the entry says and whenever it is
+the chain has named: it keeps the set of commitments its chain has named, rebuilt from the chain itself (the rooted tokens it verified, by `chain` or `bucket-seq`), never from a local cache, so that a second instance of the tooling or a reorganization cannot rename an entry, and skips every entry in it, whatever the entry says and whenever it is
 seen again. Within one batch, when several entries for one key are to be
 applied, the tooling orders them by `created`, then by commitment, and the
 last one decides the key's change; the others go to `consumed`. Before it
@@ -222,7 +222,7 @@ mapRoot      = RFC 6962 Merkle Tree Hash over leaf(key, C) for every pair, ascen
 RFC 6962 section 2.1: a leaf hashes as `SHA-256(0x00 || leaf)`, an interior
 node as `SHA-256(0x01 || left || right)`, and the root of no leaves is
 `SHA-256` of the empty string. Because the leaves are sorted, a path for the
-leaf at index `i` together with paths for its neighbours proves both what a
+leaf at index `i` together with paths for its neighbors proves both what a
 key names and that a key is absent (section 11.3).
 
 ### 3.5 Writers
@@ -488,7 +488,7 @@ One whose every sample passes is a **pass**. Each outcome is the
 **answerer's**; it is also the advertiser's only when the answerer is the
 advertiser, and an unretrievable outcome is about the advertiser's URL
 whoever answered. The buyer's deadline for an answer, and what it pays, are
-its own. A later reorganisation that orphans the seed block changes
+its own. A later reorganization that orphans the seed block changes
 nothing: the indices come from the request's bytes, the window was checked
 when the request was sent, and at verification, or when a third party
 checks an outcome, the buyer accepts `seedHash` if its headers hold it at
@@ -498,7 +498,7 @@ checks an outcome, the buyer accepts `seedHash` if its headers hold it at
 
 A sample whose `segment` is `null` is fetched by the buyer itself, before it checks the path, from the **tested URL**: the `url` of the provider's live advertisement for `root` with the latest `expiryTime` (ties to the lower txid) that the buyer knows of when it sends the request. A request names the provider's key, not one advertisement, so a provider with two live advertisements for one root is tested at that one. The fetch uses the blob object route derived from the
 tested URL (BRC-167, "Complete-Host HTTP Retrieval Profile") and an HTTP `Range` request for that segment's bytes within its blob. The buyer
-hashes what it receives as the leaf and checks the path. If the host does not honour `Range`, the buyer fetches the whole blob, checks the blob's object hash, and takes the segment from it; against such a host a challenge costs the buyer up to `c` whole blobs (`c` x 4 MiB) of fetches. A by-reference sample proves
+hashes what it receives as the leaf and checks the path. If the host does not honor `Range`, the buyer fetches the whole blob, checks the blob's object hash, and takes the segment from it; against such a host a challenge costs the buyer up to `c` whole blobs (`c` x 4 MiB) of fetches. A by-reference sample proves
 that the bytes were retrievable at the advertised URL when the buyer asked,
 whoever answered: it is how a front answers for an incumbent host that never
 learned of bstore (section 17). A native provider SHOULD answer inline. A front that is not the advertiser MUST answer every sample by reference (section 7.4 step 2): an inline segment from a front would prove only that the front has a copy, and would credit the advertiser with it.
@@ -618,7 +618,7 @@ An outcome is attributed to the request's `answerer`, and to its `provider` only
 | 1 | `bucket` | text | the bucket identifier |
 | 2 | `front` | bytes(33) | the front's identity key |
 | 3 | `advertiser` | bytes(33) | the advertiser the front answers for |
-| 4 | `url` | text | the front's base URL: `https://`, no user information, query or fragment, 12 to 512 bytes of `0x21` to `0x7e`, not ending in `/`; and it parses under the WHATWG URL parser as the advertisement check parses an advertisement's url (section 9.1): scheme `https:`, a non-empty host, no username, password or fragment; its host, percent-decoded, is ASCII and has no label beginning `xn--` (any case), so that no internationalised name is mapped (UTS #46) and every implementation decides alike (`https://:1/x` and `https://1.2.3.256/x` are refused) |
+| 4 | `url` | text | the front's base URL: `https://`, no user information, query or fragment, 12 to 512 bytes of `0x21` to `0x7e`, not ending in `/`; and it parses under the WHATWG URL parser as the advertisement check parses an advertisement's url (section 9.1): scheme `https:`, a non-empty host, no username, password or fragment; its host, percent-decoded, is ASCII and has no label beginning `xn--` (any case), so that no internationalized name is mapped (UTS #46) and every implementation decides alike (`https://:1/x` and `https://1.2.3.256/x` are refused) |
 | 5 | `created` | uint | Unix milliseconds |
 
 Keys 6 and above are unknown; at most 2,048 bytes encoded. Refused in the
@@ -639,7 +639,7 @@ from its advertisement (section 10.1).
 A provider advertises a held root with a BRC-26 advertisement exactly as
 the SDK creates and validates it (ts-stack `@bsv/sdk`
 `storage/UHRPAdvertisementValidation.ts`, as of `@bsv/sdk` 2.8.10). The
-frozen check is that behaviour as bstore's port has it, pinned by bstore's
+frozen check is that behavior as bstore's port has it, pinned by bstore's
 own vectors (`script-v1.json`, section 22), not whatever a later SDK
 release does: an SDK change that would decide a vector otherwise does not
 change what bstore admits or counts. The check is of an output whose locking script is
@@ -689,7 +689,7 @@ evidence: the hold output exists, is mined, is locked to `derive(writer,
 "hold")` and holds exactly `satoshis`, and is unspent by positive evidence from a spend source (bcommon `chainview` or `nodeapi`; an empty or failed answer is not evidence); and `deadline` is far enough ahead to be worth racing for. An eligible advertisement names the entry's `root`, is by an advertiser key that is not the anyone key and is not already counted, expires no
 earlier than the entry's `floor(created / 1000) + retention`, has `fileSize` equal
 to the root node's length, and has a `url` of the CHIRP form for that root.
-An advertisement that already exists for the root (the provider held it for another entry) is eligible if it meets these. Before it settles, the writer checks each payee's advertisement unspent by positive evidence from a spend source, where a renewal counts as unspent: the advertisement, or its renewal successor (an advertisement of the same key for the same root, with a later expiry, in the transaction that spends it, or that successor's own successor), unspent. A rank keeps the first sight of the original. An advertisement spent by anything but a renewal (cancelled) after it passed is not paid: that candidate is dropped, the candidates ranked below it move up one rank each, the next passed candidate (if any) fills the last place, and the writer settles only if at least `t` remain. Hosts do not learn of a cancellation (section 12.1), so `ads` may answer a cancelled advertisement until it expires; a reader names an advertiser at section 15.2 step 7 only after its own spend source shows the advertisement unspent, and otherwise just moves on.
+An advertisement that already exists for the root (the provider held it for another entry) is eligible if it meets these. Before it settles, the writer checks each payee's advertisement unspent by positive evidence from a spend source, where a renewal counts as unspent: the advertisement, or its renewal successor (an advertisement of the same key for the same root, with a later expiry, in the transaction that spends it, or that successor's own successor), unspent. A rank keeps the first sight of the original. An advertisement spent by anything but a renewal (canceled) after it passed is not paid: that candidate is dropped, the candidates ranked below it move up one rank each, the next passed candidate (if any) fills the last place, and the writer settles only if at least `t` remain. Hosts do not learn of a cancellation (section 12.1), so `ads` may answer a canceled advertisement until it expires; a reader names an advertiser at section 15.2 step 7 only after its own spend source shows the advertisement unspent, and otherwise just moves on.
 
 ### 9.4 Ranking and the settlement challenge
 
@@ -717,7 +717,7 @@ tieKey = SHA-256( txid || vout || C )
 
 over exactly 68 bytes: `txid`, the advertisement's transaction id in hash
 byte order (the 32 bytes as SHA-256d produces them and as an outpoint
-serialises them, the reverse of the display hex); `vout`, its output index
+serializes them, the reverse of the display hex); `vout`, its output index
 as 4 bytes little-endian; and `C`, the commitment of the entry whose bounty
 is raced (`C = txid(K)`, section 1), its 32 bytes in hash byte order. Two tie keys are
 compared as 32-byte unsigned strings, byte 0 first, and the lower ranks
@@ -775,7 +775,7 @@ bridged incumbent's advertisement is spendable only by the incumbent's key
 
 After `deadline` the writer MAY spend an unsettled hold output back to
 itself. The writer's key can spend it at any time, so a hold output is an
-honour escrow, as a BRC-178 collection grant is: a provider sees an early spend that is not a settlement through a spend source and keeps its own record of the writer. A reclaim is not published to the plane either. To raise a bounty, the writer funds a new hold output
+honor escrow, as a BRC-178 collection grant is: a provider sees an early spend that is not a settlement through a spend source and keeps its own record of the writer. A reclaim is not published to the plane either. To raise a bounty, the writer funds a new hold output
 and publishes a new entry for the key; advertisements already made count for
 the new entry when they meet its terms.
 
@@ -970,8 +970,8 @@ chain), and every entry output is checked against that token's `mapRoot`.
   carrier's txid) and checks the path against `mapRoot` for that index and
   the token's `count`.
 - A **leaf** is the CBOR array `[role, index, key, C, path]`: a map leaf
-  given in full with its path, `role` 0 for the neighbour before, 1 for the
-  neighbour after, 2 for a leaf whose entry the host does not hold or has
+  given in full with its path, `role` 0 for the neighbor before, 1 for the
+  neighbor after, 2 for a leaf whose entry the host does not hold or has
   retracted. The **token's context** is a CBOR array of at most two leaves, at most one of each role, in role order (a page that stops at a role 2 leaf carries no role 1).
 - In an **`object`** answer: with an entry, the token's context is empty.
   Without one, it either proves `k` absent (role 0 at index `j` with a key
@@ -1186,7 +1186,7 @@ the floor, and MAY admit carriers only from keys its operator configured.
 Such a list is static configuration the operator writes; it is never
 computed from what any topic holds, and in particular never from a bucket
 token's `writers`. A host also names the bucket chains it **serves**: the `(bucket, owner, id)` triples its operator configured. Retention (section 12.3)
-favours them; anything else on the topic is a stranger's.
+favors them; anything else on the topic is a stranger's.
 
 ### 12.2 The index
 
@@ -1210,13 +1210,13 @@ applies:
 A chain with a sticky status is **broken** from that token: its map is the
 map of the last consistent token before it, and nothing after the break is
 answered as latest. Only the owner can cause it, and the way on is a new
-bucket chain. Where two rooted tokens share a `seq` after a reorganisation,
+bucket chain. Where two rooted tokens share a `seq` after a reorganization,
 each is folded on its own; an answer uses the one whose proof verifies in
 the host's headers, else the lowest txid. The latest tokens are those of the
 branch on the current chain (signed clarification,
 frozen.md section 14, row C8): walking down from the highest `seq` that holds
 a candidate, the candidates at the first `seq` where any token's proof
-verifies in the host's headers, so a longer branch a reorganisation orphaned
+verifies in the host's headers, so a longer branch a reorganization orphaned
 is not answered as latest.
 
 **Entries.** An entry is `anchored` when the latest consistent token's map
@@ -1276,11 +1276,11 @@ a transaction of its own, with no hold output and no advertisement among its
 outputs; bstore's tooling never builds such a mixed transaction (it refuses
 to, for a sweep and for a reclaim alike).
 
-### 12.5 Restore and reorganisations
+### 12.5 Restore and reorganizations
 
 The engine does not replay admissions. The service persists its sweep spends and retraction marks with the topic's outputs; on start it rebuilds its index from them, in any order, and folds every chain from `seq` 0. A host learns of a block only
 through its headers; it may hold two tokens at one `seq` after a
-reorganisation and answers every candidate through `bucket` and
+reorganization and answers every candidate through `bucket` and
 `bucket-seq`; readers decide with their own headers.
 
 ### 12.6 Joining a bucket
@@ -1289,14 +1289,14 @@ A host that starts carrying a bucket, or missed part of it, is given it by
 replay: tokens, entries, advertisements, hold outputs, outcomes and
 statements are self-verifying, so anyone who holds one may submit it. A
 replayer assembles each token's BEEF from the token at `seq` and its parent
-at `seq - 1`. A host MUST NOT enable an unordered synchronisation of
+at `seq - 1`. A host MUST NOT enable an unordered synchronization of
 unspent outputs for `tm_bstore_` topics: it carries only unspent outputs,
 so it never carries a chain's spent tokens, and it drops without retrying
 what a topic manager refuses.
 
 ## 13. Carriers, tokens, funding trees and derivations
 
-Everything here is bcommon's, parameterised by the values in section 13.1.
+Everything here is bcommon's, parameterized by the values in section 13.1.
 
 ### 13.1 Derivations and tags
 
@@ -1681,7 +1681,7 @@ providers subscribe per bucket, never to an aggregate.
 2. **Keys are not copies.** `t` advertisers may be one disk (section 9.7).
 3. **Enforcement is reputation.** No deposit is slashed and no payment is
    conditional on a proof on chain in this version; a hold output is the
-   writer's honour escrow, and a provider that takes a renewal payment and
+   writer's honor escrow, and a provider that takes a renewal payment and
    does not renew is caught only by its buyer.
 4. **A pass is the buyer's word.** Only an invalid signed response is
    provable by anyone; a non-response is provable by nobody.
@@ -1793,7 +1793,7 @@ pin byte for byte the rows of frozen.md marked "vectors".
 | `script-v1.json` | the classifier: claiming, token, funding-shaped, hold-shaped, advertisement and refused scripts; the advertisement check over a url corpus; the same corpus under a front statement's url rule (section 8.2) |
 | `map-v1.json` | key maps and their roots; folds of change lists with puts `[key, C]` and removals `[key, Z, D]`, `map-mismatch` cases (a removal of an absent key, a put the key already names, a commitment an earlier token named); batches the tooling resolves by commitment: several entries for one key (the last by `created` then commitment wins, the rest consumed), a delete of an absent key consumed, and an applied delete found again after a later put, skipped; inclusion, absence and page-completeness contexts, with dishonest pages each check of section 11.3 refuses (a role 0 inside or after the range, a role 1 inside or before it, an empty page bracketing nothing, a short page without role 1) |
 | `proof-v1.json` | proof roots for 0, 1, 4,095, 4,096, 4,097 bytes, one blob, one blob plus one byte, 25 and 257 blobs (by deterministic content); index derivations for given seeds; audit paths; responses that pass and fail at each step of section 7.4 in sample-major order, including a wrong-length path (invalid at `count`), a fetched segment that fails while its blob verifies (rechecked from the blob: a pass when it then verifies, invalid when not) and a blob that does not verify (unretrievable) |
-| `settle-v1.json` | payouts for `k` 1 to 16 and assorted `R`, the BRC-178 examples among them; derivation prefixes and suffixes; tie keys (section 9.4); rankings where ties break by the tie key, a txid ground to all zeros does not win a tie, a renewed advertisement keeps its original first sight and where a cancelled payee is dropped, the ranks below move up and `t` is counted again |
+| `settle-v1.json` | payouts for `k` 1 to 16 and assorted `R`, the BRC-178 examples among them; derivation prefixes and suffixes; tie keys (section 9.4); rankings where ties break by the tie key, a txid ground to all zeros does not win a tie, a renewed advertisement keeps its original first sight and where a canceled payee is dropped, the ranks below move up and `t` is counted again |
 | `transaction-v1.json` | carriers, tokens, advertisements, hold outputs and sweeps admitted and refused by each rule of section 12.1, and transactions that only spend held outputs, refused |
 | `query-v1.json` | every class and every value rule, admitted and refused |
 | `chirp-v1.json` | BRC-167's own vectors: bcommon's file of that name at the tag go.mod pins, read from that module by bstore's tests (signed clarification, frozen.md section 14, row C5) |

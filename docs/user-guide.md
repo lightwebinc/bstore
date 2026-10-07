@@ -8,7 +8,9 @@ operator, a bridge's operator and an S3 user. [usage.md](usage.md) is the
 reference for every command, [provider.md](provider.md), [s3.md](s3.md)
 and [host.md](host.md) for the servers, [limits.md](limits.md) for every
 bound and what each operation costs, [spec.md](spec.md) the contract, and
-[../QUICKSTART.md](../QUICKSTART.md) a run of most of it on one machine.
+[examples.md](examples.md) the tasks on a real network, and
+[../QUICKSTART.md](../QUICKSTART.md) a run of most of it on one machine, in
+a local development sandbox.
 
 ## 1. The ideas
 
@@ -83,14 +85,21 @@ It does not:
 ## 3. Install
 
 ```console
+$ go install github.com/lightwebinc/bstore/cmd/bstore@latest
+$ go install github.com/lightwebinc/bstore/cmd/bstore-provider@latest
+```
+
+or, from a checkout:
+
+```console
 $ make bstore            # bin/bstore: the command line and the S3 gateway
 $ make bstore-provider   # bin/bstore-provider
 $ (cd host && npm ci) && make module NODE=/path/to/node24   # the host module
 $ make docker-build      # the images: bstore, bstore-provider, bstore-devchain
 ```
 
-The bridge is its own repository, `bstore-bridge` (`make bstore-bridge`
-there).
+The bridge is its own repository,
+[bstore-bridge](https://github.com/lightwebinc/bstore-bridge).
 
 ## 4. Words
 
@@ -124,10 +133,10 @@ there).
 
 ```console
 $ bstore init -network main -node https://node.example.com \
-    -settle arcade:https://arcade.example.com -headers https://headers.example.com \
+    -settle arcade:https://arcade.example.com -headers woc:main \
     -hosts https://overlay-a.example.com,https://overlay-b.example.com
-$ bstore fund                       # the fund address; pay it, then
-$ bstore fund -from <height>        # take the payment into the pool
+$ bstore fund                       # the fund address; pay it from your own wallet, then
+$ bstore fund -txid <txid>          # once mined, import the payment into the pool
 $ bstore bucket new photos -writers 02...
 bucket photos_hmqzvtkwrx
 owner  02...
@@ -245,8 +254,8 @@ one. [s3.md](s3.md) has the compatibility matrix.
 
 ```console
 $ bstore-provider init -data /var/lib/bstore-provider
-$ bstore-provider address -config provider.json      # pay the fund address
-$ bstore-provider rescan -config provider.json -from <height>
+$ bstore-provider address -config provider.json      # pay the fund address from your own wallet
+$ bstore-provider fund -config provider.json -txid <txid>   # once mined, import it
 $ bstore-provider run -config provider.json
 $ bstore-provider doctor -config provider.json       # reads only: does everything answer
 ```
@@ -347,7 +356,11 @@ through the command line with the gateway stopped.
 
 ## 17. Where to go next
 
-- [../QUICKSTART.md](../QUICKSTART.md): the whole flow on one machine.
+- [examples.md](examples.md): each task on mainnet or testnet.
+- [../QUICKSTART.md](../QUICKSTART.md): the whole flow on one machine, in a
+  local development sandbox.
+- [configuration.md](configuration.md): every flag, variable and key.
+- [architecture.md](architecture.md): the components and the code.
 - [usage.md](usage.md): every command, flag and setting.
 - [limits.md](limits.md): bounds, costs and known limits.
 - [spec.md](spec.md) and [frozen.md](frozen.md): the contract.

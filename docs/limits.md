@@ -179,7 +179,7 @@ not do, stated so that nobody finds it by accident.
    by-reference sample proves the advertised URL served the bytes, not
    whose disk they are on: an advertiser that proxies another provider's
    blob route passes its challenges. As with keys that are not copies
-   (spec section 9.7), independence is the writer's judgement. No
+   (spec section 9.7), independence is the writer's judgment. No
    clarification closes it: a sample can show that bytes were served, never
    whose copy they are, short of a sealed copy per advertiser, which is a
    new proof format, not a reading of this one.
@@ -289,6 +289,14 @@ not do, stated so that nobody finds it by accident.
 14. **The images are not published yet.** The command, provider, host and
     local chain images are built from a checkout (`make docker-build`,
     `make docker-build-host`) until the repositories are public.
+15. **Fees are above mainnet's policy.** `fee_sat_per_byte` is a whole
+    number of satoshis a byte, so the least it can be is 1, ten times the
+    100 satoshis a kilobyte mainnet miners take. Every fee here is at that
+    rate.
+16. **Funding is by import.** A pool takes coin through `fund -txid`, a
+    payment from the user's own wallet imported once it is mined;
+    `fund -from` and `rescan -from` find coinbase only (coinbase: only on
+    a regtest chain you run, development and tests).
 
 See [spec.md](spec.md) section 20 for what the contract itself does not do.
 

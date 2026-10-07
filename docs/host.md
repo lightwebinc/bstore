@@ -36,7 +36,7 @@ BSTORE_HEADERS_URL=https://headers.example.com
 BSTORE_SERVED=example_photos_hmqzvtkwrx:<owner key>:<bucket id>
 ```
 
-The host must run with no broadcaster, and must not synchronise `tm_bstore_`
+The host must run with no broadcaster, and must not synchronize `tm_bstore_`
 topics as unspent outputs (spec sections 12.1 and 12.6). The module refuses
 to start on a host whose `OVERLAY_SYNC_PEERS` names one. A bucket is joined
 by replay (below).
@@ -48,7 +48,7 @@ by replay (below).
 | `BSTORE_BUCKETS` | required | the bucket identifiers this host carries, a comma list. Every `tm_bstore_` and `tm_bstoreblob_` topic in `OVERLAY_TOPICS` must be one of theirs, or the module refuses to start: a bstore topic left to the host's default manager would admit anything |
 | `BSTORE_STATE_DIR` | required | an absolute directory kept for the host's life: the rows journal and the payment ledger (below) |
 | `BSTORE_HEADERS_URL` | `OVERLAY_CHAIN_TRACKER_URL` when it is an `http` or `https` URL | the header source admission checks proofs against, in the reference host's native shape (`/v1/root/<height>`, `/v1/tip`) |
-| `BSTORE_SERVED` | none | the chains this host serves, a comma list of `<bucket>:<owner>:<id>` (the bucket identifier, the owner's key in 66 hex digits, the 64-hex bucket id). The map classes answer for these alone, and retention favours them (below) |
+| `BSTORE_SERVED` | none | the chains this host serves, a comma list of `<bucket>:<owner>:<id>` (the bucket identifier, the owner's key in 66 hex digits, the 64-hex bucket id). The map classes answer for these alone, and retention favors them (below) |
 | `BSTORE_KEEP_DAYS` | 31 | the long floor: a replaced entry after the token that replaced it, an advertisement of a served root, a hold output a served entry names, an outcome or front statement of a served party, a sweep's outpoints, a stranger's retraction mark. At least 31 |
 | `BSTORE_PENDING_DAYS` | 7 | the floor of an entry no token names, of a served chain's owner or writers. At least 7 |
 | `BSTORE_OTHER_HOURS` | 24 | the floor of everything else. At least 24 |
@@ -131,13 +131,13 @@ row C8, signed): walking down from the highest
 `seq` that holds a candidate, the candidates at the first `seq` where any
 token's proof verifies in the host's headers, kept for a minute; an answer
 that needs one token takes the lowest txid among them. A longer branch a
-reorganisation orphaned is not latest, and retention follows the branch on
+reorganization orphaned is not latest, and retention follows the branch on
 the chain. With no answer from the header source, the highest `seq`.
 
 **What a fold costs.** Each token costs its changes and one tree over the
 whole map (about two hashes a key). Folding a chain whole costs that for
 every token: a restore does it, giving the event loop a turn after every
-token, before the host answers anything; and a reorganisation does it once,
+token, before the host answers anything; and a reorganization does it once,
 synchronously, for the second branch of a fork (the first takes the map),
 as does a `seq` turned over its cap of 8 tokens. A token that only extends a
 branch never refolds anything.

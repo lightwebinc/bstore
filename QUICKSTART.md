@@ -1,4 +1,9 @@
-# Quickstart
+# Quickstart: a local development sandbox
+
+No coin needed: a private regtest chain on your machine stands in for the
+network. To use bstore on mainnet or testnet, start with
+[docs/examples.md](docs/examples.md) instead; the last section here says
+what changes.
 
 In about fifteen minutes, on one machine: run two overlay hosts that carry
 a bucket, two storage providers and an S3 gateway; make the bucket as its
@@ -69,9 +74,11 @@ $ bs reader init $INIT
 $ bs owner fund -blocks 101
 ```
 
-Each home is one identity. `fund -blocks` mines to the home's fund address
-(a test network only); a coinbase spends after 100 more blocks, which is
-why the owner mines 101.
+Each home is one identity. `fund -blocks` is coinbase: only on a regtest
+chain you run (development and tests). It mines to the home's fund
+address; a coinbase spends after 100 more blocks, which is why the owner
+mines 101. On a real network you pay the fund address from your own wallet
+and import the payment with `fund -txid` instead.
 
 ## 3. The bucket, before any host carries it
 
@@ -114,7 +121,8 @@ $ GW=03...                           # the gateway identity's key
 ```
 
 Each provider has its own identity and wallet: every advertisement it
-makes is a mined transaction it pays for. The gateway writes as the
+makes is a mined transaction it pays for. Every `-blocks` here is
+coinbase, on the sandbox's own chain. The gateway writes as the
 identity `gw`, whose wallet lives in the gateway's data directory; its
 configuration asks every put for a bounty of 3,000 satoshis, `t = 2`,
 `K = 2`.
@@ -226,8 +234,10 @@ $ docker compose --profile cli down -v
 ## What changes on a network
 
 - The chain: a real node's asset API (`node`), a settlement leg (`arcade:`
-  or `tcp:`) and a header source, in every configuration, and `fund -from
-  <height>` after paying each fund address instead of `fund -blocks`.
+  or `tcp:`) and a header source (`woc:main`, `woc:test`) in every
+  configuration, `-network main` or `test` (`mainnet: true` for a provider
+  and a gateway on mainnet), and, instead of `fund -blocks`, a payment from
+  your own wallet to each fund address imported with `fund -txid <txid>`.
 - Blocks every ten minutes: every step that waits for a block (a bucket
   token, a hold output, an advertisement, a settlement, an anchor) waits
   that long.

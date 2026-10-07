@@ -1,0 +1,204 @@
+# Examples
+
+Each task below on mainnet, with the testnet variant where it differs. The
+commands are real; `example.com` addresses stand for the services you use.
+[usage.md](usage.md) says what each command does step by step,
+[configuration.md](configuration.md) lists every flag and key, and
+[limits.md](limits.md) what each step costs. To try everything with no coin
+on one machine, use the development sandbox in
+[../QUICKSTART.md](../QUICKSTART.md).
+
+## What you need
+
+| What | Mainnet | Testnet |
+| --- | --- | --- |
+| `-network` | `main` | `test` |
+| A node's asset API (`-node`) | a Teranode asset service you run or are given access to | the same, on testnet |
+| A settlement leg (`-settle`) | `arcade:<url>` of an arcade broadcaster | the same, on testnet |
+| A header source (`-headers`) | `woc:main`, or `chaintracks:<url>` | `woc:test` |
+| Overlay hosts (`-hosts`) | hosts that carry your bucket ([host.md](host.md)) | the same |
+| Coin | 100,000 satoshis or more in your own wallet | testnet coin from your own testnet wallet |
+
+## What it costs
+
+bstore pays 1 satoshi a byte with a floor of 250 (the least its fee
+setting allows; mainnet miners take 100 satoshis a kilobyte, so these are
+upper figures). From [limits.md](limits.md):
+
+| Step | Mined bytes | Fee |
+| --- | --- | --- |
+| A bucket token (`bucket new`, each `anchor`) | 616 to 727 | about 620 to 730 satoshis |
+| A piece funding tree, 256 outputs (minted ahead, one a put of up to 256 pieces) | about 13 KB | about 13,300 satoshis |
+| A 100 MiB put's funding, from those trees | about 1.4 KB | about 1,400 satoshis |
+| A hold output's transaction (with a bounty) | 240 | about 495 satoshis, plus the bounty |
+| A settlement | about 406 | about 446 satoshis |
+| A challenge, a renewal | not mined by you | the provider's price: 40 at `c = 30` on terms of 10 + 1; a renewal's minimum, often 500 |
+
+100,000 satoshis (0.001 BSV) is ample to make a bucket and put objects
+without a bounty. A bounty locks `hold_ahead` (8) hold outputs of its size
+ahead of time; set `hold_ahead` lower or fund more.
+
+## Set up a home and fund it
+
+```console
+$ bstore init -network main -node https://node.example.com \
+    -settle arcade:https://arcade.example.com -headers woc:main \
+    -hosts https://overlay-a.example.com,https://overlay-b.example.com \
+    -providers https://provider.example.com
+identity 02...
+config /home/you/.bstore/config.json
+$ bstore fund
+identity     02...
+fund address 1...
+pool         0 output(s), 0 satoshis
+```
+
+Send 100,000 satoshis from your own wallet to the fund address. Once the
+payment has a block, import it by its txid:
+
+```console
+$ bstore fund -txid 4f3c...e9a1
+4f3c...e9a1 mined at height <h>: 1 output(s) to the fund address, 1 imported (100000 satoshis), 0 already held, 0 spent
+pool 1 output(s), 100000 satoshis
+$ bstore doctor
+```
+
+`fund -txid` checks the payment's proof against your header source and asks
+the node that each output is unspent. Before the payment is mined it exits
+3 (`not mined yet`); run it again after the next block. Importing it twice
+adds nothing. `doctor` shows the pool and whether the node, the header
+source, the hosts and the providers answer; it spends nothing.
+
+On testnet: `-network test -headers woc:test`; the fund address starts
+with `m` or `n`.
+
+Keep `~/.bstore` backed up: the wallet in it is the identity and its coin.
+Several identities are several homes (`-home DIR` or `BSTORE_HOME`).
+
+## Own a bucket
+
+```console
+$ bstore bucket new photos -writers 03...
+bucket photos_hmqzvtkwrx
+owner  02...
+id     5f...
+served photos_hmqzvtkwrx:02...:5f...
+topics tm_bstore_photos_hmqzvtkwrx tm_bstoreblob_photos_hmqzvtkwrx
+```
+
+Give each host's operator the `served` line and the providers' operators
+the bucket identifier. Until a host carries the bucket, `bucket new` exits
+3 with its first token kept; `bstore sync` delivers it once they do. Then
+fold writers' entries into the bucket whenever you like:
+
+```console
+$ bstore anchor -dry-run           # what the next token would hold
+$ bstore anchor                    # mint it
+$ bstore anchor -add-writer 02...  # name another writer
+```
+
+## Write
+
+```console
+$ bstore put photos/cat.jpg ./cat.jpg
+$ bstore put photos/cat.jpg ./cat.jpg -bounty 20000 -t 2 -k 3 -deadline 144
+$ tar c ./album | bstore put backups/album.tar -
+$ bstore cp photos/cat.jpg photos/cat-copy.jpg
+$ bstore rm photos/old.jpg
+$ bstore due                       # what is still owed; exit 3 while anything is
+$ bstore sync                      # send it
+```
+
+A put is pending until the owner's next `anchor`. With a bounty, your own
+client judges the race:
+
+```console
+$ bstore holds -watch 10m          # rank advertisers, challenge each
+$ bstore settle                    # pay the winners by rank
+$ bstore reclaim                   # after the deadline, take back a bounty nobody won
+```
+
+## Read
+
+A read needs no coin, only a home that names the bucket:
+
+```console
+$ bstore bucket add photos_hmqzvtkwrx -owner 02... -id 5f...
+$ bstore -bucket photos_hmqzvtkwrx ls photos/
+$ bstore -bucket photos_hmqzvtkwrx get photos/cat.jpg ./cat.jpg -proof-root
+$ bstore -bucket photos_hmqzvtkwrx get photos/cat.jpg - | sha256sum
+```
+
+Exit 0 is a verified file; 1 a key proven absent (`NoSuchKey`); 3 a key no
+host or advertiser produced.
+
+## Check a provider, buy more time
+
+```console
+$ bstore terms https://provider.example.com/store/bstore/v1
+$ bstore challenge photos/cat.jpg -provider 03... -c 113 -budget 2000
+$ bstore renew photos/cat.jpg -provider 03... -days 30 -budget 5000
+```
+
+A challenge's outcome is kept in the home and published on the bucket's
+records topic (`-no-publish` keeps it local). Both pay the provider's price
+from the pool, never more than `-budget`.
+
+## Use S3
+
+Against a gateway someone runs for you:
+
+```console
+$ export AWS_ACCESS_KEY_ID=EXAMPLEACCESSKEY AWS_SECRET_ACCESS_KEY=...
+$ aws --endpoint-url https://s3.example.com s3 cp ./cat.jpg s3://photos-hmqzvtkwrx/photos/cat.jpg
+$ aws --endpoint-url https://s3.example.com s3 ls s3://photos-hmqzvtkwrx/photos/
+$ aws --endpoint-url https://s3.example.com s3 cp s3://photos-hmqzvtkwrx/photos/cat.jpg ./cat.jpg
+```
+
+Running one ([s3.md](s3.md)):
+
+```console
+$ bstore s3d init -config s3d.json
+identity main 03...
+$ bstore s3d address -config s3d.json -identity main
+$ bstore s3d fund -config s3d.json -identity main -txid <txid>
+$ bstore s3d run -config s3d.json
+```
+
+## Run a provider
+
+```console
+$ bstore-provider init -data /var/lib/bstore-provider
+$ bstore-provider address -config provider.json
+$ bstore-provider fund -config provider.json -txid <txid>
+$ bstore-provider doctor -config provider.json
+$ bstore-provider run -config provider.json
+```
+
+`provider.json` needs `"mainnet": true` on mainnet, a public `https`
+`public_url`, and the buckets you serve ([provider.md](provider.md)).
+
+## In a container
+
+```console
+$ docker build -t bstore .
+$ docker run --rm -v bstore-home:/home/nonroot/.bstore bstore init -network main \
+    -node https://node.example.com -settle arcade:https://arcade.example.com \
+    -headers woc:main -hosts https://overlay.example.com
+$ docker run --rm -v bstore-home:/home/nonroot/.bstore bstore fund
+$ docker run --rm -v bstore-home:/home/nonroot/.bstore bstore \
+    get photos/cat.jpg - -proof-root > cat.jpg
+```
+
+The home lives in the named volume; standard output carries the file, so
+no bind mount needs to be writable by the image's user (uid 65532).
+
+## Stop everything
+
+```console
+$ bstore kill -confirm KILL        # what would be swept
+$ bstore kill -confirm KILL -yes   # sweep every funding tree: irreversible
+```
+
+Every entry this identity has not had anchored is retracted, and it
+publishes nothing after.
