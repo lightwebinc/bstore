@@ -865,7 +865,11 @@ func (p *Publisher) drawOnce(ctx context.Context, r *Race, c *Cand, blobs []chir
 		return false
 	}
 	at.Outcome, at.Why, at.Paid = OutcomeName(res.Outcome), res.Why, res.Paid
-	note(at)
+	// Row C31 is noted once, as not a draw, never first as an answer.
+	c31 := res.Status == http.StatusNotFound && res.Code == "ERR_ROUTE_NOT_FOUND" && own && derived(c, f)
+	if !c31 {
+		note(at)
+	}
 	c.Paid += res.Paid
 	answered := res.Status == http.StatusOK ||
 		(res.Status == http.StatusUnprocessableEntity && res.Refusal != "seed")
@@ -873,7 +877,7 @@ func (p *Publisher) drawOnce(ctx context.Context, r *Race, c *Cand, blobs []chir
 	case res.Status == http.StatusPaymentRequired:
 		c.Status = CandPriced
 		return false
-	case res.Status == http.StatusNotFound && res.Code == "ERR_ROUTE_NOT_FOUND" && own && derived(c, f):
+	case c31:
 		// Row C31: the advertiser's own derived front has no bstore route
 		// at all (an incumbent host behind a bridge). No route received the
 		// challenge and nothing was signed or refused, so it was never a

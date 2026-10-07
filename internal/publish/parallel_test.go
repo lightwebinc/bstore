@@ -71,6 +71,13 @@ func TestNoRouteSpendsTheDrawAndMovesOn(t *testing.T) {
 		len(c2.DrawLog) == 0 || c2.DrawLog[len(c2.DrawLog)-1].Outcome != OutcomeNotADraw {
 		t.Fatalf("own 404 route-not-found front: asked %d, %d draws, %s, log %+v", dead.draws(), c2.Draws, c2.Status, c2.DrawLog)
 	}
+	// The draw log holds only the not-a-draw line, never a no-answer line
+	// before it.
+	for _, a := range c2.DrawLog {
+		if a.Outcome != OutcomeNotADraw {
+			t.Fatalf("C31 draw log has %q: %+v", a.Outcome, c2.DrawLog)
+		}
+	}
 	// Any other 404 from the derived front spends the draw (C23).
 	other := newFakeFront(t, content)
 	other.notFound = true
