@@ -26,12 +26,8 @@ import (
 	"time"
 
 	"github.com/lightwebinc/bcommon/acceptance"
-	"github.com/lightwebinc/bcommon/headers"
-	"github.com/lightwebinc/bcommon/mint"
-	"github.com/lightwebinc/bcommon/nodeapi"
-	bpub "github.com/lightwebinc/bcommon/publish"
 
-	"github.com/lightwebinc/bstore/internal/efleg"
+	"github.com/lightwebinc/bstore/internal/chaincfg"
 	"github.com/lightwebinc/bstore/internal/publish"
 	"github.com/lightwebinc/bstore/internal/reader"
 	"github.com/lightwebinc/bstore/storerec"
@@ -120,25 +116,24 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Server, error) {
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	fetchHTTP := &http.Client{Timeout: 2 * time.Minute, Transport: fetchTransport(pool, cfg.FetchPrivate),
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	hc, err := headers.NewSource(cfg.Headers)
+	v, err := chaincfg.Open(cfg.Spec())
 	if err != nil {
 		return nil, err
 	}
-	s.reader = &reader.Reader{Hosts: cfg.Hosts, HTTP: hostHTTP, Fetch: fetchHTTP, Headers: hc, Held: s.st, Logf: opts.Logf, Now: opts.Now,
+	s.reader = &reader.Reader{Hosts: cfg.Hosts, HTTP: hostHTTP, Fetch: fetchHTTP, Headers: v.Headers, Held: s.st, Logf: opts.Logf, Now: opts.Now,
 		WalkDir: filepath.Join(cfg.Data, "walks")}
 	s.fetch = fetchHTTP
-	asset := &nodeapi.Asset{Base: cfg.Node}
-	s.reader.Spender = asset.Spender
+	s.reader.Spender = v.Chain.Spender
 	s.reader.OnToken = s.st.named
-	settler, err := settlerOf(cfg)
-	if err != nil {
-		return nil, err
+	var status acceptance.StatusSource
+	if v.Arcade != nil {
+		status = v.Arcade
 	}
 	d := &publish.Delivery{Facade: cfg.Facade, Hosts: cfg.Hosts, Providers: cfg.Providers, HTTP: hostHTTP, Quorum: cfg.Quorum}
 	for _, name := range cfg.Identities {
-		p, err := publish.Open(ctx, publish.Config{Dir: cfg.IdentityDir(name), OutboxMax: cfg.OutboxBytes, Asset: asset, Settler: settler,
-			Accept: cfg.AcceptPolicy(), Status: statusOf(cfg),
-			Fees: mint.Fees{SatPerByte: cfg.FeeRate, Floor: cfg.FeeFloor}, Mainnet: cfg.Mainnet,
+		p, err := publish.Open(ctx, publish.Config{Dir: cfg.IdentityDir(name), OutboxMax: cfg.OutboxBytes,
+			Chain: v.Chain, Known: v.Known, Tip: v.Tip, Settler: v.Settler, Accept: cfg.AcceptPolicy(), Status: status,
+			FeeSource: v.FeeSource, Mainnet: cfg.Mainnet,
 			PieceTree: cfg.PieceTree, EntryTree: cfg.EntryTree, PieceAhead: cfg.PieceAhead, PieceWorkers: cfg.PieceWorkers,
 			HoldAhead: cfg.HoldAhead, Store: s.store, Delivery: d, Reader: s.reader, FrontHTTP: fetchHTTP,
 			LockWait: opts.LockWait, Logf: opts.Logf, Now: opts.Now})
@@ -168,28 +163,6 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Server, error) {
 	}
 	s.signer = &signer{keys: keys, region: cfg.Region, now: opts.Now}
 	return s, nil
-}
-
-// statusOf is arcade's status for a settlement remitted before it mines,
-// when the settlement leg is arcade; nil otherwise.
-func statusOf(c *Config) acceptance.StatusSource {
-	if kind, addr, _ := strings.Cut(c.Settle, ":"); kind == "arcade" {
-		return &bpub.Arcade{Base: addr, Key: c.ArcadeKey}
-	}
-	return nil
-}
-
-func settlerOf(c *Config) (bpub.Settler, error) {
-	kind, addr, _ := strings.Cut(c.Settle, ":")
-	switch kind {
-	case "tcp":
-		return efleg.Wrap(&bpub.TCPIngress{Addr: addr}, &nodeapi.Asset{Base: c.Node}), nil
-	case "rpc":
-		return &bpub.RPCSettler{RPC: &nodeapi.RPC{URL: addr, User: c.RPCUser, Pass: c.RPCPass, ID: "bstore-s3d"}}, nil
-	case "arcade":
-		return efleg.Wrap(&bpub.Arcade{Base: addr, Key: c.ArcadeKey}, &nodeapi.Asset{Base: c.Node}), nil
-	}
-	return nil, errors.New("settle is tcp:, rpc: or arcade:")
 }
 
 func certPool(path string) (*x509.CertPool, error) {

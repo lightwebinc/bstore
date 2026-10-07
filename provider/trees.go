@@ -46,7 +46,7 @@ func (p *Provider) newTrees() {
 
 func (p *Provider) newPayer() *producer.Payer {
 	pay := &producer.Payer{Pool: p.pool, Keys: map[string]*bwallet.Signer{p.signer.IdentityHex(): p.signer},
-		Kept: p.kept, Settler: p.settler, Asset: p.asset, Fees: p.fees(), Note: p.libraryNote, Poll: time.Second}
+		Kept: p.kept, Settler: p.settler, Chain: p.chain, Fees: p.fees(), Note: p.libraryNote, Poll: time.Second}
 	pay.Tip = p.lastTip.Load()
 	return pay
 }

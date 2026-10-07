@@ -179,7 +179,7 @@ func (p *Provider) incoming(ctx context.Context, beef []byte, outputIndex uint32
 
 // purse is the payee leg over the provider's wallet.
 func (p *Provider) purse() *purse.Purse {
-	return &purse.Purse{Embedded: p.wallet, NewPayer: p.newPayer, Fees: p.fees(), Settler: p.settler, Asset: p.asset,
+	return &purse.Purse{Embedded: p.wallet, NewPayer: p.newPayer, Fees: p.fees(), Settler: p.settler, Chain: p.chain,
 		Headers: p.hc, Wait: 30 * time.Second, Poll: time.Second}
 }
 

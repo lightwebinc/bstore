@@ -30,6 +30,7 @@ import (
 	bpub "github.com/lightwebinc/bcommon/publish"
 	"github.com/lightwebinc/bcommon/testchain"
 
+	"github.com/lightwebinc/bstore/internal/chaincfg"
 	"github.com/lightwebinc/bstore/internal/publish"
 	"github.com/lightwebinc/bstore/internal/reader"
 	"github.com/lightwebinc/bstore/internal/testwriter"
@@ -275,7 +276,11 @@ func newRigFunded(t *testing.T, ownerBlocks int) *rig {
 		t.Fatal(err)
 	}
 	rd := &reader.Reader{Hosts: []string{r.host.srv.URL}, Headers: r.chain, Spender: r.asset.Spender, Logf: t.Logf}
-	pub, err := publish.Open(ctx, publish.Config{Dir: ownerDir, Asset: r.asset, Settler: &bpub.RPCSettler{RPC: rpc}, Fees: mint.DefaultFees,
+	v, err := chaincfg.Open(chaincfg.Spec{Network: "regtest", Chain: "asset:" + node.URL, Settle: "rpc:" + r.cs.URL + "/rpc", Headers: r.cs.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, err := publish.Open(ctx, publish.Config{Dir: ownerDir, Chain: v.Chain, Tip: v.Tip, Settler: &bpub.RPCSettler{RPC: rpc}, Fees: mint.DefaultFees,
 		Store: store, Delivery: &publish.Delivery{Hosts: []string{r.host.srv.URL}}, Reader: rd, Logf: t.Logf})
 	if err != nil {
 		t.Fatal(err)

@@ -48,7 +48,7 @@ func TestNoRouteSpendsTheDrawAndMovesOn(t *testing.T) {
 	gone.noRoute = true
 	c := candAt(race, honest)
 	blobs, _ := r.p.closureBlobs(r.ctx, race.entry)
-	tip, _ := r.p.cfg.Asset.BestHeader(r.ctx)
+	tip, _ := r.p.bestHeader(r.ctx)
 	ch := &Challenge{Root: race.entry.Root, ProofRoot: race.entry.ProofRoot, Size: race.entry.Size, Provider: honest.identity(),
 		Answerer: gone.identity(), C: 30}
 	_, raw, err := r.p.NewRequest(r.ctx, ch)
@@ -98,7 +98,7 @@ func TestDrawLogKeepsTheReason(t *testing.T) {
 	other.notFound = true
 	c := candAt(race, other)
 	blobs, _ := r.p.closureBlobs(r.ctx, race.entry)
-	tip, _ := r.p.cfg.Asset.BestHeader(r.ctx)
+	tip, _ := r.p.bestHeader(r.ctx)
 	challengeAlone(r.ctx, r.p, race, c, blobs, tip.Height)
 	// The front is now bad and no other states it answers: every later step
 	// notes "waiting".
@@ -133,7 +133,7 @@ func TestJudgeChallengesAWaveAtOnce(t *testing.T) {
 		c.FirstSeen = int64(i + 1)
 		fronts = append(fronts, f)
 	}
-	tip, _ := r.p.cfg.Asset.BestHeader(r.ctx)
+	tip, _ := r.p.bestHeader(r.ctx)
 	start := time.Now()
 	if err := r.p.judge(r.ctx, race, tip.Height, RaceOptions{}); err != nil {
 		t.Fatal(err)
@@ -286,7 +286,7 @@ func TestPieceTreeMintedAhead(t *testing.T) {
 	host := newTarget(t)
 	var logs []string
 	var mu sync.Mutex
-	p, err := Open(ctx, Config{Dir: filepath.Join(dir, "id"), Asset: &nodeapi.Asset{Base: cs.URL}, Settler: &bpub.RPCSettler{RPC: &nodeapi.RPC{URL: cs.URL + "/rpc", ID: "t"}},
+	p, err := Open(ctx, Config{Dir: filepath.Join(dir, "id"), Chain: nodeChain(cs.URL), Tip: nodeTip(cs.URL), Settler: &bpub.RPCSettler{RPC: &nodeapi.RPC{URL: cs.URL + "/rpc", ID: "t"}},
 		Fees: mint.DefaultFees, PieceTree: 8, EntryTree: 4, Store: store, Delivery: &Delivery{Hosts: []string{host.srv.URL}, Providers: []string{host.srv.URL}},
 		Logf: func(f string, a ...any) {
 			mu.Lock()
@@ -447,7 +447,7 @@ func TestCrashChildPut(t *testing.T) {
 		t.Fatal(err)
 	}
 	chain, target := os.Getenv("BSTORE_CRASH_CHAIN"), os.Getenv("BSTORE_CRASH_TARGET")
-	p, err := Open(ctx, Config{Dir: filepath.Join(dir, "id"), Asset: &nodeapi.Asset{Base: chain}, Settler: &bpub.RPCSettler{RPC: &nodeapi.RPC{URL: chain + "/rpc", ID: "t"}},
+	p, err := Open(ctx, Config{Dir: filepath.Join(dir, "id"), Chain: nodeChain(chain), Tip: nodeTip(chain), Settler: &bpub.RPCSettler{RPC: &nodeapi.RPC{URL: chain + "/rpc", ID: "t"}},
 		Fees: mint.DefaultFees, PieceTree: 64, EntryTree: 4, Store: store, Delivery: &Delivery{Hosts: []string{target}, Providers: []string{target}}, Logf: t.Logf})
 	if err != nil {
 		t.Fatal(err)
@@ -520,7 +520,7 @@ func TestPutKilledMidwayResumes(t *testing.T) {
 	before := len(target.got)
 	target.mu.Unlock()
 	store, _ := OpenStore(filepath.Join(dir, "store"))
-	p, err := Open(ctx, Config{Dir: filepath.Join(dir, "id"), Asset: &nodeapi.Asset{Base: cs.URL}, Settler: &bpub.RPCSettler{RPC: &nodeapi.RPC{URL: cs.URL + "/rpc", ID: "t"}},
+	p, err := Open(ctx, Config{Dir: filepath.Join(dir, "id"), Chain: nodeChain(cs.URL), Tip: nodeTip(cs.URL), Settler: &bpub.RPCSettler{RPC: &nodeapi.RPC{URL: cs.URL + "/rpc", ID: "t"}},
 		Fees: mint.DefaultFees, PieceTree: 64, EntryTree: 4, Store: store, Delivery: &Delivery{Hosts: []string{target.srv.URL}, Providers: []string{target.srv.URL}}, Logf: t.Logf})
 	if err != nil {
 		t.Fatal(err)

@@ -28,7 +28,7 @@ import (
 func (p *Publisher) remitUnmined(ctx context.Context, r *Race, tx *transaction.Transaction) (bool, error) {
 	s := r.Settlement
 	if r.State != RaceRemitted {
-		if p.cfg.Status == nil || p.cfg.Asset == nil {
+		if p.cfg.Status == nil || p.cfg.Chain == nil {
 			return false, nil
 		}
 		if r.RemittedBefore() {
@@ -93,7 +93,7 @@ func (p *Publisher) networkTook(ctx context.Context, tx *transaction.Transaction
 					if in.SourceTXID == nil {
 						return fmt.Sprintf("input %d names no source", i)
 					}
-					by, err := p.cfg.Asset.Spender(ctx, in.SourceTXID.String(), in.SourceTxOutIndex)
+					by, err := p.cfg.Chain.Spender(ctx, in.SourceTXID.String(), in.SourceTxOutIndex)
 					if err != nil {
 						return "the node's spend view cannot say: " + err.Error()
 					}

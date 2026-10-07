@@ -125,12 +125,12 @@ func (p *Publisher) mintHolds(ctx context.Context, sats uint64, n int) error {
 	// A Payer of its own: a fill runs beside puts, and a Payer's
 	// reservations are its own.
 	pay := &producer.Payer{Pool: p.wallet.Pool, Keys: map[string]*bwallet.Signer{p.signer.IdentityHex(): p.signer},
-		Kept: p.kept, Settler: p.cfg.Settler, Asset: p.cfg.Asset, Fees: p.cfg.Fees, Note: p.note, Poll: p.cfg.Poll}
-	if h, err := p.cfg.Asset.BestHeader(ctx); err == nil {
+		Kept: p.kept, Settler: p.cfg.Settler, Chain: p.cfg.Chain, Fees: p.fees(), Note: p.note, Poll: p.cfg.Poll}
+	if h, err := p.bestHeader(ctx); err == nil {
 		pay.Tip = h.Height
 	}
-	fee := p.cfg.Fees.Floor + p.cfg.Fees.SatPerByte*uint64(200+45*n)
-	coin, err := pay.TakeAtLeast(ctx, uint64(n)*sats+fee+p.cfg.Fees.Floor)
+	fee := p.floor() + p.rateFee(uint64(200+45*n))
+	coin, err := pay.TakeAtLeast(ctx, uint64(n)*sats+fee+p.floor())
 	if err != nil {
 		return err
 	}
@@ -140,7 +140,7 @@ func (p *Publisher) mintHolds(ctx context.Context, sats uint64, n int) error {
 		tx.AddOutput(&transaction.TransactionOutput{Satoshis: sats, LockingScript: &lock})
 	}
 	in := coin.Tx.Outputs[coin.Vout].Satoshis
-	if change := in - uint64(n)*sats - fee; change >= p.cfg.Fees.Floor {
+	if change := in - uint64(n)*sats - fee; change >= p.floor() {
 		cs, err := p.signer.FundScript()
 		if err != nil {
 			pay.GiveBack()
@@ -221,15 +221,17 @@ func (p *Publisher) CheckHolds(ctx context.Context) {
 	}
 	p.mu.Unlock()
 	for txid, raw := range seen {
-		if mp, height, err := p.cfg.Asset.Proof(ctx, txid); err == nil {
+		if mp, height, err := p.cfg.Chain.Proof(ctx, txid); err == nil {
 			p.markMined(txid, mp, height)
 			if tx, err := funding.Rebuild(raw, funding.BumpHex(mp), ""); err == nil {
 				(&producer.Payer{Pool: p.wallet.Pool, Keys: map[string]*bwallet.Signer{p.signer.IdentityHex(): p.signer}, Kept: p.kept}).Change(tx, height, mp)
 			}
 			continue
 		}
-		if _, err := p.cfg.Asset.TxMeta(ctx, txid); err == nil {
-			continue // known, not mined yet
+		if p.cfg.Known != nil {
+			if known, err := p.cfg.Known.Known(ctx, txid); err == nil && known {
+				continue // known, not mined yet
+			}
 		}
 		if b, err := hex.DecodeString(raw); err == nil {
 			if tx, err := transaction.NewTransactionFromBytes(b); err == nil {

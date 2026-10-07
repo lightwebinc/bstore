@@ -11,14 +11,16 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/lightwebinc/bcommon/feepolicy"
 	"github.com/lightwebinc/bcommon/guard"
 
 	"github.com/lightwebinc/bstore/internal/acceptcfg"
+	"github.com/lightwebinc/bstore/internal/chaincfg"
 	"github.com/lightwebinc/bstore/storerec"
 )
 
 // Config is a provider's configuration file, JSON. Every field has a
-// default but Data, PublicURL, Node, Settle, Headers and Buckets.
+// default but Data, PublicURL and Buckets.
 type Config struct {
 	// Data is the data directory: the wallet, the state, the store, the
 	// payment ledger. Absolute.
@@ -34,16 +36,28 @@ type Config struct {
 	// <PublicURL>/bstore/v1 (spec section 10.1). No trailing slash, no
 	// query, no fragment, no user information.
 	PublicURL string `json:"public_url"`
-	// Node is a Teranode asset API (proofs, spends, block hashes); Settle
-	// the settlement leg, tcp:<host:port>, rpc:<url> or arcade:<url>, with
-	// RPCUser, RPCPass and ArcadeKey as it needs; Headers a header source
-	// (bcommon headers: woc:main, chaintracks:<url> or a bridge URL).
-	Node      string `json:"node"`
-	Settle    string `json:"settle"`
-	RPCUser   string `json:"rpc_user,omitempty"`
-	RPCPass   string `json:"rpc_pass,omitempty"`
-	ArcadeKey string `json:"arcade_key,omitempty"`
-	Headers   string `json:"headers"`
+	// Chain is the chain view (proofs, spends, transactions):
+	// nodeapi.ParseChain's woc:main, woc:test, asset:<url> or a list;
+	// default woc:main or woc:test by Mainnet. Node, the older key, a
+	// node's asset API, is chain asset:<url>. Settle is the settlement leg,
+	// arcade:main, arcade:test, arcade:<url>, arc:<url>, rpc:<url> or
+	// tcp:<host:port> (default GorillaPool's arcade), with RPCUser, RPCPass
+	// and ArcadeKey as it needs; Headers a header source (bcommon headers:
+	// woc:main, bhs:<url>, arcade:<url>, chaintracks:<url> or a bridge
+	// URL; default woc:main or woc:test), HeadersToken its bearer token.
+	// WoCKey and WoCRate are a WhatsOnChain API key and its requests a
+	// second: a busy provider exceeds the free 3 a second and needs a key,
+	// or a node. On a regtest chain set chain, settle and headers.
+	Chain        string  `json:"chain,omitempty"`
+	Node         string  `json:"node,omitempty"`
+	Settle       string  `json:"settle,omitempty"`
+	RPCUser      string  `json:"rpc_user,omitempty"`
+	RPCPass      string  `json:"rpc_pass,omitempty"`
+	ArcadeKey    string  `json:"arcade_key,omitempty"`
+	Headers      string  `json:"headers,omitempty"`
+	HeadersToken string  `json:"headers_token,omitempty"`
+	WoCKey       string  `json:"woc_key,omitempty"`
+	WoCRate      float64 `json:"woc_rate,omitempty"`
 	// Hosts are the overlay hosts advertisements are submitted to, each
 	// directly; Facade, when set, is a plane facade they are submitted to
 	// once as well. UHRPTopic also submits each to tm_uhrp, as BRC-26 has
@@ -72,13 +86,19 @@ type Config struct {
 	Terms  Terms  `json:"terms"`
 	Limits Limits `json:"limits"`
 	// TreeCount and TreeSats size the funding trees advertisements and
-	// renewals spend; FeeRate and FeeFloor are the fee policy.
-	TreeCount int    `json:"tree_count"`
-	TreeSats  uint64 `json:"tree_sats"`
-	FeeRate   uint64 `json:"fee_sat_per_byte"`
-	FeeFloor  uint64 `json:"fee_floor"`
-	// Mainnet selects mainnet addresses for the fund address.
+	// renewals spend. Fee is the miner fee policy (feepolicy.Config;
+	// default 100 satoshis per 1000 bytes, floor 250); FeeRate and FeeFloor
+	// are its older keys fee_sat_per_byte and fee_floor, still read.
+	TreeCount int               `json:"tree_count"`
+	TreeSats  uint64            `json:"tree_sats"`
+	Fee       *feepolicy.Config `json:"fee,omitempty"`
+	FeeRate   uint64            `json:"fee_sat_per_byte,omitempty"`
+	FeeFloor  uint64            `json:"fee_floor,omitempty"`
+	// Mainnet selects mainnet addresses for the fund address, and the
+	// mainnet services by default.
 	Mainnet bool `json:"mainnet"`
+	// RefuseUnmined makes fund -beef take mined payments only.
+	RefuseUnmined bool `json:"refuse_unmined,omitempty"`
 	// TrustedProxies are the addresses (CIDR) of proxies in front of the
 	// provider whose X-Forwarded-For names the client: every per-address
 	// budget is the client's, not the proxy's.
@@ -258,12 +278,6 @@ func (c *Config) defaults() {
 	if c.TreeSats == 0 {
 		c.TreeSats = 1000
 	}
-	if c.FeeRate == 0 {
-		c.FeeRate = 1
-	}
-	if c.FeeFloor == 0 {
-		c.FeeFloor = 250
-	}
 }
 
 // LoadConfig reads a configuration file, takes the defaults and checks it.
@@ -297,12 +311,14 @@ func (c *Config) Check() error {
 	if (c.TLSCert == "") != (c.TLSKey == "") {
 		return errors.New("tls_cert and tls_key go together")
 	}
-	if c.Node == "" || c.Settle == "" || c.Headers == "" {
-		return errors.New("node, settle and headers are required")
+	if err := c.Spec().Check(); err != nil {
+		return err
 	}
-	if kind, _, _ := strings.Cut(c.Settle, ":"); kind != "tcp" && kind != "rpc" && kind != "arcade" {
-		return errors.New("settle must be tcp:<host:port>, rpc:<url> or arcade:<url>")
+	fees, err := c.Spec().Fees()
+	if err != nil {
+		return err
 	}
+	floor := fees.Floor
 	for _, h := range append(append([]string(nil), c.Hosts...), c.Facade) {
 		if h == "" {
 			continue
@@ -362,11 +378,11 @@ func (c *Config) Check() error {
 			return errors.New("a price is above 2^53 - 1")
 		}
 	}
-	if t.RenewMinimum < c.FeeFloor {
-		return errors.New("terms.renew_minimum must cover a renewal's fee: at least fee_floor")
+	if t.RenewMinimum < floor {
+		return errors.New("terms.renew_minimum must cover a renewal's fee: at least the fee floor")
 	}
-	if t.MinBounty < c.FeeFloor {
-		return errors.New("terms.min_bounty must cover an advertisement's fee: at least fee_floor")
+	if t.MinBounty < floor {
+		return errors.New("terms.min_bounty must cover an advertisement's fee: at least the fee floor")
 	}
 	for _, cidr := range c.TrustedProxies {
 		if _, _, err := net.ParseCIDR(cidr); err != nil {
@@ -376,10 +392,21 @@ func (c *Config) Check() error {
 	if c.TreeCount < 1 || c.TreeCount > 1023 {
 		return errors.New("tree_count is 1 to 1023")
 	}
-	if c.TreeSats < c.FeeFloor*2 {
-		return errors.New("tree_sats must cover an advertisement's fee: at least twice fee_floor")
+	if c.TreeSats < floor*2 {
+		return errors.New("tree_sats must cover an advertisement's fee: at least twice the fee floor")
 	}
 	return nil
+}
+
+// Spec is the chain, settlement and fee settings, for chaincfg.
+func (c *Config) Spec() chaincfg.Spec {
+	n := "test"
+	if c.Mainnet {
+		n = "main"
+	}
+	return chaincfg.Spec{Network: n, Chain: c.Chain, Node: c.Node, Settle: c.Settle, ArcadeKey: c.ArcadeKey, RPCUser: c.RPCUser,
+		RPCPass: c.RPCPass, RPCID: "bstore-provider", Headers: c.Headers, HeadersToken: c.HeadersToken, WoCKey: c.WoCKey,
+		WoCRate: c.WoCRate, Fee: c.Fee, FeeRate: c.FeeRate, FeeFloor: c.FeeFloor}
 }
 
 // checkPublicURL holds the public URL to what an advertisement's url and a

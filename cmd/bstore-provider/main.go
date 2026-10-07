@@ -4,6 +4,8 @@
 //
 //	bstore-provider init -data DIR       create the provider's identity and wallet
 //	bstore-provider address -config FILE the fund address fees are paid from
+//	bstore-provider fund -config FILE -beef FILE
+//	                                     import a payment you sent to the fund address, from its BEEF
 //	bstore-provider fund -config FILE -txid TXID
 //	                                     import a mined payment you sent to the fund address
 //	bstore-provider rescan -config FILE -from H [-to H]
@@ -25,14 +27,11 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"github.com/lightwebinc/bcommon/bwallet"
-	"github.com/lightwebinc/bcommon/headers"
-	"github.com/lightwebinc/bcommon/nodeapi"
 
-	"github.com/lightwebinc/bstore/internal/fundimport"
+	"github.com/lightwebinc/bstore/internal/chaincfg"
 	"github.com/lightwebinc/bstore/provider"
 )
 
@@ -57,9 +56,13 @@ const usage = `usage: bstore-provider <command> [flags]
 commands:
   init -data DIR                 create the identity and wallet under DIR
   address -config FILE           print the identity key and the fund address
+  fund -config FILE -beef FILE   import a payment you sent to the fund address from the BEEF
+                                 your wallet gave you (FILE, or - for standard input): no lookup;
+                                 one not mined yet waits in the pool until it mines, unless
+                                 -refuse-unmined or refuse_unmined (mainnet, testnet)
   fund -config FILE -txid TXID   import a mined payment you sent to the fund address: every
-                                 output paying it that the node shows unspent, its proof checked
-                                 against the header source (mainnet, testnet)
+                                 output paying it that the chain view shows unspent, its proof
+                                 checked against the header source (mainnet, testnet)
   rescan -config FILE -from H [-to H]
                                  coinbase: only on a regtest chain you run (development and tests);
                                  take coinbase paying the fund address in blocks H.. into the pool
@@ -67,8 +70,9 @@ commands:
                                  mine N blocks to the fund address through the node's RPC
                                  (settle rpc:<url>) and pool the coinbase
   run -config FILE               serve until interrupted
-  doctor -config FILE [-ca FILE] the identity, the pool, the store, and whether the node, the header
-                                 source, the hosts and the provider's own front answer; reads only
+  doctor -config FILE [-ca FILE] the identity, the pool, the store, the fee policy, and whether the
+                                 chain view, the header source, the settlement leg, the hosts and the
+                                 provider's own front answer; reads only
                                  (-ca: a PEM file trusted for the front's certificate)
   version                        print the version
 
@@ -93,6 +97,8 @@ func run(args []string) error {
 	data := fs.String("data", "", "data directory (init)")
 	cfgPath := fs.String("config", "", "configuration file")
 	txid := fs.String("txid", "", "import the outputs of a mined payment to the fund address (fund; mainnet, testnet)")
+	beef := fs.String("beef", "", "import a payment to the fund address from its BEEF, a file or - (fund; mainnet, testnet)")
+	refuse := fs.Bool("refuse-unmined", false, "with -beef, take a mined payment only")
 	from := fs.Uint("from", 0, "coinbase: only on a regtest chain you run (development and tests): first block height to rescan for coinbase")
 	to := fs.Uint("to", 0, "last block height to rescan for coinbase (default the tip)")
 	blocks := fs.Int("blocks", 0, "coinbase: only on a regtest chain you run (development and tests): blocks to mine (fund)")
@@ -146,41 +152,53 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
-		asset := &nodeapi.Asset{Base: cfg.Node}
-		if args[0] == "fund" && *txid != "" {
-			hc, err := headers.NewSource(cfg.Headers)
-			if err != nil {
-				return usageError{fmt.Errorf("headers: %w", err)}
+		v, err := chaincfg.Open(cfg.Spec())
+		if err != nil {
+			return usageError{err}
+		}
+		asset := v.Asset
+		if args[0] == "fund" && (*txid != "" || *beef != "") {
+			var res chaincfg.Funded
+			if *txid != "" {
+				res, err = v.FundTxid(ctx, w.Signer(), w.Pool, *txid)
+			} else {
+				raw, rerr := chaincfg.ReadBEEF(*beef, os.Stdin)
+				if rerr != nil {
+					return usageError{rerr}
+				}
+				res, err = v.FundBEEF(ctx, w.Signer(), w.Pool, raw, *refuse || cfg.RefuseUnmined)
 			}
-			res, err := fundimport.Import(ctx, w.Signer(), w.Pool, asset, hc, *txid)
 			if err != nil {
 				return err
 			}
-			fmt.Printf("%s mined at height %d: %d output(s) to the fund address, %d imported (%d satoshis), %d already held, %d spent\n",
-				res.TxID, res.Height, res.Paying, res.Added, res.Satoshis, res.Held, res.Spent)
+			mined := fmt.Sprintf("mined at height %d", res.Height)
+			if !res.Mined {
+				mined = "not mined yet (held until it mines)"
+			}
+			fmt.Printf("%s %s: %d output(s) to the fund address, %d imported (%d satoshis), %d already held, %d spent\n",
+				res.Txid, mined, res.Paying, res.Added, res.Satoshis, res.Held, res.Spent)
 			fmt.Printf("pool %d output(s), %d satoshis\n", w.Pool.Count(), w.Pool.Balance())
 			return nil
 		}
 		if args[0] == "fund" {
-			kind, addr, _ := strings.Cut(cfg.Settle, ":")
-			if kind != "rpc" || *blocks < 1 {
-				return usageError{errors.New("fund needs -txid TXID, or (coinbase: only on a regtest chain you run) settle rpc:<url> and -blocks N")}
+			if v.RPC == nil || asset == nil || *blocks < 1 {
+				return usageError{errors.New("fund needs -beef FILE or -txid TXID, or (coinbase: only on a regtest chain you run) settle rpc:<url>, chain asset:<url> and -blocks N")}
 			}
-			rpc := &nodeapi.RPC{URL: addr, User: cfg.RPCUser, Pass: cfg.RPCPass, ID: "bstore-provider"}
-			n, _, err := bwallet.FundFromCoinbase(ctx, w.Signer(), w.Pool, rpc, asset, *blocks, 50)
+			n, _, err := bwallet.FundFromCoinbase(ctx, w.Signer(), w.Pool, v.RPC, asset, *blocks, 50)
 			if err != nil {
 				return err
 			}
 			fmt.Printf("%d coinbase output(s) pooled; pool %d satoshis\n", n, w.Pool.Balance())
 			return nil
 		}
+		if asset == nil {
+			return usageError{errors.New("rescan is coinbase: only on a regtest chain you run, with chain asset:<url>")}
+		}
 		top := uint32(*to)
 		if top == 0 {
-			h, err := asset.BestHeader(ctx)
-			if err != nil {
+			if top, err = v.Tip.CurrentHeight(ctx); err != nil {
 				return err
 			}
-			top = h.Height
 		}
 		n, err := bwallet.Rescan(ctx, w.Signer(), w.Pool, asset, uint32(*from), top)
 		if err != nil {

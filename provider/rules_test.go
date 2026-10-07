@@ -22,7 +22,9 @@ import (
 
 	"github.com/lightwebinc/bcommon/chirp"
 	"github.com/lightwebinc/bcommon/commit"
+	"github.com/lightwebinc/bcommon/feepolicy"
 	"github.com/lightwebinc/bcommon/headers"
+	"github.com/lightwebinc/bcommon/mint"
 	"github.com/lightwebinc/bcommon/nodeapi"
 	"github.com/lightwebinc/bcommon/payee"
 
@@ -92,6 +94,15 @@ func TestConfigRefusals(t *testing.T) {
 	if err := good().Check(); err != nil {
 		t.Fatal(err)
 	}
+	// No node: WhatsOnChain, its headers and GorillaPool's arcade.
+	bare := good()
+	bare.Node, bare.Settle, bare.Headers = "", "", ""
+	if err := bare.Check(); err != nil {
+		t.Fatalf("the zero-infrastructure profile: %v", err)
+	}
+	if s := bare.Spec(); s.Network != "test" {
+		t.Fatalf("network %q", s.Network)
+	}
 	for name, edit := range map[string]func(*Config){
 		"relative data":  func(c *Config) { c.Data = "x" },
 		"http public":    func(c *Config) { c.PublicURL = "http://provider.example" },
@@ -104,6 +115,11 @@ func TestConfigRefusals(t *testing.T) {
 		"bucket":         func(c *Config) { c.Buckets[0].Bucket = "Bad" },
 		"writer":         func(c *Config) { c.Buckets[0].Writers = []string{"02" + strings.Repeat("ff", 32)} },
 		"settle":         func(c *Config) { c.Settle = "ftp:x" },
+		"chain and node": func(c *Config) { c.Chain = "woc:test" },
+		"chain":          func(c *Config) { c.Node, c.Chain = "", "junglebus:x" },
+		"fee twice":      func(c *Config) { r := mint.Rate{Sats: 1, Bytes: 1}; c.FeeRate, c.Fee = 1, &feepolicy.Config{Rate: &r} },
+		"fee source":     func(c *Config) { c.Fee = &feepolicy.Config{Source: "arc"} },
+		"floor":          func(c *Config) { c.FeeFloor = 600 },
 		"backend":        func(c *Config) { c.Backend = "s3" },
 		"unclaimed":      func(c *Config) { c.QuotaBytes, c.UnclaimedBytes = 10, 11 },
 		"writer share":   func(c *Config) { c.UnclaimedBytes, c.Policy.MaxObject = 4<<20, 2<<20 },

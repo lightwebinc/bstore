@@ -14,13 +14,13 @@ import (
 	"time"
 
 	"github.com/lightwebinc/bcommon/bwallet"
-	"github.com/lightwebinc/bcommon/headers"
-	"github.com/lightwebinc/bcommon/nodeapi"
+
+	"github.com/lightwebinc/bstore/internal/chaincfg"
 )
 
 // Doctor reports a provider's identity, its pool, its store, and whether
-// the node, the header source, the hosts, the facade and its own public
-// routes answer. It reads only: it opens the wallet to read the pool,
+// the chain view, the header source, the settlement leg, the hosts, the
+// facade and its own public routes answer, and the fee policy in force. It reads only: it opens the wallet to read the pool,
 // walks the store's directory, and asks each endpoint one GET. ca, when
 // set, is a PEM file trusted besides the system's for the provider's own
 // public URL. It returns an error only when the configuration or the
@@ -44,17 +44,12 @@ func Doctor(ctx context.Context, cfg *Config, ca string, w io.Writer) error {
 		roots = len(ents)
 	}
 	fmt.Fprintf(w, "store        %d object(s), %d bytes; %d root(s) with segment hashes; quota %d\n", n, b, roots, cfg.QuotaBytes)
-	if tip, err := (&nodeapi.Asset{Base: cfg.Node}).BestHeader(ctx); err != nil {
-		fmt.Fprintf(w, "node         %s: %s\n", cfg.Node, firstLine(err.Error()))
-	} else {
-		fmt.Fprintf(w, "node         %s tip %d\n", cfg.Node, tip.Height)
+	v, err := chaincfg.Open(cfg.Spec())
+	if err != nil {
+		return err
 	}
-	if src, err := headers.NewSource(cfg.Headers); err != nil {
-		fmt.Fprintf(w, "headers      %s: %s\n", cfg.Headers, firstLine(err.Error()))
-	} else if h, err := src.CurrentHeight(ctx); err != nil {
-		fmt.Fprintf(w, "headers      %s: %s\n", cfg.Headers, firstLine(err.Error()))
-	} else {
-		fmt.Fprintf(w, "headers      %s height %d\n", cfg.Headers, h)
+	for _, l := range v.Report(ctx) {
+		fmt.Fprintf(w, "%-12s %s\n", l.Label, l.Text)
 	}
 	plain := &http.Client{Timeout: 10 * time.Second}
 	for _, h := range cfg.Hosts {

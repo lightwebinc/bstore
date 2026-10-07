@@ -41,7 +41,7 @@ func (p *Publisher) SpentElsewhere(ctx context.Context, tx *transaction.Transact
 		if free || by == txid {
 			continue
 		}
-		raw, err := p.cfg.Asset.TxRaw(ctx, by)
+		raw, err := p.cfg.Chain.TxRaw(ctx, by)
 		if err != nil {
 			return nil, fmt.Errorf("%w: the transaction %s that spends an input: %v", ErrNotYet, short(by), err)
 		}

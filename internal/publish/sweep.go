@@ -199,7 +199,7 @@ func (p *Publisher) sweepTree(ctx context.Context, kt KillTree) (*SweepRecord, e
 		return nil, nil
 	}
 	pay := p.newPayer(ctx)
-	fee, err := pay.TakeAtLeast(ctx, p.cfg.Fees.Floor*4+uint64(len(vouts))*p.cfg.Fees.SatPerByte*160)
+	fee, err := pay.TakeAtLeast(ctx, p.floor()*4+p.rateFee(uint64(len(vouts))*160))
 	if err != nil {
 		return nil, feeError(err)
 	}
@@ -209,7 +209,7 @@ func (p *Publisher) sweepTree(ctx context.Context, kt KillTree) (*SweepRecord, e
 		return nil, err
 	}
 	tx, err := carrier.Sweep(ctx, p.wallet, p.wallet.Originator, carrierParams(derivationOf(kt.Kind)), tree, vouts,
-		fee.Tx, fee.Vout, fee.Unlocker, change, p.cfg.Fees.SatPerByte, p.cfg.Fees.Floor)
+		fee.Tx, fee.Vout, fee.Unlocker, change, p.wholeRate(), p.floor())
 	if err == nil {
 		err = refuseMixed(tx)
 	}
@@ -250,7 +250,7 @@ func (p *Publisher) finishSweeps(ctx context.Context) error {
 			continue
 		}
 		if sw.Bump == "" {
-			mp, height, err := p.cfg.Asset.Proof(ctx, sw.Txid)
+			mp, height, err := p.cfg.Chain.Proof(ctx, sw.Txid)
 			if err != nil {
 				cf, cerr := p.SpentElsewhere(ctx, tx)
 				switch {

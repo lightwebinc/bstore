@@ -16,30 +16,44 @@ import (
 
 	"github.com/lightwebinc/bcommon/bwallet"
 	"github.com/lightwebinc/bcommon/funding"
-	"github.com/lightwebinc/bcommon/headers"
-	"github.com/lightwebinc/bcommon/nodeapi"
 	"github.com/lightwebinc/bcommon/termsafe"
 
 	"github.com/lightwebinc/bstore/internal/anchor"
-	"github.com/lightwebinc/bstore/internal/fundimport"
+	"github.com/lightwebinc/bstore/internal/chaincfg"
 	"github.com/lightwebinc/bstore/internal/publish"
 	"github.com/lightwebinc/bstore/internal/reader"
 	"github.com/lightwebinc/bstore/storerec"
 )
 
-const initHelp = `usage: bstore init -node URL -settle LEG -headers URL -hosts URLS [flags]
+const initHelp = `usage: bstore init [-network main|test|regtest] -hosts URLS [flags]
 
 Create the home: the identity's wallet (its key is what a bucket's owner
 names as a writer, and what owns the buckets it creates) and config.json.
 An existing wallet is kept; an existing config.json is not overwritten.
-Back up the home: the wallet is the identity.`
+Back up the home: the wallet is the identity.
+
+No node is needed on mainnet or testnet: by default the chain view and the
+headers are WhatsOnChain (every header held to its proof of work, every
+proof to those headers) and transactions are broadcast through
+GorillaPool's public arcade. Your own node (-chain asset:URL) is the
+better chain view. A regtest chain you run needs -chain, -settle and
+-headers.`
 
 func cmdInit(ctx context.Context, g *global, args []string) error {
 	fs := g.flagSet("init", initHelp)
 	network := fs.String("network", "main", "main, test, or regtest (a chain you run)")
-	node := fs.String("node", "", "the node's asset API URL")
-	settle := fs.String("settle", "", "the settlement leg: rpc:URL, tcp:ADDR or arcade:URL")
-	hdr := fs.String("headers", "", "the header source: woc:main, woc:test, chaintracks:URL, or a bridge URL")
+	chain := fs.String("chain", "", "the chain view: woc:main, woc:test, asset:URL (your node), or a list (default woc:<network>)")
+	node := fs.String("node", "", "a node's asset API URL: the older spelling of -chain asset:URL")
+	settle := fs.String("settle", "", "the settlement leg: arcade:main, arcade:test, arcade:URL, arc:URL, rpc:URL or tcp:ADDR (default arcade:<network>)")
+	hdr := fs.String("headers", "", "the header source: woc:main, woc:test, bhs:URL, arcade:URL, chaintracks:URL, or a bridge URL (default woc:<network>)")
+	wocKey := fs.String("woc-key", "", "a WhatsOnChain API key (a busy home needs one, or a node)")
+	wocRate := fs.Float64("woc-rate", 0, "WhatsOnChain requests a second (default 3, the free tier's)")
+	feeRate := fs.String("fee-rate", "", "the miner fee rate, SATS/BYTES (default 100/1000)")
+	feeSource := fs.String("fee-source", "", "static, or arc: the broadcaster's published policy (default static)")
+	feeFloor := fs.Uint64("fee-floor", 0, "the least fee a transaction pays, satoshis (default 250)")
+	feeMaxRate := fs.String("fee-max-rate", "", "the highest rate a live policy may set, SATS/BYTES (default 1/1)")
+	feeMaxTx := fs.Uint64("fee-max-tx", 0, "the most one transaction may pay in fee, satoshis (default none)")
+	refuseUnmined := fs.Bool("refuse-unmined", false, "fund -beef takes mined payments only")
 	hosts := fs.String("hosts", g.hosts, "overlay hosts, comma separated")
 	facade := fs.String("facade", "", "the plane's facade (none: unicast to hosts and providers)")
 	providers := fs.String("providers", "", "providers' submit URLs, comma separated")
@@ -68,7 +82,12 @@ func cmdInit(ctx context.Context, g *global, args []string) error {
 		g.out("config %s (exists, kept)", g.configPath())
 		return nil
 	}
-	c := &Config{Network: *network, Node: strings.TrimRight(*node, "/"), Settle: *settle, Headers: *hdr, Hosts: splitList(*hosts),
+	fee, err := feeFlags(*feeRate, *feeSource, *feeFloor, *feeMaxRate, *feeMaxTx)
+	if err != nil {
+		return usage("%v", err)
+	}
+	c := &Config{Network: *network, Chain: *chain, Node: strings.TrimRight(*node, "/"), Settle: *settle, Headers: *hdr,
+		WoCKey: *wocKey, WoCRate: *wocRate, Fee: fee, RefuseUnmined: *refuseUnmined, Hosts: splitList(*hosts),
 		Facade: strings.TrimRight(*facade, "/"), Providers: splitList(*providers), Uploads: splitList(*uploads), CA: *ca, FetchPrivate: *private}
 	if err := c.check(); err != nil {
 		return usage("%v", err)
@@ -80,15 +99,25 @@ func cmdInit(ctx context.Context, g *global, args []string) error {
 	return nil
 }
 
-const fundHelp = `usage: bstore fund [-txid TXID | -blocks N | -from H [-to H]]
+const fundHelp = `usage: bstore fund [-txid TXID | -beef FILE | -blocks N | -from H [-to H]]
 
 With no flag, print the identity, its fund address and its pool.
 
--txid imports a payment you made: send a small amount from your own wallet
-to the fund address, wait for it to be mined, then pass its txid. Every
-output of it that pays the fund address and that the node shows unspent is
-taken into the pool, its proof checked against the header source. This is
-how a home is funded on mainnet and testnet.
+Fund a home on mainnet and testnet by paying the fund address from your
+own wallet, then importing the payment, either way:
+
+-beef FILE (or - for standard input) imports the payment as the BEEF your
+wallet hands over: no lookup. A mined payment's proof is checked against
+the header source. One not mined yet is taken when every transaction it
+spends is proven (refuse_unmined, or -refuse-unmined, takes mined payments
+only); it is sent to the settlement leg, and its outputs are held until it
+mines.
+
+-txid imports a mined payment by its txid, fetched with its proof from the
+chain view and checked against the header source.
+
+Every output that pays the fund address, that the pool does not hold and
+that the chain view does not show spent is taken into the pool.
 
 -blocks and -from are coinbase: only on a regtest chain you run
 (development and tests). -blocks mines N blocks to the fund address through
@@ -99,6 +128,8 @@ into the pool, and finds no ordinary payment.`
 func cmdFund(ctx context.Context, g *global, args []string) error {
 	fs := g.flagSet("fund", fundHelp)
 	txid := fs.String("txid", "", "import the outputs of a mined payment to the fund address (mainnet, testnet)")
+	beef := fs.String("beef", "", "import a payment to the fund address from its BEEF, a file or - for standard input (mainnet, testnet)")
+	refuse := fs.Bool("refuse-unmined", false, "with -beef, take a mined payment only")
 	blocks := fs.Int("blocks", 0, "coinbase: only on a regtest chain you run (development and tests): blocks to mine to the fund address")
 	from := fs.Uint("from", 0, "coinbase: only on a regtest chain you run (development and tests): first block height to rescan for coinbase")
 	to := fs.Uint("to", 0, "last block height to rescan for coinbase (default the tip)")
@@ -107,48 +138,58 @@ func cmdFund(ctx context.Context, g *global, args []string) error {
 	} else if len(pos) > 0 {
 		return usage("fund takes flags only")
 	}
+	if *txid != "" && *beef != "" {
+		return usage("fund takes -txid or -beef, not both")
+	}
 	h, err := g.open(ctx)
 	if err != nil {
 		return err
 	}
 	defer h.close()
 	w := h.pub.Wallet()
-	asset := h.pub.Asset()
+	asset := h.view.Asset
 	switch {
-	case *txid != "":
-		hc, err := headers.NewSource(h.cfg.Headers)
+	case *txid != "" || *beef != "":
+		var res chaincfg.Funded
+		if *txid != "" {
+			res, err = h.view.FundTxid(ctx, w.Signer(), w.Pool, *txid)
+		} else {
+			raw, rerr := readBEEF(g, *beef)
+			if rerr != nil {
+				return usage("%v", rerr)
+			}
+			res, err = h.view.FundBEEF(ctx, w.Signer(), w.Pool, raw, *refuse || h.cfg.RefuseUnmined)
+		}
 		if err != nil {
-			return usage("headers: %v", err)
+			return fundError(err, "fund -beef")
 		}
-		res, err := fundimport.Import(ctx, w.Signer(), w.Pool, asset, hc, *txid)
-		if errors.Is(err, fundimport.ErrNotMined) {
-			return incomplete("%v", err)
+		mined := fmt.Sprintf("mined at height %d", res.Height)
+		if !res.Mined {
+			mined = "not mined yet (held until it mines)"
 		}
-		if err != nil {
-			return err
-		}
-		g.out("%s mined at height %d: %d output(s) to the fund address, %d imported (%d satoshis), %d already held, %d spent",
-			res.TxID, res.Height, res.Paying, res.Added, res.Satoshis, res.Held, res.Spent)
+		g.out("%s %s: %d output(s) to the fund address, %d imported (%d satoshis), %d already held, %d spent",
+			res.Txid, mined, res.Paying, res.Added, res.Satoshis, res.Held, res.Spent)
 		g.out("pool %d output(s), %d satoshis", w.Pool.Count(), w.Pool.Balance())
 	case *blocks > 0:
-		kind, addr, _ := strings.Cut(h.cfg.Settle, ":")
-		if kind != "rpc" || h.cfg.Network == "main" {
-			return usage("fund -blocks is coinbase: only on a regtest chain you run (development and tests), with settle rpc:URL; on mainnet and testnet pay the fund address and use fund -txid")
+		if h.view.RPC == nil || asset == nil || h.cfg.Network == "main" {
+			return usage("fund -blocks is coinbase: only on a regtest chain you run (development and tests), with settle rpc:URL and chain asset:URL; on mainnet and testnet pay the fund address and use fund -beef or fund -txid")
 		}
-		rpc := &nodeapi.RPC{URL: addr, User: h.cfg.RPCUser, Pass: h.cfg.RPCPass, ID: "bstore"}
-		n, _, err := bwallet.FundFromCoinbase(ctx, w.Signer(), w.Pool, rpc, asset, *blocks, 50)
+		n, _, err := bwallet.FundFromCoinbase(ctx, w.Signer(), w.Pool, h.view.RPC, asset, *blocks, 50)
 		if err != nil {
 			return err
 		}
 		g.out("%d coinbase output(s) pooled; pool %d satoshis", n, w.Pool.Balance())
 	case *from > 0:
+		if asset == nil {
+			return usage("fund -from is coinbase: only on a regtest chain you run (development and tests), with chain asset:URL")
+		}
 		top := uint32(*to)
 		if top == 0 {
-			tip, err := asset.BestHeader(ctx)
+			tip, err := h.view.Tip.CurrentHeight(ctx)
 			if err != nil {
 				return err
 			}
-			top = tip.Height
+			top = tip
 		}
 		n, err := bwallet.Rescan(ctx, w.Signer(), w.Pool, asset, uint32(*from), top)
 		if err != nil {
@@ -230,8 +271,8 @@ func cmdTerms(ctx context.Context, g *global, args []string) error {
 const doctorHelp = `usage: bstore doctor
 
 Report the home (identity, pool, funding trees, holds, races, chains, what
-is in the outbox and owed by upload) and whether the node, the header
-source, the hosts and the providers answer. Reads only: it publishes
+is in the outbox and owed by upload) and whether the chain view, the header
+source, the settlement leg, the hosts and the providers answer. Reads only: it publishes
 nothing and spends nothing. What is owed is 'bstore due'.`
 
 func cmdDoctor(ctx context.Context, g *global, args []string) error {
@@ -251,15 +292,8 @@ func cmdDoctor(ctx context.Context, g *global, args []string) error {
 	g.out("network     %s", h.cfg.Network)
 	g.out("identity    %s", h.pub.IdentityHex())
 	g.out("pool        %d output(s), %d satoshis, change of %d transaction(s) held until mined", w.Pool.Count(), w.Pool.Balance(), len(w.Pool.UnprovenTxids()))
-	if tip, err := h.pub.Asset().BestHeader(ctx); err != nil {
-		g.out("node        %s: %v", h.cfg.Node, firstLine(err.Error()))
-	} else {
-		g.out("node        %s tip %d", h.cfg.Node, tip.Height)
-	}
-	if hc, err := h.rd.Headers.CurrentHeight(ctx); err != nil {
-		g.out("headers     %s: %v", h.cfg.Headers, firstLine(err.Error()))
-	} else {
-		g.out("headers     %s height %d", h.cfg.Headers, hc)
+	for _, l := range h.view.Report(ctx) {
+		g.out("%-11s %s", l.Label, l.Text)
 	}
 	for _, x := range h.cfg.Hosts {
 		g.out("host        %s: %s", x, reach(ctx, h.hostHC, x+"/healthz", x+"/"))
@@ -614,8 +648,8 @@ func cmdDue(ctx context.Context, g *global, args []string) error {
 		}
 	}
 	tip := uint64(0)
-	if t, err := h.pub.Asset().BestHeader(ctx); err == nil {
-		tip = uint64(t.Height)
+	if t, err := h.view.Tip.CurrentHeight(ctx); err == nil {
+		tip = uint64(t)
 	}
 	races, _ := h.pub.Races()
 	for _, r := range races {
@@ -628,7 +662,7 @@ func cmdDue(ctx context.Context, g *global, args []string) error {
 			note("race %s: settlement %s not yet seen mined (bstore settle)", short(r.Entry), short(r.Settlement.Txid))
 		case publish.RaceRemitted:
 			if age, _ := r.RemittedAge(time.Now()); age >= publish.RemittedStale {
-				note("race %s: ALARM settlement %s remitted %s ago and the node serves no proof of it: it may never mine (bstore settle; check the node and arcade)", short(r.Entry), short(r.Settlement.Txid), age.Truncate(time.Second))
+				note("race %s: ALARM settlement %s remitted %s ago and the chain view serves no proof of it: it may never mine (bstore settle; check the chain view and the settlement leg)", short(r.Entry), short(r.Settlement.Txid), age.Truncate(time.Second))
 				break
 			}
 			note("race %s: settlement %s remitted on the network's acceptance, not yet seen mined (bstore settle collects its proof)", short(r.Entry), short(r.Settlement.Txid))

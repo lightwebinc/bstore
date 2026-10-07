@@ -60,7 +60,7 @@ func (tg *target) count(topic string) int {
 
 func open(t *testing.T, ctx context.Context, dir string, cs *httptest.Server, store *Store, d *Delivery) *Publisher {
 	t.Helper()
-	p, err := Open(ctx, Config{Dir: dir, Asset: &nodeapi.Asset{Base: cs.URL}, Settler: &bpub.RPCSettler{RPC: &nodeapi.RPC{URL: cs.URL + "/rpc", ID: "t"}},
+	p, err := Open(ctx, Config{Dir: dir, Chain: nodeChain(cs.URL), Tip: nodeTip(cs.URL), Settler: &bpub.RPCSettler{RPC: &nodeapi.RPC{URL: cs.URL + "/rpc", ID: "t"}},
 		Fees: mint.DefaultFees, PieceTree: 8, EntryTree: 4, Store: store, Delivery: d, Logf: t.Logf})
 	if err != nil {
 		t.Fatal(err)

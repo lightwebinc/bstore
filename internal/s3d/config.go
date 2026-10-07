@@ -10,17 +10,19 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/lightwebinc/bcommon/feepolicy"
 	"github.com/lightwebinc/bcommon/guard"
 
 	"github.com/lightwebinc/bstore/internal/acceptcfg"
+	"github.com/lightwebinc/bstore/internal/chaincfg"
 	"github.com/lightwebinc/bstore/internal/publish"
 
 	"github.com/lightwebinc/bstore/storerec"
 )
 
 // Config is the gateway's configuration file, JSON; an unknown key is
-// refused. Every field has a default but Data, Node, Settle, Headers,
-// Hosts, Identities, AccessKeys and Buckets.
+// refused. Every field has a default but Data, Hosts, Identities,
+// AccessKeys and Buckets.
 type Config struct {
 	// Data is the data directory: identities/<name>/ (each a wallet, its
 	// funding trees and its outbox), store/ (the local closures), uploads/,
@@ -35,15 +37,26 @@ type Config struct {
 	// serves virtual-host addressing (<bucket>.<domain>).
 	Region string `json:"region"`
 	Domain string `json:"domain,omitempty"`
-	// Node is a Teranode asset API; Settle the settlement leg (tcp:,
-	// rpc: or arcade:, with RPCUser, RPCPass, ArcadeKey); Headers a header
-	// source (bcommon headers).
-	Node      string `json:"node"`
-	Settle    string `json:"settle"`
-	RPCUser   string `json:"rpc_user,omitempty"`
-	RPCPass   string `json:"rpc_pass,omitempty"`
-	ArcadeKey string `json:"arcade_key,omitempty"`
-	Headers   string `json:"headers"`
+	// Chain is the chain view (nodeapi.ParseChain: woc:main, woc:test,
+	// asset:URL; default woc:main or woc:test by Mainnet); Node, the older
+	// key, a node's asset API, is chain asset:URL. Settle is the settlement
+	// leg (publish.ParseSettler: arcade:main, arcade:URL, arc:URL, rpc:URL,
+	// tcp:ADDR; default GorillaPool's arcade), with RPCUser, RPCPass,
+	// ArcadeKey; Headers a header source (bcommon headers; default
+	// woc:main or woc:test), HeadersToken its bearer token. WoCKey and
+	// WoCRate are a WhatsOnChain API key and its requests a second: a busy
+	// gateway needs one, or a node. On a regtest chain set chain, settle
+	// and headers.
+	Chain        string  `json:"chain,omitempty"`
+	Node         string  `json:"node,omitempty"`
+	Settle       string  `json:"settle,omitempty"`
+	RPCUser      string  `json:"rpc_user,omitempty"`
+	RPCPass      string  `json:"rpc_pass,omitempty"`
+	ArcadeKey    string  `json:"arcade_key,omitempty"`
+	Headers      string  `json:"headers,omitempty"`
+	HeadersToken string  `json:"headers_token,omitempty"`
+	WoCKey       string  `json:"woc_key,omitempty"`
+	WoCRate      float64 `json:"woc_rate,omitempty"`
 	// Hosts are the overlay hosts asked and written to; Facade, when set,
 	// is the plane; Providers are providers pieces and entries are
 	// unicast to (their submit route). Quorum is how many hosts must take
@@ -70,13 +83,17 @@ type Config struct {
 	Bounty    *BountyConfig `json:"bounty,omitempty"`
 	HoldAhead int           `json:"hold_ahead,omitempty"`
 	Limits    Limits        `json:"limits"`
-	// PieceTree and EntryTree size funding trees; FeeRate and FeeFloor are
-	// the fee policy.
-	PieceTree int    `json:"piece_tree"`
-	EntryTree int    `json:"entry_tree"`
-	FeeRate   uint64 `json:"fee_sat_per_byte"`
-	FeeFloor  uint64 `json:"fee_floor"`
-	Mainnet   bool   `json:"mainnet"`
+	// PieceTree and EntryTree size funding trees. Fee is the miner fee
+	// policy (feepolicy.Config; default 100 satoshis per 1000 bytes, floor
+	// 250); FeeRate and FeeFloor are its older keys, still read.
+	PieceTree int               `json:"piece_tree"`
+	EntryTree int               `json:"entry_tree"`
+	Fee       *feepolicy.Config `json:"fee,omitempty"`
+	FeeRate   uint64            `json:"fee_sat_per_byte,omitempty"`
+	FeeFloor  uint64            `json:"fee_floor,omitempty"`
+	Mainnet   bool              `json:"mainnet"`
+	// RefuseUnmined makes fund -beef take mined payments only.
+	RefuseUnmined bool `json:"refuse_unmined,omitempty"`
 	// The payment acceptance rule a settlement is remitted by (accept_
 	// keys, docs/s3.md).
 	acceptcfg.Config
@@ -242,6 +259,17 @@ func LoadConfig(path string) (*Config, error) {
 	return &c, nil
 }
 
+// Spec is the chain, settlement and fee settings, for chaincfg.
+func (c *Config) Spec() chaincfg.Spec {
+	n := "test"
+	if c.Mainnet {
+		n = "main"
+	}
+	return chaincfg.Spec{Network: n, Chain: c.Chain, Node: c.Node, Settle: c.Settle, ArcadeKey: c.ArcadeKey, RPCUser: c.RPCUser,
+		RPCPass: c.RPCPass, RPCID: "bstore-s3d", Headers: c.Headers, HeadersToken: c.HeadersToken, WoCKey: c.WoCKey, WoCRate: c.WoCRate,
+		Fee: c.Fee, FeeRate: c.FeeRate, FeeFloor: c.FeeFloor}
+}
+
 // IdentityDir is an identity's directory.
 func (c *Config) IdentityDir(name string) string { return filepath.Join(c.Data, "identities", name) }
 
@@ -259,12 +287,8 @@ func (c *Config) Check() error {
 	if c.Region == "" {
 		c.Region = "us-east-1"
 	}
-	if c.Node == "" || c.Settle == "" || c.Headers == "" {
-		return errors.New("node, settle and headers are required")
-	}
-	kind, _, _ := strings.Cut(c.Settle, ":")
-	if kind != "tcp" && kind != "rpc" && kind != "arcade" {
-		return errors.New("settle is tcp:<host:port>, rpc:<url> or arcade:<url>")
+	if err := c.Spec().Check(); err != nil {
+		return err
 	}
 	if len(c.Hosts) == 0 {
 		return errors.New("at least one host is required")
@@ -373,12 +397,6 @@ func (c *Config) Check() error {
 	}
 	if c.Race.TickSeconds == 0 {
 		c.Race.TickSeconds = 10
-	}
-	if c.FeeRate == 0 {
-		c.FeeRate = 1
-	}
-	if c.FeeFloor == 0 {
-		c.FeeFloor = 250
 	}
 	if c.StoreBytes <= 0 {
 		c.StoreBytes = 8 << 30

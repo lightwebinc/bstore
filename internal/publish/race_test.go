@@ -79,7 +79,7 @@ func newRaceRig(t *testing.T) *raceRig {
 	}
 	host := newTarget(t)
 	r.leg = &switchSettler{inner: &bpub.RPCSettler{RPC: r.rpc}}
-	r.p, err = Open(ctx, Config{Dir: id, Asset: &nodeapi.Asset{Base: r.cs.URL}, Settler: r.leg, Fees: mint.DefaultFees, PieceTree: 8, EntryTree: 4,
+	r.p, err = Open(ctx, Config{Dir: id, Chain: nodeChain(r.cs.URL), Tip: nodeTip(r.cs.URL), Settler: r.leg, Fees: mint.DefaultFees, PieceTree: 8, EntryTree: 4,
 		HoldAhead: 2, Store: r.store, Delivery: &Delivery{Hosts: []string{host.srv.URL}, Providers: []string{host.srv.URL}}, Logf: t.Logf})
 	if err != nil {
 		t.Fatal(err)
@@ -231,7 +231,7 @@ func TestSettleByRankOnce(t *testing.T) {
 	if sum != 10_000 {
 		t.Fatalf("payouts sum to %d", sum)
 	}
-	if by, _ := r.p.cfg.Asset.Spender(r.ctx, strings.Split(race.Hold, ".")[0], 0); by != rec.Txid {
+	if by, _ := r.p.cfg.Chain.Spender(r.ctx, strings.Split(race.Hold, ".")[0], 0); by != rec.Txid {
 		t.Fatalf("the hold output is spent by %s", by)
 	}
 	// Settle again: the same settlement, nothing new sent.
@@ -295,7 +295,7 @@ func TestReclaimAfterTheDeadline(t *testing.T) {
 	if err != nil || rc == nil || race.State != RaceReclaimd {
 		t.Fatalf("reclaim: %v %s", err, race.State)
 	}
-	if by, _ := r.p.cfg.Asset.Spender(r.ctx, strings.Split(race.Hold, ".")[0], 0); by != rc.Txid {
+	if by, _ := r.p.cfg.Chain.Spender(r.ctx, strings.Split(race.Hold, ".")[0], 0); by != rc.Txid {
 		t.Fatal("the hold output is not spent by the reclaim")
 	}
 	rc2, err := r.p.Reclaim(r.ctx, race)
@@ -377,7 +377,7 @@ func (r *raceRig) spendPayout(race *Race, pv *provider, py PayeeRecord) string {
 	if err != nil {
 		r.t.Fatal(err)
 	}
-	if tx.MerklePath, _, err = r.p.cfg.Asset.Proof(r.ctx, race.Settlement.Txid); err != nil {
+	if tx.MerklePath, _, err = r.p.cfg.Chain.Proof(r.ctx, race.Settlement.Txid); err != nil {
 		r.t.Fatal(err)
 	}
 	d := &bwallet.Derivation{SecurityLevel: 2, Protocol: bwallet.PaymentProtocol.Protocol,

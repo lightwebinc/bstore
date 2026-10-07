@@ -442,8 +442,7 @@ func (t *Tool) finishPending(ctx context.Context, c *Chain) error {
 	if err != nil {
 		return err
 	}
-	asset := t.Pub.Asset()
-	mp, height, perr := asset.Proof(ctx, pt.Txid)
+	mp, height, perr := t.Pub.Chain().Proof(ctx, pt.Txid)
 	if perr != nil {
 		cf, err := t.Pub.SpentElsewhere(ctx, tx)
 		if err != nil {

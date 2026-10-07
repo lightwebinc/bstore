@@ -168,15 +168,15 @@ func (p *Provider) scanPayouts(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		by, err := p.asset.Spender(ctx, e.Hold.Txid, e.Hold.Vout)
+		by, err := p.chain.Spender(ctx, e.Hold.Txid, e.Hold.Vout)
 		if err != nil || by == "" {
 			continue
 		}
-		mp, height, err := p.asset.Proof(ctx, by)
+		mp, height, err := p.chain.Proof(ctx, by)
 		if err != nil {
 			continue // claimed once it mines
 		}
-		raw, err := p.asset.TxRaw(ctx, by)
+		raw, err := p.chain.TxRaw(ctx, by)
 		if err != nil {
 			continue
 		}

@@ -40,7 +40,7 @@ func (p *Provider) recover(ctx context.Context) error {
 // transaction mined.
 func (p *Provider) collectChange(ctx context.Context) {
 	for _, id := range p.pool.UnprovenTxids() {
-		mp, h, err := p.asset.Proof(ctx, id)
+		mp, h, err := p.chain.Proof(ctx, id)
 		if err != nil {
 			continue
 		}

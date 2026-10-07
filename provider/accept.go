@@ -36,7 +36,7 @@ const acceptMaxAge = 24 * time.Hour
 // setupAcceptance builds the verifier and its watch over the legs.
 func (p *Provider) setupAcceptance() {
 	pol := p.cfg.AcceptPolicy()
-	v := &acceptance.Verifier{Policy: pol, Exposure: acceptance.NewExposure(), Headers: p.hc, Settler: p.settler, Spends: p.asset, Proofs: p.asset}
+	v := &acceptance.Verifier{Policy: pol, Exposure: acceptance.NewExposure(), Headers: p.hc, Settler: p.settler, Spends: p.chain, Proofs: p.chain}
 	if p.arcade != nil {
 		v.Status = []acceptance.StatusSource{p.arcade}
 	} else {
@@ -110,7 +110,7 @@ func (p *Provider) forgetFast(txid string) {
 // minedNow reports whether the node serves a proof of txid that verifies
 // against the provider's headers.
 func (p *Provider) minedNow(ctx context.Context, txid string) bool {
-	mp, _, err := p.asset.Proof(ctx, txid)
+	mp, _, err := p.chain.Proof(ctx, txid)
 	if err != nil || mp == nil {
 		return false
 	}
@@ -126,7 +126,7 @@ func (p *Provider) minedNow(ctx context.Context, txid string) bool {
 // of tx, or "" when the node shows none (an input it cannot answer for is
 // passed over).
 func (p *Provider) spentAway(ctx context.Context, tx *transaction.Transaction) string {
-	err := p.asset.SpentElsewhere(ctx, tx)
+	err := p.chain.SpentElsewhere(ctx, tx)
 	var se *nodeapi.SpentError
 	if errors.As(err, &se) {
 		return se.By
@@ -171,7 +171,7 @@ func (p *Provider) reencoded(txid string) bool {
 	if by == "" {
 		return false
 	}
-	raw, err := p.asset.TxRaw(ctx, by)
+	raw, err := p.chain.TxRaw(ctx, by)
 	if err != nil {
 		return false
 	}

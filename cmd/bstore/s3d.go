@@ -2,6 +2,7 @@
 //
 //	bstore s3d init -config FILE              create every identity's wallet the configuration names
 //	bstore s3d address -config FILE -identity NAME
+//	bstore s3d fund -config FILE -identity NAME -beef FILE  import a payment to the fund address from its BEEF
 //	bstore s3d fund -config FILE -identity NAME -txid TXID  import a mined payment to the fund address
 //	bstore s3d rescan -config FILE -identity NAME -from H [-to H]
 //	                                          coinbase: only on a regtest chain you run (development and tests)
@@ -12,7 +13,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"slices"
@@ -20,10 +20,8 @@ import (
 	"time"
 
 	"github.com/lightwebinc/bcommon/bwallet"
-	"github.com/lightwebinc/bcommon/headers"
-	"github.com/lightwebinc/bcommon/nodeapi"
 
-	"github.com/lightwebinc/bstore/internal/fundimport"
+	"github.com/lightwebinc/bstore/internal/chaincfg"
 	"github.com/lightwebinc/bstore/internal/publish"
 	"github.com/lightwebinc/bstore/internal/s3d"
 )
@@ -33,6 +31,10 @@ const s3dUsage = `usage: bstore s3d <command> [flags]
 commands:
   init -config FILE                       create the wallet of every identity the configuration names
   address -config FILE -identity NAME     print an identity's key, fund address and pool
+  fund -config FILE -identity NAME -beef FILE
+                                          import a payment you sent to the identity's fund address
+                                          from the BEEF your wallet gave you (FILE, or - for standard
+                                          input; mainnet, testnet)
   fund -config FILE -identity NAME -txid TXID
                                           import a mined payment you sent to the identity's fund
                                           address, its proof checked (mainnet, testnet)
@@ -60,6 +62,8 @@ func cmdS3D(ctx context.Context, g *global, args []string) error {
 	cfgPath := fs.String("config", "", "configuration file")
 	ident := fs.String("identity", "", "identity name")
 	txid := fs.String("txid", "", "import the outputs of a mined payment to the fund address (fund; mainnet, testnet)")
+	beef := fs.String("beef", "", "import a payment to the fund address from its BEEF, a file or - (fund; mainnet, testnet)")
+	refuse := fs.Bool("refuse-unmined", false, "with -beef, take a mined payment only")
 	from := fs.Uint("from", 0, "coinbase: only on a regtest chain you run (development and tests): first block height to rescan for coinbase")
 	to := fs.Uint("to", 0, "last block height to rescan for coinbase (default the tip)")
 	blocks := fs.Int("blocks", 0, "coinbase: only on a regtest chain you run (development and tests): blocks to mine (fund)")
@@ -101,7 +105,11 @@ func cmdS3D(ctx context.Context, g *global, args []string) error {
 		if err != nil {
 			return fmt.Errorf("wallet (bstore s3d init creates it): %w", err)
 		}
-		asset := &nodeapi.Asset{Base: cfg.Node}
+		v, err := chaincfg.Open(cfg.Spec())
+		if err != nil {
+			return usage("%v", err)
+		}
+		asset := v.Asset
 		switch cmd {
 		case "address":
 			addr, err := w.Signer().FundAddress(cfg.Mainnet)
@@ -113,28 +121,33 @@ func cmdS3D(ctx context.Context, g *global, args []string) error {
 			fmt.Fprintf(g.stdout, "pool %d output(s), %d satoshis\n", w.Pool.Count(), w.Pool.Balance())
 			return nil
 		case "fund":
-			if *txid != "" {
-				hc, err := headers.NewSource(cfg.Headers)
+			if *txid != "" || *beef != "" {
+				var res chaincfg.Funded
+				if *txid != "" {
+					res, err = v.FundTxid(ctx, w.Signer(), w.Pool, *txid)
+				} else {
+					raw, rerr := readBEEF(g, *beef)
+					if rerr != nil {
+						return usage("%v", rerr)
+					}
+					res, err = v.FundBEEF(ctx, w.Signer(), w.Pool, raw, *refuse || cfg.RefuseUnmined)
+				}
 				if err != nil {
-					return usage("headers: %v", err)
+					return fundError(err, "-beef")
 				}
-				res, err := fundimport.Import(ctx, w.Signer(), w.Pool, asset, hc, *txid)
-				if errors.Is(err, fundimport.ErrNotMined) {
-					return incomplete("%v", err)
+				mined := fmt.Sprintf("mined at height %d", res.Height)
+				if !res.Mined {
+					mined = "not mined yet (held until it mines)"
 				}
-				if err != nil {
-					return err
-				}
-				fmt.Fprintf(g.stdout, "%s mined at height %d: %d output(s) to the fund address, %d imported (%d satoshis), %d already held, %d spent\n",
-					res.TxID, res.Height, res.Paying, res.Added, res.Satoshis, res.Held, res.Spent)
+				fmt.Fprintf(g.stdout, "%s %s: %d output(s) to the fund address, %d imported (%d satoshis), %d already held, %d spent\n",
+					res.Txid, mined, res.Paying, res.Added, res.Satoshis, res.Held, res.Spent)
 				fmt.Fprintf(g.stdout, "pool %d output(s), %d satoshis\n", w.Pool.Count(), w.Pool.Balance())
 				return nil
 			}
-			kind, addr, _ := strings.Cut(cfg.Settle, ":")
-			if kind != "rpc" || *blocks < 1 {
-				return usage("fund needs -txid TXID, or (coinbase: only on a regtest chain you run) settle rpc:<url> and -blocks N")
+			if v.RPC == nil || asset == nil || *blocks < 1 {
+				return usage("fund needs -beef FILE or -txid TXID, or (coinbase: only on a regtest chain you run) settle rpc:<url>, chain asset:<url> and -blocks N")
 			}
-			rpc := &nodeapi.RPC{URL: addr, User: cfg.RPCUser, Pass: cfg.RPCPass, ID: "bstore-s3d"}
+			rpc := v.RPC
 			n, _, err := bwallet.FundFromCoinbase(ctx, w.Signer(), w.Pool, rpc, asset, *blocks, 50)
 			if err != nil {
 				return err
@@ -142,13 +155,14 @@ func cmdS3D(ctx context.Context, g *global, args []string) error {
 			fmt.Fprintf(g.stdout, "%d coinbase output(s) pooled; pool %d satoshis\n", n, w.Pool.Balance())
 			return nil
 		}
+		if asset == nil {
+			return usage("rescan is coinbase: only on a regtest chain you run, with chain asset:<url>")
+		}
 		top := uint32(*to)
 		if top == 0 {
-			h, err := asset.BestHeader(ctx)
-			if err != nil {
+			if top, err = v.Tip.CurrentHeight(ctx); err != nil {
 				return err
 			}
-			top = h.Height
 		}
 		n, err := bwallet.Rescan(ctx, w.Signer(), w.Pool, asset, uint32(*from), top)
 		if err != nil {

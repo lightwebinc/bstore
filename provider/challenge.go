@@ -272,11 +272,11 @@ func (p *Provider) headerAt(ctx context.Context) func(uint64) ([32]byte, bool) {
 			return e.hash, true
 		}
 		p.hmu.Unlock()
-		s, err := p.asset.HashAtHeight(ctx, uint32(height))
+		hdr, err := p.view.Tip.HeaderAt(ctx, uint32(height))
 		if err != nil {
 			return [32]byte{}, false
 		}
-		h, ok := displayHash(s)
+		h, ok := displayHash(hdr.Hash.String())
 		if !ok {
 			return [32]byte{}, false
 		}

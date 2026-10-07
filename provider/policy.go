@@ -129,7 +129,7 @@ func (p *Provider) checkBounty(ctx context.Context, e *EntryRec, racing bool) er
 // holdOutput checks the hold output on the node and returns its height.
 func (p *Provider) holdOutput(ctx context.Context, e *EntryRec) (uint32, error) {
 	hr := e.Hold
-	raw, err := p.asset.TxRaw(ctx, hr.Txid)
+	raw, err := p.chain.TxRaw(ctx, hr.Txid)
 	if err != nil {
 		if nodeapi.IsHTTP(err, http.StatusNotFound) {
 			return 0, errors.New("the hold transaction is not known to the node")
@@ -158,7 +158,7 @@ func (p *Provider) holdOutput(ctx context.Context, e *EntryRec) (uint32, error) 
 	if out.Satoshis != hr.Sats {
 		return 0, fmt.Errorf("the hold output holds %d satoshis, not %d", out.Satoshis, hr.Sats)
 	}
-	mp, height, err := p.asset.Proof(ctx, hr.Txid)
+	mp, height, err := p.chain.Proof(ctx, hr.Txid)
 	if err != nil {
 		return 0, retry(errors.New("the hold output is not mined yet"))
 	}
@@ -168,7 +168,7 @@ func (p *Provider) holdOutput(ctx context.Context, e *EntryRec) (uint32, error) 
 	} else if !ok {
 		return 0, errors.New("the hold output's proof does not verify against this provider's headers")
 	}
-	by, err := p.asset.Spender(ctx, hr.Txid, hr.Vout)
+	by, err := p.chain.Spender(ctx, hr.Txid, hr.Vout)
 	if err != nil {
 		return 0, retry(fmt.Errorf("the node gave no evidence the hold output is unspent: %v", err))
 	}

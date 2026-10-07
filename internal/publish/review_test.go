@@ -158,7 +158,7 @@ func TestDrawsAreBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 20 && c.Status != CandFailed && c.Status != CandPassed; i++ {
-		tip, _ := r.p.cfg.Asset.BestHeader(r.ctx)
+		tip, _ := r.p.bestHeader(r.ctx)
 		challengeAlone(r.ctx, r.p, race, c, blobs, tip.Height)
 	}
 	// A draw left unanswered three times is spent and the front is not
@@ -187,7 +187,7 @@ func TestThirdPartyFrontCannotFailAnAdvertiser(t *testing.T) {
 	hostile.refuse = true
 	c := candAt(race, honest)
 	blobs, _ := r.p.closureBlobs(r.ctx, race.entry)
-	tip, _ := r.p.cfg.Asset.BestHeader(r.ctx)
+	tip, _ := r.p.bestHeader(r.ctx)
 	// A draw bound to the hostile front, as a statement would name it.
 	ch := &Challenge{Root: race.entry.Root, ProofRoot: race.entry.ProofRoot, Size: race.entry.Size, Provider: honest.identity(),
 		Answerer: hostile.identity(), C: 30}
@@ -217,7 +217,7 @@ func TestThirdPartyFrontCannotFailAnAdvertiser(t *testing.T) {
 // still holds the seed.
 func TestSeedBelowTheTip(t *testing.T) {
 	r := newRaceRig(t)
-	tip, _ := r.p.cfg.Asset.BestHeader(r.ctx)
+	tip, _ := r.p.bestHeader(r.ctx)
 	q, _, err := r.p.NewRequest(r.ctx, &Challenge{Root: [32]byte{1}, ProofRoot: [32]byte{2}, Size: 1, Provider: r.p.Identity(), Answerer: r.p.Identity(), C: 1})
 	if err != nil || q.SeedHeight != uint64(tip.Height)-SeedBack {
 		t.Fatalf("seed %d at tip %d: %v", q.SeedHeight, tip.Height, err)

@@ -14,7 +14,8 @@ import (
 	"testing"
 
 	"github.com/lightwebinc/bcommon/headers"
-	"github.com/lightwebinc/bcommon/nodeapi"
+
+	"github.com/lightwebinc/bstore/internal/chaincfg"
 )
 
 // A spend source that does not say "unspent" is no evidence: the hold
@@ -47,7 +48,11 @@ func TestHoldOutputUnknownSpendStatus(t *testing.T) {
 	}))
 	defer node.Close()
 	hc, _ := headers.NewSource(r.srv.URL)
-	p := &Provider{asset: &nodeapi.Asset{Base: node.URL}, hc: hc}
+	v, err := chaincfg.Open(chaincfg.Spec{Network: "regtest", Chain: "asset:" + node.URL, Settle: "rpc:" + node.URL + "/rpc", Headers: r.srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &Provider{view: v, chain: v.Chain, hc: hc}
 	e := &EntryRec{Writer: hex.EncodeToString(r.writer.Identity()), Hold: &HoldRec{Txid: txid, Vout: 0, Sats: 2000}}
 
 	// The test chain's own answer: OK, unspent.

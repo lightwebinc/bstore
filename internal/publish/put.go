@@ -120,7 +120,7 @@ func (p *Publisher) Put(ctx context.Context, f Fields, obj Object, b *Bounty) (*
 			return nil, err
 		}
 		hold = h
-		tip, err := p.cfg.Asset.BestHeader(ctx)
+		tip, err := p.bestHeader(ctx)
 		if err != nil {
 			return nil, err
 		}

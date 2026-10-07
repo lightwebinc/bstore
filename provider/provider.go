@@ -42,7 +42,7 @@ import (
 
 	"github.com/lightwebinc/bstore/auth104"
 	"github.com/lightwebinc/bstore/backend"
-	"github.com/lightwebinc/bstore/internal/efleg"
+	"github.com/lightwebinc/bstore/internal/chaincfg"
 	"github.com/lightwebinc/bstore/storerec"
 )
 
@@ -135,7 +135,10 @@ type Provider struct {
 	signer *bwallet.Signer
 	pool   *bwallet.Pool
 
-	asset   *nodeapi.Asset
+	// view is the chain view, header source, settlement leg and fee
+	// policy the configuration names (chaincfg); chain is its chain view.
+	view    *chaincfg.View
+	chain   *nodeapi.Sources
 	settler publish.Settler
 	arcade  *publish.Arcade
 	// acc decides every payment offered; mon watches the fast ones until
@@ -309,26 +312,15 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 	return p, nil
 }
 
-// legs builds the node, the settlement leg, the header source and the
-// object legs from the configuration.
+// legs builds the chain view, the settlement leg, the header source and
+// the object legs from the configuration.
 func (p *Provider) legs() error {
 	c := p.cfg
-	p.asset = &nodeapi.Asset{Base: c.Node}
-	kind, addr, _ := strings.Cut(c.Settle, ":")
-	switch kind {
-	case "tcp":
-		p.settler = efleg.Wrap(&publish.TCPIngress{Addr: addr}, p.asset)
-	case "rpc":
-		p.settler = &publish.RPCSettler{RPC: &nodeapi.RPC{URL: addr, User: c.RPCUser, Pass: c.RPCPass, ID: "bstore-provider"}}
-	case "arcade":
-		p.arcade = &publish.Arcade{Base: addr, Key: c.ArcadeKey}
-		p.settler = efleg.Wrap(p.arcade, p.asset)
-	}
-	hc, err := headers.NewSource(c.Headers)
+	v, err := chaincfg.Open(c.Spec())
 	if err != nil {
 		return err
 	}
-	p.hc = hc
+	p.view, p.chain, p.settler, p.arcade, p.hc = v, v.Chain, v.Settler, v.Arcade, v.Headers
 	for _, h := range c.Hosts {
 		p.hosts = append(p.hosts, &publish.Facade{Base: strings.TrimRight(h, "/")})
 	}
@@ -495,17 +487,17 @@ func (p *Provider) save() error {
 }
 
 func (p *Provider) fees() mint.Fees {
-	return mint.Fees{SatPerByte: p.cfg.FeeRate, Floor: p.cfg.FeeFloor}
+	return p.view.Fees(context.Background())
 }
 
-// tip is the node's best height.
+// tip is the header source's height.
 func (p *Provider) tip(ctx context.Context) (uint32, error) {
-	h, err := p.asset.BestHeader(ctx)
+	h, err := p.view.Tip.CurrentHeight(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("node tip: %w", err)
+		return 0, fmt.Errorf("tip: %w", err)
 	}
-	p.lastTip.Store(h.Height)
-	return h.Height, nil
+	p.lastTip.Store(h)
+	return h, nil
 }
 
 // loadKept rebuilds a funding tree the state keeps.

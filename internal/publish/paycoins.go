@@ -35,7 +35,7 @@ const payCoins = 8
 // payCoinValue is the value of a payment coin for calls that pay up to
 // maxPay: two payments and their fees.
 func (p *Publisher) payCoinValue(maxPay uint64) uint64 {
-	return 2 * (maxPay + p.cfg.Fees.Floor)
+	return 2 * (maxPay + p.floor())
 }
 
 // payCoinPool is the pool of small payment coins.
@@ -57,7 +57,7 @@ func (p *Publisher) smallCoins(tip uint32, maxPay uint64) []bwallet.Output {
 	if err != nil {
 		return nil
 	}
-	need := maxPay + p.cfg.Fees.Floor
+	need := maxPay + p.floor()
 	var out []bwallet.Output
 	for _, o := range coins.Outputs() {
 		if o.Spendable(tip) && o.Satoshis >= need {
@@ -85,7 +85,7 @@ func (p *Publisher) PayCoins() (int, uint64) {
 func (p *Publisher) payPool(ctx context.Context, maxPay uint64) (*bwallet.Pool, func(), *bwallet.Output) {
 	main := p.wallet.Pool
 	tip := uint32(0)
-	if h, err := p.cfg.Asset.BestHeader(ctx); err == nil {
+	if h, err := p.bestHeader(ctx); err == nil {
 		tip = h.Height
 	}
 	p.payMu.Lock()
@@ -206,7 +206,7 @@ func (p *Publisher) proveCoins(ctx context.Context) {
 	}
 	p.payMu.Unlock()
 	for _, txid := range txids {
-		mp, height, err := p.cfg.Asset.Proof(ctx, txid)
+		mp, height, err := p.cfg.Chain.Proof(ctx, txid)
 		if err != nil {
 			continue
 		}
@@ -260,7 +260,7 @@ func (p *Publisher) FillPayCoins(ctx context.Context, maxPay uint64) {
 	held := 0
 	if coins, err := p.payCoinPool(); err == nil {
 		for _, o := range coins.Outputs() {
-			if o.Satoshis >= maxPay+p.cfg.Fees.Floor && (o.Unproven || o.Spendable(pay.Tip)) {
+			if o.Satoshis >= maxPay+p.floor() && (o.Unproven || o.Spendable(pay.Tip)) {
 				held++
 			}
 		}
@@ -276,8 +276,8 @@ func (p *Publisher) FillPayCoins(ctx context.Context, maxPay uint64) {
 }
 
 func (p *Publisher) splitCoin(ctx context.Context, pay *producer.Payer, value uint64, n int) error {
-	fee := p.cfg.Fees.Floor + p.cfg.Fees.SatPerByte*uint64(200+34*n)
-	coin, err := pay.TakeAtLeast(ctx, uint64(n)*value+fee+p.cfg.Fees.Floor)
+	fee := p.floor() + p.rateFee(uint64(200+34*n))
+	coin, err := pay.TakeAtLeast(ctx, uint64(n)*value+fee+p.floor())
 	if err != nil {
 		return err
 	}
@@ -292,7 +292,7 @@ func (p *Publisher) splitCoin(ctx context.Context, pay *producer.Payer, value ui
 		tx.AddOutput(&transaction.TransactionOutput{Satoshis: value, LockingScript: fs})
 	}
 	in := coin.Tx.Outputs[coin.Vout].Satoshis
-	if change := in - uint64(n)*value - fee; change >= p.cfg.Fees.Floor {
+	if change := in - uint64(n)*value - fee; change >= p.floor() {
 		tx.AddOutput(&transaction.TransactionOutput{Satoshis: change, LockingScript: fs})
 	}
 	if err := tx.Sign(); err != nil {

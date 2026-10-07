@@ -18,14 +18,11 @@ import (
 	"time"
 
 	"github.com/lightwebinc/bcommon/acceptance"
-	"github.com/lightwebinc/bcommon/headers"
-	"github.com/lightwebinc/bcommon/mint"
-	"github.com/lightwebinc/bcommon/nodeapi"
-	bpub "github.com/lightwebinc/bcommon/publish"
+	"github.com/lightwebinc/bcommon/feepolicy"
 
 	"github.com/lightwebinc/bstore/internal/acceptcfg"
 	"github.com/lightwebinc/bstore/internal/anchor"
-	"github.com/lightwebinc/bstore/internal/efleg"
+	"github.com/lightwebinc/bstore/internal/chaincfg"
 	"github.com/lightwebinc/bstore/internal/publish"
 	"github.com/lightwebinc/bstore/internal/reader"
 	"github.com/lightwebinc/bstore/storerec"
@@ -35,14 +32,28 @@ import (
 type Config struct {
 	// Network is main, test or regtest.
 	Network string `json:"network"`
-	// Node is a Teranode asset API (proofs, spends, the tip); Settle the
-	// settlement leg (rpc:, tcp: or arcade:); Headers a header source.
-	Node      string `json:"node"`
-	Settle    string `json:"settle"`
-	RPCUser   string `json:"rpc_user,omitempty"`
-	RPCPass   string `json:"rpc_pass,omitempty"`
-	ArcadeKey string `json:"arcade_key,omitempty"`
-	Headers   string `json:"headers"`
+	// Chain is the chain view (transactions, proofs, spends): woc:main,
+	// woc:test, asset:URL (a node), or a list (docs/configuration.md);
+	// default woc:<network>. Node, the older key, is chain asset:URL.
+	// Settle is the settlement leg: arcade:main, arcade:test, arcade:URL,
+	// arc:URL, rpc:URL or tcp:ADDR; default GorillaPool's arcade. Headers
+	// is a header source; default woc:<network>. A regtest chain has no
+	// defaults. WoCKey and WoCRate are a WhatsOnChain API key and its rate.
+	Chain        string  `json:"chain,omitempty"`
+	Node         string  `json:"node,omitempty"`
+	Settle       string  `json:"settle,omitempty"`
+	RPCUser      string  `json:"rpc_user,omitempty"`
+	RPCPass      string  `json:"rpc_pass,omitempty"`
+	ArcadeKey    string  `json:"arcade_key,omitempty"`
+	Headers      string  `json:"headers,omitempty"`
+	HeadersToken string  `json:"headers_token,omitempty"`
+	WoCKey       string  `json:"woc_key,omitempty"`
+	WoCRate      float64 `json:"woc_rate,omitempty"`
+	// Fee is the miner fee policy (default 100 satoshis per 1000 bytes,
+	// floor 250); fee_sat_per_byte and fee_floor are its older keys.
+	Fee *feepolicy.Config `json:"fee,omitempty"`
+	// RefuseUnmined makes fund -beef take mined payments only.
+	RefuseUnmined bool `json:"refuse_unmined,omitempty"`
 	// Hosts are the overlay hosts asked and written to; Facade, when set,
 	// is the plane; Providers the providers' submit routes; Uploads their
 	// public URLs, where a closure goes by upload session when there is no
@@ -119,8 +130,8 @@ func (c *Config) check() error {
 	default:
 		return fmt.Errorf("network is main, test or regtest, not %q", c.Network)
 	}
-	if c.Node == "" || c.Settle == "" || c.Headers == "" {
-		return errors.New("config.json needs node, settle and headers")
+	if err := c.spec().Check(); err != nil {
+		return err
 	}
 	if b := c.Bounty; b != nil {
 		h := storerec.Hold{Satoshis: b.Satoshis, T: b.T, K: b.K, Retention: b.RetentionSeconds, Deadline: 1, CheckC: b.CheckC}
@@ -137,6 +148,13 @@ func (c *Config) check() error {
 		}
 	}
 	return nil
+}
+
+// spec is the chain, settlement and fee settings, for chaincfg.
+func (c *Config) spec() chaincfg.Spec {
+	return chaincfg.Spec{Network: c.Network, Chain: c.Chain, Node: c.Node, Settle: c.Settle, ArcadeKey: c.ArcadeKey, RPCUser: c.RPCUser,
+		RPCPass: c.RPCPass, RPCID: "bstore", Headers: c.Headers, HeadersToken: c.HeadersToken, WoCKey: c.WoCKey, WoCRate: c.WoCRate,
+		Fee: c.Fee, FeeRate: c.FeeRate, FeeFloor: c.FeeFloor}
 }
 
 // checkTerms holds hold terms to spec section 4.3's bounds.
@@ -186,11 +204,13 @@ func saveConfig(path string, c *Config) error {
 	return os.Rename(tmp, path)
 }
 
-// home is an opened home: its configuration, its publisher (wallet,
-// trees, outbox, races), a reader of its hosts and the owner's tooling.
+// home is an opened home: its configuration, its chain view, its
+// publisher (wallet, trees, outbox, races), a reader of its hosts and the
+// owner's tooling.
 type home struct {
 	g      *global
 	cfg    *Config
+	view   *chaincfg.View
 	pub    *publish.Publisher
 	rd     *reader.Reader
 	tool   *anchor.Tool
@@ -220,12 +240,7 @@ func (g *global) open(ctx context.Context) (*home, error) {
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	fetchHC := &http.Client{Timeout: 2 * time.Minute, Transport: fetchTransport(pool, cfg.FetchPrivate),
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	hc, err := headers.NewSource(cfg.Headers)
-	if err != nil {
-		return nil, usage("headers: %v", err)
-	}
-	asset := &nodeapi.Asset{Base: cfg.Node}
-	settler, err := settlerOf(cfg)
+	v, err := chaincfg.Open(cfg.spec())
 	if err != nil {
 		return nil, usage("%v", err)
 	}
@@ -233,21 +248,18 @@ func (g *global) open(ctx context.Context) (*home, error) {
 	if err != nil {
 		return nil, err
 	}
-	rd := &reader.Reader{Hosts: cfg.Hosts, HTTP: hostHC, Fetch: fetchHC, Headers: hc, Logf: g.logf, Spender: asset.Spender}
+	rd := &reader.Reader{Hosts: cfg.Hosts, HTTP: hostHC, Fetch: fetchHC, Headers: v.Headers, Logf: g.logf, Spender: v.Chain.Spender}
 	d := &publish.Delivery{Facade: cfg.Facade, Hosts: cfg.Hosts, Providers: cfg.Providers, Uploads: cfg.Uploads, HTTP: hostHC, Quorum: cfg.Quorum}
-	fees := mint.DefaultFees
-	if cfg.FeeRate > 0 {
-		fees.SatPerByte = cfg.FeeRate
-	}
-	if cfg.FeeFloor > 0 {
-		fees.Floor = cfg.FeeFloor
+	var status acceptance.StatusSource
+	if v.Arcade != nil {
+		status = v.Arcade
 	}
 	// Fronts are named by advertisements and statements anyone can make:
 	// reached through the same guard as advertised URLs.
 	frontHC := &http.Client{Timeout: 2 * time.Minute, Transport: fetchTransport(pool, cfg.FetchPrivate),
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	pub, err := publish.Open(ctx, publish.Config{Dir: g.home, Asset: asset, Settler: settler, Fees: fees, Mainnet: cfg.Network == "main",
-		Accept: cfg.AcceptPolicy(), Status: statusOf(cfg),
+	pub, err := publish.Open(ctx, publish.Config{Dir: g.home, Chain: v.Chain, Known: v.Known, Tip: v.Tip, Settler: v.Settler,
+		FeeSource: v.FeeSource, Mainnet: cfg.Network == "main", Accept: cfg.AcceptPolicy(), Status: status,
 		PieceTree: cfg.PieceTree, EntryTree: cfg.EntryTree, HoldAhead: cfg.HoldAhead, Store: st, Delivery: d, Reader: rd, FrontHTTP: frontHC, Logf: g.logf})
 	if errors.Is(err, publish.ErrInUse) {
 		return nil, usage("%v: one process at a time uses a home; a running gateway (bstore s3d) holds its identities and judges, settles and reclaims their races itself, so stop it to run this command there", err)
@@ -255,7 +267,7 @@ func (g *global) open(ctx context.Context) (*home, error) {
 	if err != nil {
 		return nil, err
 	}
-	h := &home{g: g, cfg: cfg, pub: pub, rd: rd, store: st, fetch: fetchHC, hostHC: hostHC}
+	h := &home{g: g, cfg: cfg, view: v, pub: pub, rd: rd, store: st, fetch: fetchHC, hostHC: hostHC}
 	h.tool = &anchor.Tool{Pub: pub, Reader: rd, Store: anchor.OpenStore(g.home), Logf: g.logf}
 	return h, nil
 }
@@ -281,28 +293,6 @@ func (h *home) chain() (reader.Chain, error) {
 		}
 	}
 	return reader.Chain{}, usage("bucket %s is not in config.json (bstore bucket add, or bucket new)", want)
-}
-
-// statusOf is arcade's status for a settlement remitted before it mines,
-// when the settlement leg is arcade; nil otherwise.
-func statusOf(c *Config) acceptance.StatusSource {
-	if kind, addr, _ := strings.Cut(c.Settle, ":"); kind == "arcade" {
-		return &bpub.Arcade{Base: addr, Key: c.ArcadeKey}
-	}
-	return nil
-}
-
-func settlerOf(c *Config) (bpub.Settler, error) {
-	kind, addr, _ := strings.Cut(c.Settle, ":")
-	switch kind {
-	case "tcp":
-		return efleg.Wrap(&bpub.TCPIngress{Addr: addr}, &nodeapi.Asset{Base: c.Node}), nil
-	case "rpc":
-		return &bpub.RPCSettler{RPC: &nodeapi.RPC{URL: addr, User: c.RPCUser, Pass: c.RPCPass, ID: "bstore"}}, nil
-	case "arcade":
-		return efleg.Wrap(&bpub.Arcade{Base: addr, Key: c.ArcadeKey}, &nodeapi.Asset{Base: c.Node}), nil
-	}
-	return nil, errors.New("settle is tcp:, rpc: or arcade:")
 }
 
 func certPool(path string) (*x509.CertPool, error) {

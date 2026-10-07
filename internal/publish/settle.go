@@ -143,8 +143,8 @@ var (
 
 func (p *Publisher) newPayer(ctx context.Context) *producer.Payer {
 	pay := &producer.Payer{Pool: p.wallet.Pool, Keys: map[string]*bwallet.Signer{p.signer.IdentityHex(): p.signer},
-		Kept: p.kept, Settler: p.cfg.Settler, Asset: p.cfg.Asset, Fees: p.cfg.Fees, Note: p.note, Poll: p.cfg.Poll}
-	if h, err := p.cfg.Asset.BestHeader(ctx); err == nil {
+		Kept: p.kept, Settler: p.cfg.Settler, Chain: p.cfg.Chain, Fees: p.fees(), Note: p.note, Poll: p.cfg.Poll}
+	if h, err := p.bestHeader(ctx); err == nil {
 		pay.Tip = h.Height
 	}
 	return pay
@@ -153,7 +153,7 @@ func (p *Publisher) newPayer(ctx context.Context) *producer.Payer {
 // unspent is a spend source's positive evidence: "" with no error is
 // unspent; a txid is spent by it; anything else decides nothing.
 func (p *Publisher) unspent(ctx context.Context, txid string, vout uint32) (bool, string, error) {
-	by, err := p.cfg.Asset.Spender(ctx, txid, vout)
+	by, err := p.cfg.Chain.Spender(ctx, txid, vout)
 	if err != nil {
 		return false, "", fmt.Errorf("%w: the spend source cannot say whether %s.%d is spent: %v", ErrNotYet, short(txid), vout, err)
 	}
@@ -190,7 +190,7 @@ func (p *Publisher) adChain(ctx context.Context, txid string, vout uint32, adv [
 			return first, nil
 		}
 		cur.Spent = true
-		raw, err := p.cfg.Asset.TxRaw(ctx, by)
+		raw, err := p.cfg.Chain.TxRaw(ctx, by)
 		if err != nil {
 			return nil, fmt.Errorf("%w: the transaction that spends advertisement %s: %v", ErrNotYet, short(txid), err)
 		}
@@ -234,7 +234,7 @@ func (p *Publisher) Settle(ctx context.Context, r *Race, force bool) (*SettleRec
 		return nil, ErrPastDeadline
 	}
 	e := r.entry
-	tip, err := p.cfg.Asset.BestHeader(ctx)
+	tip, err := p.bestHeader(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNoTip, err)
 	}
@@ -330,7 +330,7 @@ func (p *Publisher) buildSettlement(ctx context.Context, r *Race, hold *HoldReco
 		return nil, fmt.Errorf("publish: the payouts sum to %d, not the hold output's %d", sum, hold.Sats)
 	}
 	pay := p.newPayer(ctx)
-	fee, err := pay.TakeAtLeast(ctx, p.cfg.Fees.Floor*4)
+	fee, err := pay.TakeAtLeast(ctx, p.floor()*4)
 	if err != nil {
 		return nil, feeError(err)
 	}
@@ -369,8 +369,8 @@ func (p *Publisher) buildSettlement(ctx context.Context, r *Race, hold *HoldReco
 	}
 	feeIn := fee.Tx.Outputs[fee.Vout].Satoshis
 	size := uint64(10 + 2*150 + (len(tx.Outputs)+1)*34)
-	cost := max(p.cfg.Fees.Floor, p.cfg.Fees.SatPerByte*size)
-	if feeIn < cost+p.cfg.Fees.Floor {
+	cost := max(p.floor(), p.rateFee(size))
+	if feeIn < cost+p.floor() {
 		pay.GiveBack()
 		return nil, fmt.Errorf("fee input: %d satoshis does not cover the fee %d", feeIn, cost)
 	}
@@ -405,7 +405,7 @@ func (p *Publisher) resumeSettlement(ctx context.Context, r *Race) error {
 		return err
 	}
 	if s.Bump == "" {
-		mp, height, perr := p.cfg.Asset.Proof(ctx, s.Txid)
+		mp, height, perr := p.cfg.Chain.Proof(ctx, s.Txid)
 		if perr != nil {
 			cf, err := p.SpentElsewhere(ctx, tx)
 			if err != nil {
@@ -614,7 +614,7 @@ func (p *Publisher) Reclaim(ctx context.Context, r *Race) (*ReclaimRecord, error
 	case RaceSettled, RaceSettling, RaceRemitted, RaceReclaimd:
 		return nil, fmt.Errorf("publish: race %s is %s", short(r.Entry), r.State)
 	}
-	tip, err := p.cfg.Asset.BestHeader(ctx)
+	tip, err := p.bestHeader(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNoTip, err)
 	}
@@ -657,7 +657,7 @@ func (p *Publisher) reclaimHold(ctx context.Context, hold *HoldRecord) (*Reclaim
 		return nil, err
 	}
 	pay := p.newPayer(ctx)
-	fee, err := pay.TakeAtLeast(ctx, p.cfg.Fees.Floor*4)
+	fee, err := pay.TakeAtLeast(ctx, p.floor()*4)
 	if err != nil {
 		return nil, feeError(err)
 	}
@@ -670,7 +670,7 @@ func (p *Publisher) reclaimHold(ctx context.Context, hold *HoldRecord) (*Reclaim
 	tx.AddInputFromTx(holdTx, hold.Vout, storerec.HoldDerivation.Unlocker(ctx, p.wallet, p.wallet.Originator))
 	tx.AddInputFromTx(fee.Tx, fee.Vout, fee.Unlocker)
 	in := hold.Sats + fee.Tx.Outputs[fee.Vout].Satoshis
-	cost := max(p.cfg.Fees.Floor, p.cfg.Fees.SatPerByte*uint64(10+2*150+34))
+	cost := max(p.floor(), p.rateFee(uint64(10+2*150+34)))
 	tx.AddOutput(&transaction.TransactionOutput{Satoshis: in - cost, LockingScript: change})
 	if err := refuseMixed(tx); err != nil {
 		pay.GiveBack()
@@ -731,7 +731,7 @@ func (p *Publisher) sendSpend(ctx context.Context, what, rawHex, txid string) (*
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	if mp, height, err := p.cfg.Asset.Proof(ctx, txid); err == nil {
+	if mp, height, err := p.cfg.Chain.Proof(ctx, txid); err == nil {
 		tx.MerklePath = mp
 		p.newPayer(ctx).Change(tx, height, mp)
 		return mp, height, nil, nil
@@ -890,7 +890,7 @@ func (p *Publisher) Logf(format string, args ...any) { p.cfg.Logf(format, args..
 func (p *Publisher) Settler() bpub.Settler { return p.cfg.Settler }
 
 // Fees is the identity's fee policy.
-func (p *Publisher) Fees() mint.Fees { return p.cfg.Fees }
+func (p *Publisher) Fees() mint.Fees { return p.fees() }
 
 // Now is the identity's clock.
 func (p *Publisher) Now() time.Time { return p.cfg.Now() }

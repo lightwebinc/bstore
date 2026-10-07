@@ -81,7 +81,7 @@ type ChallengeResult struct {
 }
 
 // ErrNoTip is a buyer with no tip to seed a request from.
-var ErrNoTip = errors.New("publish: the node did not answer its tip")
+var ErrNoTip = errors.New("publish: the header source did not answer its tip")
 
 // SeedBack is how many blocks below the buyer's tip a request is seeded:
 // an answerer whose headers are a block or two behind still holds the
@@ -89,19 +89,20 @@ var ErrNoTip = errors.New("publish: the node did not answer its tip")
 const SeedBack = 2
 
 // NewRequest builds a challenge request seeded SeedBack blocks below the
-// node's tip.
+// header source's tip.
 func (p *Publisher) NewRequest(ctx context.Context, ch *Challenge) (*storerec.Request, []byte, error) {
-	h, err := p.cfg.Asset.BestHeader(ctx)
+	height, err := p.cfg.Tip.CurrentHeight(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %v", ErrNoTip, err)
 	}
-	height, hash := h.Height, h.Hash
 	if height > SeedBack {
 		height -= SeedBack
-		if hash, err = p.cfg.Asset.HashAtHeight(ctx, height); err != nil {
-			return nil, nil, fmt.Errorf("%w: %v", ErrNoTip, err)
-		}
 	}
+	h, err := p.cfg.Tip.HeaderAt(ctx, height)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: %v", ErrNoTip, err)
+	}
+	hash := h.Hash.String()
 	seed, err := chainhash.NewHashFromHex(hash)
 	if err != nil {
 		return nil, nil, err

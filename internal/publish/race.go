@@ -320,7 +320,7 @@ func (p *Publisher) Step(ctx context.Context, r *Race, o RaceOptions) error {
 		return nil
 	}
 	e := r.entry
-	tip, err := p.cfg.Asset.BestHeader(ctx)
+	tip, err := p.bestHeader(ctx)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrNoTip, err)
 	}

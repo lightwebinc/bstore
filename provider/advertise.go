@@ -141,7 +141,7 @@ func (p *Provider) advertise(ctx context.Context, root [32]byte, until uint64) (
 	// A block may come at once; the rest is the background's.
 	wctx, cancel := context.WithTimeout(ctx, adWait)
 	defer cancel()
-	if mp, height, err := nodeapi.WaitMined(wctx, p.asset, pa.Txid, 250*time.Millisecond); err == nil {
+	if mp, height, err := nodeapi.WaitMinedOn(wctx, p.chain, pa.Txid, 250*time.Millisecond); err == nil {
 		if rec, err := p.finishAd(pa, tx, mp, height); err == nil {
 			return adAdvert(rec)
 		}
@@ -324,17 +324,17 @@ func (p *Provider) resumeAds(ctx context.Context) {
 			p.logf("pending advertisement %s: %v", short(pa.Txid), err)
 			continue
 		}
-		if mp, height, err := p.asset.Proof(ctx, pa.Txid); err == nil {
+		if mp, height, err := p.chain.Proof(ctx, pa.Txid); err == nil {
 			if _, err := p.finishAd(pa, tx, mp, height); err != nil {
 				p.logf("pending advertisement %s: %v", short(pa.Txid), err)
 			}
 			p.payer.Change(tx, height, mp)
 			continue
 		}
-		if _, err := p.asset.TxMeta(ctx, pa.Txid); err == nil {
+		if known, err := p.view.Known.Known(ctx, pa.Txid); err == nil && known {
 			continue // known, not mined yet
 		}
-		by, err := p.asset.Spender(ctx, pa.Tree, pa.Vout)
+		by, err := p.chain.Spender(ctx, pa.Tree, pa.Vout)
 		if err != nil {
 			continue
 		}
@@ -348,7 +348,7 @@ func (p *Provider) resumeAds(ctx context.Context) {
 			continue
 		}
 		if pa.Prev != nil {
-			if by, err := p.asset.Spender(ctx, pa.Prev.Txid, pa.Prev.Vout); err == nil && by != "" && by != pa.Txid {
+			if by, err := p.chain.Spender(ctx, pa.Prev.Txid, pa.Prev.Vout); err == nil && by != "" && by != pa.Txid {
 				p.logf("pending renewal %s: the advertisement it renews was spent by %s; the root is advertised afresh", short(pa.Txid), short(by))
 				p.mu.Lock()
 				p.st.dropPendingAd(pa.Txid)

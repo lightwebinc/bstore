@@ -128,15 +128,15 @@ var ErrCannotPay = errors.New("publish: this identity cannot pay now")
 func (a *authClient) purse(ctx context.Context, maxPay uint64, pool *bwallet.Pool) *purse.Purse {
 	p := a.p
 	tip := uint32(0)
-	if h, err := p.cfg.Asset.BestHeader(ctx); err == nil {
+	if h, err := p.bestHeader(ctx); err == nil {
 		tip = h.Height
 	}
 	newPayer := func() *producer.Payer {
 		return &producer.Payer{Pool: pool, Tip: tip, Keys: map[string]*bwallet.Signer{p.signer.IdentityHex(): p.signer},
-			Kept: p.kept, Settler: p.cfg.Settler, Asset: p.cfg.Asset, Fees: p.cfg.Fees, Note: p.note, Poll: p.cfg.Poll}
+			Kept: p.kept, Settler: p.cfg.Settler, Chain: p.cfg.Chain, Fees: p.fees(), Note: p.note, Poll: p.cfg.Poll}
 	}
-	return &purse.Purse{Embedded: p.wallet, NewPayer: newPayer, Fees: p.cfg.Fees, MaxPay: maxPay,
-		Settler: p.cfg.Settler, Asset: p.cfg.Asset, Wait: 10 * time.Minute, Poll: 250 * time.Millisecond}
+	return &purse.Purse{Embedded: p.wallet, NewPayer: newPayer, Fees: p.fees(), MaxPay: maxPay,
+		Settler: p.cfg.Settler, Chain: p.cfg.Chain, Wait: 10 * time.Minute, Poll: 250 * time.Millisecond}
 }
 
 // do sends one request over BRC-104, paying a 402 up to maxPay. A payment
@@ -301,7 +301,7 @@ func (ap *authPool) client(raw string) *authClient {
 func (p *Publisher) CollectChange(ctx context.Context) {
 	p.proveCoins(ctx)
 	for _, txid := range p.wallet.Pool.UnprovenTxids() {
-		mp, height, err := p.cfg.Asset.Proof(ctx, txid)
+		mp, height, err := p.cfg.Chain.Proof(ctx, txid)
 		if err != nil {
 			continue
 		}
@@ -350,7 +350,7 @@ func (p *Publisher) ReconcilePayments(ctx context.Context) int {
 	p.mu.Unlock()
 	settled := map[string]bool{}
 	for _, r := range pays {
-		if mp, height, err := p.cfg.Asset.Proof(ctx, r.Txid); err == nil {
+		if mp, height, err := p.cfg.Chain.Proof(ctx, r.Txid); err == nil {
 			_, _ = p.wallet.Pool.Prove(r.Txid, funding.BumpHex(mp), height)
 			settled[r.Txid] = true
 			continue

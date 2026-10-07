@@ -45,6 +45,10 @@
  *                            through, and the node's asset service (spend
  *                            view, proofs); without both every payment is
  *                            held until mined (accept.ts)
+ *   BSTORE_CHAIN, BSTORE_WOC_KEY
+ *                            woc:main or woc:test, with an optional API key:
+ *                            WhatsOnChain as the spend view and proofs, for
+ *                            a host with no node (not with BSTORE_ASSET_URL)
  *   BSTORE_ACCEPT_THRESHOLD_SATS, BSTORE_ACCEPT_PAYER_LIMIT,
  *   BSTORE_ACCEPT_TOTAL_LIMIT, BSTORE_ACCEPT_WINDOW, BSTORE_ACCEPT_WATCH
  *                            the acceptance rule; default 25000000, one

@@ -43,6 +43,7 @@ import (
 	"github.com/lightwebinc/bcommon/acceptance"
 	"github.com/lightwebinc/bcommon/bwallet"
 	"github.com/lightwebinc/bcommon/carrier"
+	"github.com/lightwebinc/bcommon/feepolicy"
 	"github.com/lightwebinc/bcommon/funding"
 	"github.com/lightwebinc/bcommon/mint"
 	"github.com/lightwebinc/bcommon/nodeapi"
@@ -50,6 +51,7 @@ import (
 	bpub "github.com/lightwebinc/bcommon/publish"
 	"github.com/lightwebinc/bcommon/pushdrop"
 
+	"github.com/lightwebinc/bstore/internal/chaincfg"
 	"github.com/lightwebinc/bstore/internal/reader"
 	"github.com/lightwebinc/bstore/storerec"
 )
@@ -83,11 +85,20 @@ func Init(dir string) (string, error) {
 type Config struct {
 	// Dir is the identity's directory: wallet/, publisher.json, outbox/.
 	Dir string
-	// Asset is the node proofs and spends are asked of; Settler the
-	// settlement leg mined transactions are handed to.
-	Asset   *nodeapi.Asset
+	// Chain is the chain view transactions, proofs and spends are asked
+	// of (a node, or WhatsOnChain: chaincfg); Known says whether a
+	// transaction sent is held, mined or not (nil: never, so one not
+	// mined is sent again); Tip is the header source's height and its
+	// header by height. Settler is the settlement leg transactions are
+	// handed to.
+	Chain   nodeapi.Chain
+	Known   nodeapi.KnownSource
+	Tip     chaincfg.Tip
 	Settler bpub.Settler
-	Fees    mint.Fees
+	// Fees is the fee policy, or FeeSource, when set, answers it for each
+	// build (a broadcaster's live policy).
+	Fees      mint.Fees
+	FeeSource feepolicy.Source
 	// Accept is the payment acceptance rule a settlement is remitted by:
 	// one whose largest payout is at or below its threshold is remitted on
 	// Status's word that the network took it, before it mines. With no
@@ -272,8 +283,8 @@ func Open(ctx context.Context, cfg Config) (*Publisher, error) {
 	if cfg.Fees == (mint.Fees{}) {
 		cfg.Fees = mint.DefaultFees
 	}
-	if cfg.Store == nil || cfg.Delivery == nil || cfg.Asset == nil || cfg.Settler == nil {
-		return nil, errors.New("publish: a store, a delivery, a node and a settlement leg are required")
+	if cfg.Store == nil || cfg.Delivery == nil || cfg.Chain == nil || cfg.Tip == nil || cfg.Settler == nil {
+		return nil, errors.New("publish: a store, a delivery, a chain view, a header source and a settlement leg are required")
 	}
 	lk, err := lockDirWait(ctx, cfg.Dir, cfg.LockWait)
 	if err != nil {
@@ -305,7 +316,7 @@ func Open(ctx context.Context, cfg Config) (*Publisher, error) {
 	}
 	p.kept = &producer.Kept{Load: p.loadKept}
 	p.payer = &producer.Payer{Pool: w.Pool, Keys: map[string]*bwallet.Signer{p.signer.IdentityHex(): p.signer},
-		Kept: p.kept, Settler: cfg.Settler, Asset: cfg.Asset, Fees: cfg.Fees, Note: p.note, Poll: cfg.Poll}
+		Kept: p.kept, Settler: cfg.Settler, Chain: cfg.Chain, Fees: p.fees(), Note: p.note, Poll: cfg.Poll}
 	p.pieces = p.newTrees(kindPiece, storerec.PieceDerivation, cfg.PieceTree, cfg.PieceAhead)
 	p.ents = p.newTrees(kindEntry, storerec.EntryDerivation, cfg.EntryTree, cfg.EntryAhead)
 	p.outs = p.newTrees(kindOutcome, storerec.OutcomeDerivation, cfg.EntryTree, cfg.EntryAhead)
@@ -349,8 +360,48 @@ func (p *Publisher) Close() {
 // Dir is the identity's directory.
 func (p *Publisher) Dir() string { return p.cfg.Dir }
 
-// Asset is the node the identity asks.
-func (p *Publisher) Asset() *nodeapi.Asset { return p.cfg.Asset }
+// Chain is the chain view the identity asks.
+func (p *Publisher) Chain() nodeapi.Chain { return p.cfg.Chain }
+
+// bestTip is the header source's height, in the shape a node's best
+// header had.
+type bestTip struct{ Height uint32 }
+
+func (p *Publisher) bestHeader(ctx context.Context) (bestTip, error) {
+	h, err := p.cfg.Tip.CurrentHeight(ctx)
+	return bestTip{Height: h}, err
+}
+
+// fees is the fee policy now.
+func (p *Publisher) fees() mint.Fees {
+	if p.cfg.FeeSource != nil {
+		if f, err := p.cfg.FeeSource.Fees(p.run); err == nil {
+			return f
+		}
+	}
+	return p.cfg.Fees
+}
+
+// floor is the least fee a transaction pays.
+func (p *Publisher) floor() uint64 { return p.fees().Floor }
+
+// rateFee is the fee rate's part of a size's fee, rounded up, with no
+// floor: what a builder that adds the floor itself adds to it.
+func (p *Publisher) rateFee(size uint64) uint64 {
+	f := p.fees()
+	f.Floor, f.Max = 0, 0
+	fee, err := f.For(int(min(size, 1<<40))) //nolint:gosec // bounded above
+	if err != nil {
+		return 0
+	}
+	return fee
+}
+
+// wholeRate is the fee rate rounded up to whole satoshis a byte, for a
+// builder that takes only that (carrier.Sweep): at least 1.
+func (p *Publisher) wholeRate() uint64 {
+	return max(p.rateFee(1), 1)
+}
 
 // Delivery is how the identity reaches hosts and providers.
 func (p *Publisher) Delivery() *Delivery { return p.cfg.Delivery }
@@ -568,7 +619,7 @@ func (p *Publisher) recoverTrees(ctx context.Context) error {
 // already hold spent.
 func (p *Publisher) spend(ctx context.Context, kind string, need uint32) (*transaction.Transaction, uint32, error) {
 	trees := p.treesOf(kind)
-	if h, err := p.cfg.Asset.BestHeader(ctx); err == nil {
+	if h, err := p.bestHeader(ctx); err == nil {
 		p.payer.Tip = h.Height
 	}
 	if err := p.promoteAhead(kind); err != nil {
