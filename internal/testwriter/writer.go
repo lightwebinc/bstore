@@ -1,5 +1,6 @@
 // Package testwriter is a minimal bstore writer for tests only: it funds
-// itself from a local test chain's coinbase, builds an object's CHIRP
+// itself from a local test chain's coinbase (coinbase: only on a regtest
+// chain you run, development and tests), builds an object's CHIRP
 // closure, mints its piece carriers, a hold output and the entry, submits
 // them, asks hosts for advertisements, challenges providers, verifies their
 // signed responses as a buyer does (spec section 7.4), buys renewals, and

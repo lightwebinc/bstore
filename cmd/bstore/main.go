@@ -54,8 +54,11 @@ an identity (a home):
   init -node URL -settle LEG -headers URL -hosts URLS [flags]
                               create the home: wallet and config.json
   fund                        print the fund address and the pool
-  fund -blocks N              a test network only: mine N blocks to the fund address
-  fund -from H [-to H]        take coin paid to the fund address in blocks H.. into the pool
+  fund -txid TXID             import a mined payment you sent to the fund address
+  fund -blocks N              coinbase: only on a regtest chain you run (development and tests);
+                              mine N blocks to the fund address
+  fund -from H [-to H]        coinbase: only on a regtest chain you run (development and tests);
+                              take coinbase paying the fund address in blocks H.. into the pool
   doctor                      the home, what is owed, and whether everything answers; reads only
   terms URL                   a provider's front terms, or a host's ls_bstore terms
 

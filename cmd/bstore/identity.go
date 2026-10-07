@@ -16,10 +16,12 @@ import (
 
 	"github.com/lightwebinc/bcommon/bwallet"
 	"github.com/lightwebinc/bcommon/funding"
+	"github.com/lightwebinc/bcommon/headers"
 	"github.com/lightwebinc/bcommon/nodeapi"
 	"github.com/lightwebinc/bcommon/termsafe"
 
 	"github.com/lightwebinc/bstore/internal/anchor"
+	"github.com/lightwebinc/bstore/internal/fundimport"
 	"github.com/lightwebinc/bstore/internal/publish"
 	"github.com/lightwebinc/bstore/internal/reader"
 	"github.com/lightwebinc/bstore/storerec"
@@ -34,10 +36,10 @@ Back up the home: the wallet is the identity.`
 
 func cmdInit(ctx context.Context, g *global, args []string) error {
 	fs := g.flagSet("init", initHelp)
-	network := fs.String("network", "main", "main, test or regtest")
+	network := fs.String("network", "main", "main, test, or regtest (a chain you run)")
 	node := fs.String("node", "", "the node's asset API URL")
 	settle := fs.String("settle", "", "the settlement leg: rpc:URL, tcp:ADDR or arcade:URL")
-	hdr := fs.String("headers", "", "the header source URL")
+	hdr := fs.String("headers", "", "the header source: woc:main, woc:test, chaintracks:URL, or a bridge URL")
 	hosts := fs.String("hosts", g.hosts, "overlay hosts, comma separated")
 	facade := fs.String("facade", "", "the plane's facade (none: unicast to hosts and providers)")
 	providers := fs.String("providers", "", "providers' submit URLs, comma separated")
@@ -78,18 +80,28 @@ func cmdInit(ctx context.Context, g *global, args []string) error {
 	return nil
 }
 
-const fundHelp = `usage: bstore fund [-blocks N | -from H [-to H]]
+const fundHelp = `usage: bstore fund [-txid TXID | -blocks N | -from H [-to H]]
 
-With no flag, print the identity, its fund address and its pool. -from
-takes the outputs paid to the fund address in blocks H to the tip (or -to)
-into the pool. -blocks, on a test network only, mines N blocks to the fund
-address through the node's RPC (settle rpc:URL) and pools the coinbase.`
+With no flag, print the identity, its fund address and its pool.
+
+-txid imports a payment you made: send a small amount from your own wallet
+to the fund address, wait for it to be mined, then pass its txid. Every
+output of it that pays the fund address and that the node shows unspent is
+taken into the pool, its proof checked against the header source. This is
+how a home is funded on mainnet and testnet.
+
+-blocks and -from are coinbase: only on a regtest chain you run
+(development and tests). -blocks mines N blocks to the fund address through
+the node's RPC (settle rpc:URL) and pools the coinbase; -from takes the
+coinbase outputs paying the fund address in blocks H to the tip (or -to)
+into the pool, and finds no ordinary payment.`
 
 func cmdFund(ctx context.Context, g *global, args []string) error {
 	fs := g.flagSet("fund", fundHelp)
-	blocks := fs.Int("blocks", 0, "blocks to mine (a test network)")
-	from := fs.Uint("from", 0, "first block height to rescan")
-	to := fs.Uint("to", 0, "last block height to rescan (default the tip)")
+	txid := fs.String("txid", "", "import the outputs of a mined payment to the fund address (mainnet, testnet)")
+	blocks := fs.Int("blocks", 0, "coinbase: only on a regtest chain you run (development and tests): blocks to mine to the fund address")
+	from := fs.Uint("from", 0, "coinbase: only on a regtest chain you run (development and tests): first block height to rescan for coinbase")
+	to := fs.Uint("to", 0, "last block height to rescan for coinbase (default the tip)")
 	if pos, err := parse(fs, args); err != nil {
 		return err
 	} else if len(pos) > 0 {
@@ -103,10 +115,25 @@ func cmdFund(ctx context.Context, g *global, args []string) error {
 	w := h.pub.Wallet()
 	asset := h.pub.Asset()
 	switch {
+	case *txid != "":
+		hc, err := headers.NewSource(h.cfg.Headers)
+		if err != nil {
+			return usage("headers: %v", err)
+		}
+		res, err := fundimport.Import(ctx, w.Signer(), w.Pool, asset, hc, *txid)
+		if errors.Is(err, fundimport.ErrNotMined) {
+			return incomplete("%v", err)
+		}
+		if err != nil {
+			return err
+		}
+		g.out("%s mined at height %d: %d output(s) to the fund address, %d imported (%d satoshis), %d already held, %d spent",
+			res.TxID, res.Height, res.Paying, res.Added, res.Satoshis, res.Held, res.Spent)
+		g.out("pool %d output(s), %d satoshis", w.Pool.Count(), w.Pool.Balance())
 	case *blocks > 0:
 		kind, addr, _ := strings.Cut(h.cfg.Settle, ":")
 		if kind != "rpc" || h.cfg.Network == "main" {
-			return usage("fund -blocks needs a test network's node: settle rpc:URL and network test or regtest")
+			return usage("fund -blocks is coinbase: only on a regtest chain you run (development and tests), with settle rpc:URL; on mainnet and testnet pay the fund address and use fund -txid")
 		}
 		rpc := &nodeapi.RPC{URL: addr, User: h.cfg.RPCUser, Pass: h.cfg.RPCPass, ID: "bstore"}
 		n, _, err := bwallet.FundFromCoinbase(ctx, w.Signer(), w.Pool, rpc, asset, *blocks, 50)
