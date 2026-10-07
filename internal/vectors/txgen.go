@@ -79,7 +79,7 @@ func (e *txEnv) fundingTree(a *actor, d pushdrop.Derivation, n int) (*transactio
 	if !bytes.Equal(*lock, storerec.FundingScript(a.key(d))) {
 		return nil, fmt.Errorf("bcommon's funding lock is not the funding script")
 	}
-	t, err := mint.FundingTree(lock, n, 1000, e.fee(a), a.feeLock, mint.DefaultFees)
+	t, err := mint.FundingTree(lock, n, 1000, e.fee(a), a.feeLock, mint.LegacyFees)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +101,7 @@ func (e *txEnv) mintRaw(lock *script.Script, sats uint64, prev *transaction.Tran
 	if prev != nil {
 		in = &mint.Input{Tx: prev, Vout: vout, Unlocker: e.prevUnlocker(prev, vout)}
 	}
-	return mint.Transition(lock, sats, in, e.fee(e.o), e.o.feeLock, mint.DefaultFees)
+	return mint.Transition(lock, sats, in, e.fee(e.o), e.o.feeLock, mint.LegacyFees)
 }
 
 func (e *txEnv) prevUnlocker(prev *transaction.Transaction, vout uint32) transaction.UnlockingScriptTemplate {
