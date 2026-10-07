@@ -18,33 +18,53 @@ time uses a home (an advisory lock on its directory): two processes writing
 one identity's records would each overwrite what the other spent. Back the
 home up: the wallet is the identity.
 
+No node is needed: on mainnet and testnet the home reads the chain from
+WhatsOnChain and broadcasts through GorillaPool's public arcade unless
+`config.json` names other backends (a node of your own, `-chain
+asset:URL`, is the better chain view; see
+[configuration.md](configuration.md#networks-and-endpoints)).
+
 ```console
-$ bstore init -network main -node https://node.example.com \
-    -settle arcade:https://arcade.example.com -headers woc:main \
+$ bstore init -network main \
     -hosts https://overlay.example.com -facade https://plane.example.com
 identity 02...
 $ bstore fund
 identity     02...
 fund address 1...
 pool         0 output(s), 0 satoshis
+$ bstore fund -beef payment.beef
 $ bstore fund -txid <txid>
 ```
 
-**Funding.** Send a small amount from your own wallet to the fund address,
-wait for it to be mined, and import it with `fund -txid TXID`: every output
-of it that pays the fund address and that the node shows unspent goes into
-the pool, its proof checked against the header source first. Importing the
-same payment again adds nothing; an output already spent is left out. On
-testnet use `-network test` and `-headers woc:test`.
+**Funding.** Send a small amount from your own wallet to the fund address
+and import the payment, either way:
+
+- `fund -beef FILE` (or `-` for standard input) takes the payment as the
+  BEEF your wallet handed over, with no lookup. A mined payment's proof is
+  checked against the header source. One not mined yet is taken when every
+  transaction it spends is proven; it is sent to the settlement leg in case
+  the wallet did not broadcast it, and its outputs wait in the pool until it
+  mines. `-refuse-unmined` (or `refuse_unmined` in `config.json`) takes
+  mined payments only.
+- `fund -txid TXID` takes a mined payment by its txid, fetched with its
+  proof from the chain view and the proof checked against the header
+  source. One not mined yet exits 3: import it once it has a block.
+
+Every output that pays the fund address, that the pool does not hold and
+that the chain view does not show spent goes into the pool. Importing the
+same payment again adds nothing. A payment that pays the fund address
+nothing is refused (exit 1). On testnet use `-network test`.
 
 `fund -blocks N` and `fund -from H [-to H]` are **coinbase: only on a
-regtest chain you run (development and tests)**. `-blocks` mines `N` blocks
-to the fund address through the node's RPC (`settle rpc:URL`); `-from`
+regtest chain you run (development and tests)**, with `chain asset:URL`.
+`-blocks` mines `N` blocks to the fund address through the node's RPC
+(`settle rpc:URL`); `-from`
 takes the coinbase outputs paying the fund address in blocks `H` to the tip
 into the pool, and finds no ordinary payment.
 
-`doctor` reports the home and whether everything it names answers, and
-changes nothing. `terms URL` prints a provider's terms (its front, ending
+`doctor` reports the home, the fee policy in force and whether everything
+it names answers (the chain view, the header source, the settlement leg,
+the hosts and the providers), and changes nothing. `terms URL` prints a provider's terms (its front, ending
 `/bstore/v1`) or a host's `ls_bstore` terms.
 
 ### config.json
@@ -78,7 +98,7 @@ a host's operator adds to its served chains. `bucket add BUCKET -owner KEY
 (spec sections 3.4 and 4.4):
 
 1. The chain is rebuilt from the hosts every run: the highest token any host
-   answers that verifies against this home's headers and that the node shows
+   answers that verifies against this home's headers and that the chain view shows
    unspent, walked back by `prev` through `bucket-seq` to seq 0, every link
    and the first token's bucket id checked. Its fold must be consistent; a
    broken chain is refused (exit 1) and the way on is a new chain. The set of
@@ -92,8 +112,8 @@ a host's operator adds to its served chains. `bucket add BUCKET -owner KEY
    named and the run is incomplete (exit 3). A host that withholds an entry
    delays it; another host's answer still finds it.
 3. Each entry's funding outpoint must be unspent by positive evidence from
-   the node: a swept entry is skipped for good, and one the node cannot vouch
-   for waits for the next run (exit 3).
+   the chain view: a swept entry is skipped for good, and one the chain
+   view cannot vouch for waits for the next run (exit 3).
 4. The batch is folded against the current map before anything is minted:
    one key's entries ordered by `created`, then commitment, the last deciding
    and the rest consumed; a delete of a key the map does not hold, and a put
@@ -211,7 +231,7 @@ $ bstore settle
   -close`. With fewer than `t` when the window ends nothing is paid.
 
 `settle` pays by rank (spec section 9.5). It first checks each payee's
-advertisement unspent by positive evidence from the node, a renewal
+advertisement unspent by positive evidence from the chain view, a renewal
 successor counting as unspent; a canceled one is dropped, the ranks below
 move up, the next passed candidate fills the last place, and `t` is counted
 again. One transaction spends the hold output and pays rank `i` the
@@ -227,7 +247,7 @@ the same bytes and never builds a second settlement for the hold output.
 Once it mines, each payee's remittance goes, unicast, to the `settle` route
 of the advertiser's own front, derived from its advertisement, never to a
 front that answered for it; `settle` again resends any a payee has not
-taken. A payee whose output the node shows spent has its share and is owed
+taken. A payee whose output the chain view shows spent has its share and is owed
 nothing more, remitted or not. A payee that passed at a front other than
 its own (a bridge in front of an incumbent UHRP host) has no settle route
 of its own: the front forwards the settlement to it (C28), so its
@@ -322,8 +342,8 @@ advertisement; 1 an answer that does not check; 2 a price over the budget.
   session, hold transactions not yet seen mined, the change of payments
   made; then records which of this identity's entries a token has named. A
   BRC-105 payment is kept once it has left this process, answered or not,
-  since the payee may broadcast it; one the node has not seen in an hour,
-  whose coin the node shows unspent, gives its coin back. A refusal that
+  since the payee may broadcast it; one the chain view has not seen in an hour,
+  whose coin the chain view shows unspent, gives its coin back. A refusal that
   carries the payee's signed note that it did not take the payment (spec
   section 10.4) gives the coin back at once.
 - Paid calls take a small payment coin of their own: coins split off the
@@ -339,8 +359,8 @@ advertisement; 1 an answer that does not check; 2 a price over the budget.
   objects, open races with the blocks left to their deadline, settlements
   not mined or not remitted, bounties to reclaim, entries no token has
   named, tokens recorded and not published. A settlement remitted before
-  it mines whose proof the node has not served for an hour is named as an
-  `ALARM` (by `doctor` too): it may never mine. It asks the node about each
+  it mines whose proof the chain view has not served for an hour is named as an
+  `ALARM` (by `doctor` too): it may never mine. It asks the chain view about each
   unremitted payee's output first: a spent one is done. A forwarded
   payee's share (above) is listed and not owed. A claim by an incumbent's
   operator (`bstore-bridge claim`) is not visible from here: it changes
@@ -371,7 +391,7 @@ copy anyone kept stays a copy.
 | 0 | done; everything asked verified; a challenge passed; a renewal checked |
 | 1 | refused: a check that names the owner or the writer failed, a broken chain, an invalid signed response, a key proven absent (`NoSuchKey`) |
 | 2 | usage, configuration, local or transport error; a quorum not met; a price over the budget; a home in use by another process |
-| 3 | incomplete: a host answered what does not verify (named), a key no host produces, a challenge with no valid signed answer, a spend the node cannot vouch for, something still owed. It proves nothing either way |
+| 3 | incomplete: a host answered what does not verify (named), a key no host produces, a challenge with no valid signed answer, a spend the chain view cannot vouch for, something still owed. It proves nothing either way |
 
 Everything printed that someone else wrote (keys, URLs, a host's or a
 provider's words) is filtered for the terminal (bcommon `termsafe`).

@@ -233,11 +233,15 @@ $ docker compose --profile cli down -v
 
 ## What changes on a network
 
-- The chain: a real node's asset API (`node`), a settlement leg (`arcade:`
-  or `tcp:`) and a header source (`woc:main`, `woc:test`) in every
-  configuration, `-network main` or `test` (`mainnet: true` for a provider
-  and a gateway on mainnet), and, instead of `fund -blocks`, a payment from
-  your own wallet to each fund address imported with `fund -txid <txid>`.
+- The chain: no node is needed. Drop `node`, `settle` and `headers` and
+  each configuration reads the chain from WhatsOnChain and broadcasts
+  through GorillaPool's public arcade; set `-network main` or `test`
+  (`mainnet: true` for a provider and a gateway on mainnet). Instead of
+  `fund -blocks`, pay each fund address from your own wallet and import
+  the payment with `fund -beef <file>` (the BEEF your wallet hands over)
+  or `fund -txid <txid>` once it has a block. A node of your own
+  (`chain asset:<url>`) is the better chain view, and a busy provider or
+  gateway needs it or a WhatsOnChain API key (`woc_key`).
 - Blocks every ten minutes: every step that waits for a block (a bucket
   token, a hold output, an advertisement, a settlement, an anchor) waits
   that long.

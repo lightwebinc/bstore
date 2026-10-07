@@ -66,7 +66,9 @@ by replay (below).
 | `BSTORE_RESPONSES_PER_SEC` | 5 | signed responses a second one BRC-104 session is given |
 | `BSTORE_RESPONSE_BURST` | 20 | the most signed responses one session is given at once |
 | `BSTORE_ARCADE_URL` | none | arcade, which the host broadcasts each payment through before it answers (`POST /tx`, `GET /tx/<txid>`) |
-| `BSTORE_ASSET_URL` | none | the node's asset service: the spend view of a payment's inputs and the proof of a held or watched payment. Without both URLs every payment is held until it mines |
+| `BSTORE_ASSET_URL` | none | a node's asset service as the node view: the spend view of a payment's inputs and the proof of a held or watched payment |
+| `BSTORE_CHAIN` | none | `woc:main` or `woc:test`: WhatsOnChain as the node view, for a host with no node (its "unspent" is taken on its word; every proof is checked against the host's headers). Not with `BSTORE_ASSET_URL`. Without an arcade and a node view every payment is held until it mines |
+| `BSTORE_WOC_KEY` | none | a WhatsOnChain API key, with `BSTORE_CHAIN`: the free tier allows 3 requests a second |
 | `BSTORE_ACCEPT_THRESHOLD_SATS` | 25000000 | the largest payment answered on the network's acceptance; above it a payment is held until it mines |
 | `BSTORE_ACCEPT_PAYER_LIMIT` | the threshold | satoshis one payer may have answered fast and not yet mined; past it, held |
 | `BSTORE_ACCEPT_TOTAL_LIMIT` | ten thresholds | the same across every payer |
@@ -352,10 +354,12 @@ verdict within 10 s, a spend view that cannot say) is answered 402
 `ERR_PAYMENT_HELD` with the reason and no BRC-105 headers, so a client
 does not pay again. The held payment is recorded in `payments.jsonl` with
 `"decision":"hold"`, keeps its coins, and the same payment sent again is
-answered once the node serves its proof and that proof verifies against the
-host's headers. A host with no arcade or no node holds every payment (with
-arcade alone it still broadcasts, and with the node alone it answers a
-payment the node shows mined). At most 100,000 fast payments are watched at
+answered once the node view serves its proof and that proof verifies
+against the host's headers. A host with no arcade or no node view holds
+every payment (with arcade alone it still broadcasts, and with the node
+view alone it answers a payment the node view shows mined). The node view
+is a node (`BSTORE_ASSET_URL`) or, with no node, WhatsOnChain
+(`BSTORE_CHAIN`). At most 100,000 fast payments are watched at
 once; past that a payment is held (`watch-limit`).
 
 Every fast payment is watched on the host's background tick (every 30 s,

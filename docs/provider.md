@@ -104,16 +104,16 @@ size, retention, and whether it holds without a bounty; an entry dated
 more than ten minutes ahead of the provider's clock is declined, and the
 advertisement it asks for must end within `max_retention_seconds` of now)
 and, for a bounty,
-when the provider's own checks of spec section 9.3 pass with its own node
-and headers: the hold output exists, is mined (its proof verifies in the
+when the provider's own checks of spec section 9.3 pass with its own chain
+view and headers: the hold output exists, is mined (its proof verifies in the
 provider's headers), is locked to `derive(writer, "hold")`, holds exactly
-`satoshis`, is unspent by positive evidence from the node (a node that does
-not answer is not evidence), is worth at least `min_bounty`, and the
+`satoshis`, is unspent by positive evidence from the chain view (one that
+does not answer is not evidence), is worth at least `min_bounty`, and the
 entry's `deadline` is at least `min_deadline_blocks` ahead of the tip. One
 hold output settles one entry (spec section 9.2): a second entry naming a
 hold output that backs an entry the provider took is declined. An entry
 whose bounty fails is declined, or held without racing when
-`hold_unbountied` is on; a check the node or the header source could not
+`hold_unbountied` is on; a check the chain view or the header source could not
 answer decides nothing, and the entry is looked at again for
 `unclaimed_seconds`, then declined. An entry the
 provider took is checked against the closure it holds: another size,
@@ -151,19 +151,19 @@ recorded with its fee coin before it reaches the settlement leg (bcommon
 adoption finds the record on its next start and settles it (`Recover`):
 the tree adopted when it is on the chain, held behind the current tree,
 its coin taken out of the pool when another transaction spent it, or its
-coin returned when the node does not know the tree, the record then kept
+coin returned when the chain view does not know the tree, the record then kept
 for one more start and dropped on the second. A tree the library already
 holds is never recovered twice. An advertisement is persisted, with its
 funding output marked used and the lease extended, before it reaches the
 leg; a start finds it and records it once mined, sends the same bytes
-again when the node never saw it, or advertises afresh when its funding
+again when the chain view never saw it, or advertises afresh when its funding
 output went to another transaction.
 
 ### Renewals
 
 `POST <front>/renew` with `{"root": <64 hex>, "until": <Unix seconds>}`
 (spec sections 10.1 and 10.3), over BRC-104. It is always priced (BRC-105;
-`renew_minimum` at least `fee_floor`, so a renewal pays its own fee):
+`renew_minimum` at least the fee floor, so a renewal pays its own fee):
 `renew_per_gib_day`
 for each GiB a day from the later of now and the current expiry to
 `until`, rounded up, never below `renew_minimum`. Once paid, the live
@@ -194,7 +194,7 @@ not at all if the payment is double-spent first).
    by address for a request without BRC-104), before any work;
 2. `422 {"error": "request"}` for bytes that are not a request, or a request
    that names another provider or answerer (row C11); `422 seed` unless the
-   provider's node holds `seedHash` at `seedHeight` and `tip - 6 <=
+   provider's header source holds `seedHash` at `seedHeight` and `tip - 6 <=
    seedHeight <= tip`; `422 unknown-root` unless the root is held verified
    and `proofRoot` and `size` are the provider's own computation;
 3. the **free settlement challenge**, exactly as frozen (spec section 9.4):
@@ -277,7 +277,7 @@ above the threshold and the settlement is not mined yet (the payout scan
 takes it once it mines), and `400` otherwise; one address sends at most one a second
 (burst 16). A provider that never got its
 remittance finds its payout from public data: for each entry it holds
-with a bounty, it asks the node who spent the hold output, derives its key
+with a bounty, it asks the chain view who spent the hold output, derives its key
 for ranks 1 to `K`, and takes the output that pays it, looking at each
 entry at most once a minute. A remittance whose transaction the network
 refuses for good (a settlement never broadcast, beaten by the one that
@@ -294,8 +294,8 @@ outputs do not exceed its inputs, SPV against the provider's headers),
 
 - at or below `accept_threshold_sats`, within the payer's and the total
   limits, and with arcade's word that the network took it (no
-  `DOUBLE_SPEND_ATTEMPTED`, no competing transaction) and the node's spend
-  view showing each input unspent or spent by it: **fast**, taken and
+  `DOUBLE_SPEND_ATTEMPTED`, no competing transaction) and the chain view's
+  spends showing each input unspent or spent by it: **fast**, taken and
   answered at once, and watched until it mines;
 - above the threshold, over a limit, from a flagged payer, or without that
   word within 10 s: **held**, taken once its proof verifies against the
@@ -312,7 +312,7 @@ buyer that waited longer than the seed window sends it with a request on a
 fresh seed (a `422 seed` refusal of a held payment says so and names it).
 Waiting is never a reason to refuse a payment already taken. A challenge refused on the fast path is answered `400`
 `ERR_PAYMENT_REFUSED` with a payment-not-taken note (row C30). Without an
-arcade settlement leg (`settle = arcade:<url>`) nothing is fast. Each fast
+arcade or ARC settlement leg nothing is fast. Each fast
 payment is watched on the background tick until it mines; one that is
 double-spent or refused is recorded unsettleable and logged, and its payer
 is held for confirmation from then on, across restarts (the payers of the
@@ -451,16 +451,17 @@ responses and payouts are bound to: back the directory up.
 
 ### Configure
 
-A JSON file; an unknown key is refused. The required keys, and `mainnet` on mainnet:
+A JSON file; an unknown key is refused. The required keys, and `mainnet` on
+mainnet. No node is needed: with no `chain`, `settle` or `headers` the
+provider reads the chain from WhatsOnChain, checks every header's proof of
+work and every proof against those headers, and broadcasts through
+GorillaPool's public arcade.
 
 ```json
 {
   "data": "/var/lib/bstore-provider",
   "listen": "127.0.0.1:8095",
   "public_url": "https://provider.example.com/store",
-  "node": "https://node.example.com",
-  "settle": "arcade:https://arcade.example.com",
-  "headers": "woc:main",
   "mainnet": true,
   "hosts": ["https://overlay.example.com"],
   "buckets": [{"bucket": "example_photos_hmqzvtkwrx"}]
@@ -473,9 +474,11 @@ A JSON file; an unknown key is refused. The required keys, and `mainnet` on main
 | `listen` | `127.0.0.1:8095` | the address the routes are served on |
 | `tls_cert`, `tls_key` | none | serve TLS directly; otherwise a TLS proxy in front terminates it |
 | `public_url` | required | the `https` URL the routes are reached at: objects under `<public_url>/chirp/v1/`, the front at `<public_url>/bstore/v1`; no trailing slash, query, fragment or user |
-| `node` | required | a Teranode asset API: proofs, spends, block hashes |
-| `settle` | required | the settlement leg: `tcp:<host:port>`, `rpc:<url>` (with `rpc_user`, `rpc_pass`) or `arcade:<url>` (with `arcade_key`) |
-| `headers` | required | a header source, as bcommon `headers` reads it: `woc:main`, `woc:test`, `chaintracks:<url>`, or a bridge URL |
+| `chain` | `woc:main`, or `woc:test` when `mainnet` is false | the chain view (proofs, spends, transactions): `woc:main`, `woc:test`, `asset:<url>` (a Teranode asset API, the better choice), or a list ([configuration.md](configuration.md#networks-and-endpoints)) |
+| `node` | none | the older key: a node's asset API URL, read as `chain: asset:<url>`; set one of them |
+| `woc_key`, `woc_rate` | none, 3 | a WhatsOnChain API key and its requests a second. **A busy provider needs one, or a node**: every entry, bounty check, challenge seed and payment it takes asks the chain view or the headers, and the free tier allows 3 requests a second |
+| `settle` | `arcade:main`, or `arcade:test` | the settlement leg: `arcade:main`, `arcade:test` or `arcade:<url>` (GorillaPool's or any arcade), `arc:<url>`, `rpc:<url>` (with `rpc_user`, `rpc_pass`) or `tcp:<host:port>`; `arcade_key` for an arcade or ARC that needs one |
+| `headers`, `headers_token` | `woc:main`, or `woc:test`; none | a header source, as bcommon `headers` reads it: `woc:main`, `woc:test`, `bhs:<url>` (with its bearer token), `arcade:<url>`, `chaintracks:<url>`, or a bridge URL |
 | `hosts` | none | overlay hosts advertisements are submitted to, each directly |
 | `facade` | none | a plane facade advertisements are also submitted to |
 | `uhrp_topic` | false | also submit each advertisement to `tm_uhrp` |
@@ -492,14 +495,16 @@ A JSON file; an unknown key is refused. The required keys, and `mainnet` on main
 | `policy.answer_inline` | true | samples inline; off, by reference |
 | `terms.challenge_base`, `terms.challenge_per_sample` | 10, 1 | a challenge's price |
 | `terms.free_c` | 30 | 30 to 1024 |
-| `terms.min_bounty` | 1000 | the least bounty raced for and owed a free challenge; at least `fee_floor` |
+| `terms.min_bounty` | 1000 | the least bounty raced for and owed a free challenge; at least the fee floor |
 | `terms.min_age` | 0 | 0 to 1008 blocks |
-| `terms.renew_per_gib_day`, `terms.renew_minimum` | 100, 500 | a renewal's price; the minimum at least `fee_floor` |
+| `terms.renew_per_gib_day`, `terms.renew_minimum` | 100, 500 | a renewal's price; the minimum at least the fee floor |
 | `terms.max_renew_seconds` | 366 days | the furthest a renewal runs |
 | `limits.*` | as the table above | `handshakes_per_sec` 32, `handshake_burst` 64, `handshakes_per_addr_per_sec` 1, `handshake_addr_burst` 4, `responses_per_sec` 5, `response_burst` 20, `sessions` 10000, `session_ttl_seconds` 600, `challenges_per_buyer_per_min` 6, `challenge_burst` 6, `free_per_writer_per_min` 12, `challenge_workers` 4, `renewals_per_root_per_hour` 4, `submits_per_addr_per_sec` 64, `submit_burst` 256, `object_readers` 32, `object_reads_per_addr_per_sec` 50, `object_read_burst` 200, `upload_sessions` 64, `upload_session_seconds` 3600 |
-| `tree_count`, `tree_sats` | 16, 1000 | the funding trees |
-| `fee_sat_per_byte`, `fee_floor` | 1, 250 | the fee policy |
-| `mainnet` | false | mainnet addresses |
+| `tree_count`, `tree_sats` | 16, 1000 | the funding trees; `tree_sats` at least twice the fee floor |
+| `fee` | 100 satoshis per 1000 bytes, floor 250 | the miner fee policy ([the fee block](configuration.md#the-fee-block)); `source: arc` follows the broadcaster's published rate |
+| `fee_sat_per_byte`, `fee_floor` | none | the older fee keys, still read as `fee.rate {n, 1}` and `fee.floor` |
+| `mainnet` | false | mainnet addresses, and the mainnet services by default |
+| `refuse_unmined` | false | `fund -beef` takes mined payments only |
 | `trusted_proxies` | none | CIDRs of proxies whose `X-Forwarded-For` names the client, for every per-address budget |
 | `metrics_listen` | none | where `/metrics` is served; it is served nowhere else |
 | `accept_threshold_sats` | 25000000 | the largest payment taken on the network's acceptance; above it, held until mined; 0 holds every payment |
@@ -514,21 +519,25 @@ $ ./bstore-provider address -config provider.json
 identity 02...
 fund address 1...
 pool 0 output(s), 0 satoshis
+$ ./bstore-provider fund -config provider.json -beef payment.beef
 $ ./bstore-provider fund -config provider.json -txid <txid>
 ```
 
-Pay the fund address from your own wallet, wait for the payment to be
-mined, then import it by its txid: every output of it paying the fund
-address that the node shows unspent goes into the pool, its proof checked
-against the header source. Set `mainnet: true` on mainnet; with `false`
+Pay the fund address from your own wallet, then import the payment: as the
+BEEF your wallet handed over (`-beef FILE`, or `-` for standard input; no
+lookup, and a payment not mined yet is held in the pool until it mines
+unless `-refuse-unmined`), or by its txid once it has a block (`-txid`,
+fetched from the chain view). Every output of it paying the fund address
+that the pool does not hold and the chain view does not show spent goes
+into the pool, its proof checked against the header source. Set `mainnet: true` on mainnet; with `false`
 the fund address is in the testnet form. Every advertisement and renewal
 is a mined transaction the provider pays for: 50,000 satoshis covers a
 funding tree (`tree_count` 16 outputs of `tree_sats` 1,000) and its fees
 with room to spare.
 
 `rescan -from H` and `fund -blocks N` are **coinbase: only on a regtest
-chain you run (development and tests)**: `-blocks` mines to the fund
-address through the node's RPC and pools the coinbase; `rescan` takes the
+chain you run (development and tests)**, with `chain asset:<url>`:
+`-blocks` mines to the fund address through the node's RPC and pools the coinbase; `rescan` takes the
 coinbase outputs paying the fund address in blocks `H` to the tip, and
 finds no ordinary payment.
 
@@ -539,9 +548,9 @@ $ ./bstore-provider run -config provider.json
 $ ./bstore-provider doctor -config provider.json   # reads only
 ```
 
-`doctor` prints the identity, the pool, what the store holds, and whether
-the node, the header source, the hosts, the facade and the provider's own
-front answer (`-ca FILE` trusts a private CA for the front). It changes
+`doctor` prints the identity, the pool, what the store holds, the fee
+policy in force, and whether the chain view, the header source, the
+settlement leg, the hosts, the facade and the provider's own front answer (`-ca FILE` trusts a private CA for the front). It changes
 nothing and may run beside the provider.
 
 Behind a TLS proxy, route to the provider:

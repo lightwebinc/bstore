@@ -10,19 +10,64 @@ command does.
 
 ## Networks and endpoints
 
-Three settings recur in every configuration: the network, where proofs and
-spends come from, and where headers come from.
+The same settings recur in every configuration: the network, the chain view
+(where transactions, proofs and spends come from), the header source, the
+settlement leg and the miner fee. **No node is needed on mainnet or
+testnet**: with none of them set, the defaults are the zero-infrastructure
+profile below. Every backend is a setting, and a node of your own is the
+better chain view.
 
 | Setting | Values |
 | --- | --- |
-| network | `main` (mainnet), `test` (testnet), `regtest` (a chain you run). For the provider and the gateway, `mainnet: true` or `false` selects the fund address form; `false` gives the testnet and regtest form |
-| node | a Teranode asset API base URL (`/api/v1/...`): proofs, spends, block hashes and the tip. Yours, or one you are given access to |
-| settle | the settlement leg transactions are broadcast through: `arcade:<url>` (an arcade broadcaster; key in `arcade_key`), `tcp:<host:port>` (a fabric ingress), or `rpc:<url>` (a node's JSON-RPC, with `rpc_user`, `rpc_pass`). Payment acceptance before a block (`accept_threshold_sats`) needs `arcade:` |
-| headers | the header source proofs are checked against: `woc:main` or `woc:test` (the public WhatsOnChain API, proof of work checked here), `chaintracks:<url>` (a chaintracks v2 service), or a bridge URL (an overlay bridge's native `/v1/root/<height>` and `/v1/tip`, which carries no proof of work to check) |
+| network | `main` (mainnet), `test` (testnet), `regtest` (a chain you run). For the provider and the gateway, `mainnet: true` or `false` selects the fund address form and the default services (`false` is testnet; a regtest chain sets every endpoint) |
+| chain | the chain view: `woc:main` or `woc:test` (WhatsOnChain, the default for the network), `asset:<url>` (a Teranode asset API, yours or one you are given access to), or a comma-separated list, each item optionally serving one method (`tx=`, `proof=`, `spend=`, `known=`): `asset:<url>,woc:main` asks the node and then WhatsOnChain for what it lacks; `woc:test,spend=asset:<url>` takes spends from the node only. `woc_key` and `woc_rate` are a WhatsOnChain API key and its requests a second. The older key `node` (a node's asset API URL) still works and means `asset:<url>`; set one of them |
+| settle | the settlement leg transactions are broadcast through: `arcade:main` or `arcade:test` (GorillaPool's public arcade, no key; the default for the network), `arcade:<url>` (any arcade, your own included), `arc:<url>` (an ARC installation, opt-in; TAAL's needs a key), `rpc:<url>` (a node's JSON-RPC, with `rpc_user`, `rpc_pass`) or `tcp:<host:port>` (a fabric ingress). `arcade_key` is the bearer token of an arcade or ARC leg. Payment acceptance before a block (`accept_threshold_sats`) needs arcade or ARC |
+| headers | the header source proofs are checked against: `woc:main` or `woc:test` (the public WhatsOnChain API, the default for the network), `bhs:<url>` (a [block-headers-service](https://github.com/bsv-blockchain/block-headers-service); `headers_token` is its bearer token), `arcade:<url>` (the header server an arcade installation embeds), `chaintracks:<url>` (a chaintracks v2 service), or a bridge URL (an overlay bridge's native `/v1/root/<height>` and `/v1/tip`, which carries no proof of work to check). Every kind but a bridge serves the header fields, and every header is hashed and held to the proof of work its bits claim |
+| fee | the miner fee policy, a block (below); the default is the network's rate, 100 satoshis per 1000 bytes, with a 250 satoshi floor. The older keys `fee_sat_per_byte` and `fee_floor` still work |
 
-On mainnet use `woc:main` or a chaintracks service you trust; on testnet
-`woc:test`. A regtest chain you run serves its own headers in the bridge
-shape (the [quickstart](../QUICKSTART.md)'s `devchain` does).
+The zero-infrastructure profile, what an unset network gets:
+
+| Role | mainnet | testnet |
+| --- | --- | --- |
+| chain view | `woc:main` | `woc:test` |
+| headers | `woc:main` | `woc:test` |
+| settle | `arcade:main` | `arcade:test` |
+
+What is trusted and what is checked: a transaction from the chain view
+must hash to its txid and every proof must verify against your headers,
+so a wrong answer is refused, never believed. "Unspent", "not known" and
+"not mined" cannot be checked: they are WhatsOnChain's word (only its "known
+and unspent" answer reads as unspent, never its "unknown"). A node of your
+own (`asset:<url>`, or `spend=asset:<url>` for the spend view alone)
+removes that trust. Arcade can answer "accepted" for a transaction whose
+input was already spent, so its verdict is held to the chain view's spends.
+
+WhatsOnChain's free tier allows 3 requests a second, and every chain view
+paces itself to it. A home that publishes now and then stays well inside
+it. **A busy provider or gateway exceeds it**: give it a WhatsOnChain API
+key (`woc_key`, with `woc_rate` raised to the plan's rate) or a node
+(`chain: asset:<url>`).
+
+A regtest chain you run has no public services: set `chain` (or `node`),
+`settle` and `headers` (the [quickstart](../QUICKSTART.md)'s `devchain`
+serves all three).
+
+### The fee block
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `fee.rate` | `{"satoshis": 100, "bytes": 1000}` | satoshis per bytes of the signed transaction, as miners publish it |
+| `fee.floor` | 250 | the least fee a transaction pays |
+| `fee.dust` | the floor | the least change kept as an output; less goes to the fee |
+| `fee.source` | `static` | `static`, or `arc`: the policy the broadcaster publishes (`GET /v1/policy`), refreshed every 5 minutes, held to `min_rate` and `max_rate`, falling back to the static rate. Opt-in |
+| `fee.policy_urls` | the settlement leg's arcade or ARC | where `source: arc` reads the policy |
+| `fee.min_rate`, `fee.max_rate` | `100/1000`, `1/1` | the bounds a live policy is held to; `max_rate` also caps `rate` |
+| `fee.max_tx` | none | the most one funding tree, token or payment may pay in fee; above it, it is refused rather than paid |
+| `fee_sat_per_byte`, `fee_floor` | none | the older keys: `rate {fee_sat_per_byte, 1}` and `floor`. Either beside the `fee` key it aliases is refused |
+
+```json
+"fee": {"rate": {"bytes": 1000, "satoshis": 100}, "floor": 250, "source": "static"}
+```
 
 ## bstore
 
@@ -48,8 +93,8 @@ shape (the [quickstart](../QUICKSTART.md)'s `devchain` does).
 
 | Command | Flags |
 | --- | --- |
-| `init` | `-network` (`main`, `test`, `regtest`; default `main`), `-node URL`, `-settle LEG`, `-headers SPEC`, `-hosts URLS`, `-facade URL`, `-providers URLS`, `-uploads URLS`, `-ca FILE`, `-fetch-private` |
-| `fund` | none: print the fund address and pool. `-txid TXID`: import a mined payment you sent to the fund address (mainnet, testnet). `-blocks N`; `-from H` `[-to H]`: **coinbase: only on a regtest chain you run (development and tests)**. `-from` finds coinbase only, never an ordinary payment |
+| `init` | `-network` (`main`, `test`, `regtest`; default `main`), `-chain SPEC` (default `woc:<network>`), `-node URL` (the older `-chain asset:URL`), `-settle LEG` (default `arcade:<network>`), `-headers SPEC` (default `woc:<network>`), `-woc-key KEY`, `-woc-rate N`, `-fee-rate SATS/BYTES`, `-fee-source static\|arc`, `-fee-floor SATS`, `-fee-max-rate SATS/BYTES`, `-fee-max-tx SATS`, `-refuse-unmined`, `-hosts URLS`, `-facade URL`, `-providers URLS`, `-uploads URLS`, `-ca FILE`, `-fetch-private` |
+| `fund` | none: print the fund address and pool. `-beef FILE` (or `-` for standard input; bytes or hex): import a payment you sent to the fund address from the BEEF your wallet handed over, with no lookup; a payment not mined yet is taken when every transaction it spends is proven, and its outputs wait until it mines, unless `-refuse-unmined` (or `refuse_unmined`). `-txid TXID`: import a mined payment by its txid (mainnet, testnet). `-blocks N`; `-from H` `[-to H]`: **coinbase: only on a regtest chain you run (development and tests)**. `-from` finds coinbase only, never an ordinary payment |
 | `doctor`, `sync`, `fill`, `due` | none |
 | `terms URL` | none |
 | `bucket new NAME` | `-writers K1,K2` |
@@ -75,7 +120,7 @@ shape (the [quickstart](../QUICKSTART.md)'s `devchain` does).
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `network` | required | `main`, `test` or `regtest` |
-| `node`, `settle` (`rpc_user`, `rpc_pass`, `arcade_key`), `headers` | required | the node's asset API (proofs, spends, the tip), the settlement leg, the header source (above) |
+| `chain` (`woc_key`, `woc_rate`), `settle` (`rpc_user`, `rpc_pass`, `arcade_key`), `headers` (`headers_token`) | `woc:<network>`, `arcade:<network>`, `woc:<network>`; a regtest chain has none | the chain view, the settlement leg, the header source (above). `node`, the older key, is `chain: asset:<url>` |
 | `hosts` | required | the overlay hosts asked and written to |
 | `facade` | none | the plane: pieces and records are submitted to it once |
 | `providers` | none | providers' submit routes: without a facade, entries (and piece carriers) go to each |
@@ -87,22 +132,34 @@ shape (the [quickstart](../QUICKSTART.md)'s `devchain` does).
 | `race_window_seconds` | 3600 | the writer's race window |
 | `publish_outcomes` | true | publish failed settlement challenges and every challenge's outcome as outcome records |
 | `piece_tree`, `entry_tree` | 256, 16 | outputs of a new funding tree (outcome trees take `entry_tree`); the next tree of each kind is minted ahead, in the background, so a put of up to `piece_tree` pieces never waits for a block |
-| `fee_sat_per_byte`, `fee_floor` | 1, 250 | the fee policy: satoshis a byte (a whole number; 1 is the least) and the least fee of a transaction |
-| `accept_threshold_sats` | 25000000 | a settlement whose largest payout is at or below it is remitted once arcade says the network took it and the node shows its inputs spent by it alone, before it mines (race state `remitted`); above it, remitted once mined. Needs `settle = arcade:<url>` |
+| `fee` | 100 satoshis per 1000 bytes, floor 250 | the miner fee policy ([the fee block](#the-fee-block)); `fee_sat_per_byte` and `fee_floor` are its older keys |
+| `refuse_unmined` | false | `fund -beef` takes mined payments only |
+| `accept_threshold_sats` | 25000000 | a settlement whose largest payout is at or below it is remitted once arcade says the network took it and the chain view shows its inputs spent by it alone, before it mines (race state `remitted`); above it, remitted once mined. Needs settle through arcade or ARC |
 | `accept_payer_limit`, `accept_total_limit`, `accept_window_seconds`, `accept_watch_seconds` | one and ten thresholds, 3600, 0 | the rest of the acceptance rule, as for a provider ([provider.md](provider.md)) |
 | `buckets`, `bucket` | none | the chains this home reads and writes (`{"bucket", "owner", "id"}`), and the one used unless `-bucket` names another |
 
-A mainnet home:
+A mainnet home with no node (WhatsOnChain and GorillaPool's arcade by
+default):
 
 ```json
 {
   "network": "main",
-  "node": "https://node.example.com",
-  "settle": "arcade:https://arcade.example.com",
-  "headers": "woc:main",
   "hosts": ["https://overlay-a.example.com", "https://overlay-b.example.com"],
   "providers": ["https://provider.example.com"],
   "buckets": [{"bucket": "photos_hmqzvtkwrx", "owner": "02...", "id": "5f..."}]
+}
+```
+
+The same home with a node of its own as the chain view and its own
+arcade:
+
+```json
+{
+  "network": "main",
+  "chain": "asset:https://node.example.com",
+  "settle": "arcade:https://arcade.example.com",
+  "headers": "woc:main",
+  "hosts": ["https://overlay-a.example.com"]
 }
 ```
 
@@ -128,17 +185,20 @@ time.
 | --- | --- |
 | `init` | `-config FILE`: create every identity's wallet |
 | `address` | `-config FILE -identity NAME` |
-| `fund` | `-config FILE -identity NAME -txid TXID`: import a mined payment you sent to the identity's fund address (mainnet, testnet). `-blocks N`: **coinbase: only on a regtest chain you run (development and tests)** |
+| `fund` | `-config FILE -identity NAME -beef FILE` (or `-`; `-refuse-unmined`): import a payment you sent to the identity's fund address from its BEEF. `-txid TXID`: import a mined payment by its txid (mainnet, testnet). `-blocks N`: **coinbase: only on a regtest chain you run (development and tests)** |
 | `rescan` | `-config FILE -identity NAME -from H [-to H]`: **coinbase: only on a regtest chain you run (development and tests)** |
 | `run` | `-config FILE` |
 
 The configuration's keys: `data`, `listen`, `tls_cert`, `tls_key`,
-`region`, `domain`, `node`, `settle`, `rpc_user`, `rpc_pass`,
-`arcade_key`, `headers`, `hosts`, `facade`, `providers`, `quorum`, `ca`,
-`fetch_private`, `identities`, `access_keys`, `buckets`, `bounty`,
-`hold_ahead`, `limits.*`, `piece_tree`, `entry_tree`, `piece_ahead`,
-`piece_workers`, `fee_sat_per_byte`, `fee_floor`, `mainnet`, the `accept_`
-keys, `race.*`, `store_bytes`, `outbox_bytes` and `metrics_listen`.
+`region`, `domain`, `chain`, `node`, `settle`, `rpc_user`, `rpc_pass`,
+`arcade_key`, `headers`, `headers_token`, `woc_key`, `woc_rate`, `hosts`,
+`facade`, `providers`, `quorum`, `ca`, `fetch_private`, `identities`,
+`access_keys`, `buckets`, `bounty`, `hold_ahead`, `limits.*`,
+`piece_tree`, `entry_tree`, `piece_ahead`, `piece_workers`, `fee`,
+`fee_sat_per_byte`, `fee_floor`, `mainnet`, `refuse_unmined`, the
+`accept_` keys, `race.*`, `store_bytes`, `outbox_bytes` and
+`metrics_listen`. `chain`, `settle` and `headers` default to the
+zero-infrastructure profile for the network `mainnet` selects.
 
 ## bstore-provider
 
@@ -149,19 +209,22 @@ keys, `race.*`, `store_bytes`, `outbox_bytes` and `metrics_listen`.
 | --- | --- |
 | `init` | `-data DIR` |
 | `address` | `-config FILE` |
-| `fund` | `-config FILE -txid TXID`: import a mined payment you sent to the fund address (mainnet, testnet). `-blocks N`: **coinbase: only on a regtest chain you run (development and tests)** |
+| `fund` | `-config FILE -beef FILE` (or `-`; `-refuse-unmined`): import a payment you sent to the fund address from its BEEF. `-txid TXID`: import a mined payment by its txid (mainnet, testnet). `-blocks N`: **coinbase: only on a regtest chain you run (development and tests)** |
 | `rescan` | `-config FILE -from H [-to H]`: **coinbase: only on a regtest chain you run (development and tests)** |
 | `run` | `-config FILE` |
 | `doctor` | `-config FILE`, `-ca FILE` (a PEM file trusted for the front's certificate) |
 | `version` | |
 
 The configuration's keys: `data`, `listen`, `tls_cert`, `tls_key`,
-`public_url`, `node`, `settle`, `rpc_user`, `rpc_pass`, `arcade_key`,
-`headers`, `hosts`, `facade`, `uhrp_topic`, `buckets`, `backend`,
-`export`, `quota_bytes`, `unclaimed_bytes`, `unclaimed_seconds`,
-`policy.*`, `terms.*`, `limits.*`, `tree_count`, `tree_sats`,
-`fee_sat_per_byte`, `fee_floor`, `mainnet`, `trusted_proxies`,
-`metrics_listen` and the `accept_` keys.
+`public_url`, `chain`, `node`, `settle`, `rpc_user`, `rpc_pass`,
+`arcade_key`, `headers`, `headers_token`, `woc_key`, `woc_rate`, `hosts`,
+`facade`, `uhrp_topic`, `buckets`, `backend`, `export`, `quota_bytes`,
+`unclaimed_bytes`, `unclaimed_seconds`, `policy.*`, `terms.*`,
+`limits.*`, `tree_count`, `tree_sats`, `fee`, `fee_sat_per_byte`,
+`fee_floor`, `mainnet`, `refuse_unmined`, `trusted_proxies`,
+`metrics_listen` and the `accept_` keys. `chain`, `settle` and `headers`
+default to the zero-infrastructure profile for the network `mainnet`
+selects; a busy provider needs `woc_key` or a node.
 
 ## The host module
 
@@ -170,8 +233,9 @@ Environment variables of an overlay host loading the module, all
 `PENDING_DAYS`, `OTHER_HOURS`, `MAX_BEEF`, `MAX_SWEEP_INPUTS`, `LISTEN`,
 `PRICES`, `PAYEE_KEY`, `SESSIONS`, `SESSION_TTL`, `HANDSHAKES_PER_SEC`,
 `HANDSHAKE_BURST`, `HANDSHAKES_PER_ADDR_PER_SEC`, `HANDSHAKE_ADDR_BURST`,
-`RESPONSES_PER_SEC`, `RESPONSE_BURST`, `ARCADE_URL`, `ASSET_URL`,
-`ACCEPT_THRESHOLD_SATS`, `ACCEPT_PAYER_LIMIT`, `ACCEPT_TOTAL_LIMIT`,
+`RESPONSES_PER_SEC`, `RESPONSE_BURST`, `ARCADE_URL`, `ASSET_URL` (or
+`CHAIN`, `woc:main` or `woc:test`, with `WOC_KEY`, for a host with no
+node), `ACCEPT_THRESHOLD_SATS`, `ACCEPT_PAYER_LIMIT`, `ACCEPT_TOTAL_LIMIT`,
 `ACCEPT_WINDOW` and `ACCEPT_WATCH`, with the host's own `OVERLAY_*`
 settings. Defaults and meanings: [host.md](host.md#configuration).
 
@@ -211,9 +275,9 @@ owner, so make it writable by uid 65532 or run with `--user`.
 ```console
 $ docker build -t bstore .
 $ docker run --rm -v bstore-home:/home/nonroot/.bstore bstore init -network main \
-    -node https://node.example.com -settle arcade:https://arcade.example.com \
-    -headers woc:main -hosts https://overlay.example.com
+    -hosts https://overlay.example.com
 $ docker run --rm -v bstore-home:/home/nonroot/.bstore bstore fund
+$ docker run --rm -i -v bstore-home:/home/nonroot/.bstore bstore fund -beef - < payment.beef
 $ docker run --rm -v bstore-home:/home/nonroot/.bstore bstore fund -txid <txid>
 ```
 

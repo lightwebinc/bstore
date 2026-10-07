@@ -35,7 +35,7 @@ flowchart LR
   P2 -->|"advertisements"| H2
   R -->|"lookups"| H1
   R -->|"blobs, challenges, renewals"| P1
-  C[("BSV blockchain<br/>node asset API, settlement leg, header source")]
+  C[("BSV blockchain<br/>chain view, settlement leg, header source")]
   O -.-> C
   W -.-> C
   P1 -.-> C
@@ -46,10 +46,10 @@ flowchart LR
 | --- | --- | --- | --- |
 | A home (owner, writer, reader) | `bstore` | one identity: its wallet, funding trees, outbox, hold races, the chains it owns, the closures it built | its own header source; everything else is checked |
 | The S3 gateway | `bstore s3d` | one home per writer identity, a local store of its own writes, pending entries | as a home; S3 clients by their access keys |
-| A provider | `bstore-provider` | the closures it chose to hold, its advertisements, its payment ledger | its header source and node; a writer's pieces only once checked |
+| A provider | `bstore-provider` | the closures it chose to hold, its advertisements, its payment ledger | its header source and chain view; a writer's pieces only once checked |
 | A bridge | `bstore-bridge` (its own repository) | segment hashes only; the incumbent keeps the bytes | the incumbent's answers, each checked against the closure |
 | A host | an overlay host loading `host/bundle/bstore-module.js` (or the `bstore-host` image) | the bucket's records topic: tokens, entries, advertisements, outcomes, front statements | its header source |
-| The chain | a node's asset API, a settlement leg, a header source | mined funding trees, hold outputs, bucket tokens, advertisements, settlements | |
+| The chain | a chain view (WhatsOnChain by default, or a node's asset API), a settlement leg (GorillaPool's arcade by default), a header source (WhatsOnChain by default) | mined funding trees, hold outputs, bucket tokens, advertisements, settlements | |
 
 Nobody is believed on their word. A host is a replica of records anyone
 can check; a provider's bytes are held to their hashes; a reader proves a
@@ -111,14 +111,14 @@ The `-blocks` and `-from` funding flags, the `devchain` binary and
 | `internal/anchor` | the owner's tooling: chain creation and anchoring |
 | `internal/reader` | the verified reader |
 | `internal/s3d` | the S3 gateway |
-| `internal/fundimport` | importing a mined payment to a fund address into a pool |
+| `internal/chaincfg` | the chain view, header source, settlement leg and fee policy every configuration names, and importing a payment (BEEF or txid) to a fund address into a pool |
 | `internal/efleg` | attaching inputs' source transactions for Extended Format settlement legs |
 | `internal/acceptcfg` | the payment acceptance settings shared by every configuration |
 | `host/` | the TypeScript host module: topic managers, `ls_bstore`, the terms route, retention |
 | `deploy/quickstart` | the development sandbox's Compose file |
 
 bstore builds on [bcommon](https://github.com/lightwebinc/bcommon) (wallet,
-carriers, minting, headers, the node API, payment acceptance) and
+carriers, minting, fee policy, headers, the chain views, payment acceptance) and
 [go-sdk](https://github.com/bsv-blockchain/go-sdk). The Go codec in
 `storerec` and the TypeScript twin in `host/src` read the same golden
 vectors ([codec.md](codec.md)).

@@ -56,14 +56,15 @@ container images are built from the [Dockerfile](Dockerfile)
 
 ## On mainnet
 
-You need a node's asset API (a Teranode asset service you run or are given
-access to), a settlement leg (an arcade broadcaster), a header source
-(`woc:main` reads WhatsOnChain and checks proof of work itself) and the
-overlay hosts that carry your bucket.
+No node is needed. By default the chain is read from WhatsOnChain (every
+header held to its proof of work, every proof to those headers) and
+transactions are broadcast through GorillaPool's public arcade; your own
+node (`-chain asset:URL`) is the better chain view, and every backend is a
+setting ([docs/configuration.md](docs/configuration.md#networks-and-endpoints)).
+You need only the overlay hosts that carry your bucket.
 
 ```console
-$ bstore init -network main -node https://node.example.com \
-    -settle arcade:https://arcade.example.com -headers woc:main \
+$ bstore init -network main \
     -hosts https://overlay-a.example.com,https://overlay-b.example.com
 identity 02...
 $ bstore fund
@@ -73,10 +74,12 @@ pool         0 output(s), 0 satoshis
 ```
 
 Send a small amount from your own wallet to the fund address (100,000
-satoshis, 0.001 BSV, is ample to try every role but a bounty), wait for
-one block, and import the payment by its txid:
+satoshis, 0.001 BSV, is ample to try every role but a bounty) and import
+the payment: as the BEEF your wallet hands over (no lookup, and it need
+not have mined), or by its txid once it has a block:
 
 ```console
+$ bstore fund -beef payment.beef
 $ bstore fund -txid <txid of your payment>
 <txid> mined at height <h>: 1 output(s) to the fund address, 1 imported (100000 satoshis), 0 already held, 0 spent
 pool 1 output(s), 100000 satoshis
@@ -92,7 +95,7 @@ $ bstore bucket add photos_hmqzvtkwrx -owner 02... -id 5f...
 $ bstore -bucket photos_hmqzvtkwrx get photos/cat.jpg ./cat.jpg -proof-root
 ```
 
-Testnet is the same with `-network test` and `-headers woc:test`.
+Testnet is the same with `-network test`.
 [docs/examples.md](docs/examples.md) walks each role on a real network,
 with what each step costs.
 

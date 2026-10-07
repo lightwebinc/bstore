@@ -41,7 +41,7 @@ spending one mined funding output.
 
 | What | Cost | Kind |
 | --- | --- | --- |
-| A funding output | a 64-output piece funding tree is 3,328 bytes, 52 bytes an output, so about 52 satoshis at 1 sat a byte (bcommon `mint.DefaultFees`, floor 250); the contract's arithmetic says about 57 | measured |
+| A funding output | a 64-output piece funding tree is 3,328 bytes, 52 bytes an output, so about 52 satoshis at 1 satoshi a byte (bcommon `mint.LegacyFees`, floor 250; about 5 at the network's rate); the contract's arithmetic says about 57 | measured |
 | A 100 MiB put's funding | 26 piece outputs and one entry output: about 1.4 KB mined, about 1,400 satoshis | measured rate, contract count |
 | An entry carrier | 1,915 to 2,176 bytes of BEEF on a 16-output entry tree | measured (8 entries) |
 | A piece carrier | the blob plus about 1.2 KB and 49 bytes per output of its funding tree: about 4.3 KB over the blob on the default 64-output piece tree, so a 100 MiB put delivers about 0.1 % above its content to each provider | contract arithmetic |
@@ -215,14 +215,14 @@ not do, stated so that nobody finds it by accident.
    in a signed payment-not-taken note (spec section 10.4, row C30), and the buyer releases the coin
    at once. A provider that sends no note leaves the client keeping the
    payment as possibly broadcast, since the payee could still broadcast it,
-   and giving the coin back only when the node has not seen it in an hour.
+   and giving the coin back only when the chain view has not seen it in an hour.
    Paid calls take a small payment coin of their own, split off the pool,
    so such a hold costs little and never blocks the identity's other coin.
 6. **A bridged incumbent's remittance is never taken.** Its own front has
    no settle route; the bridge forwards the settlement to the incumbent's
    operator instead (C28). `bstore settle` and `bstore due` therefore list
    such a payee, while its output is unspent, as forwarded by the front
-   that answered for it and do not count it as owed; once the node shows
+   that answered for it and do not count it as owed; once the chain view shows
    the payee's output spent, the payee is done. A claim alone is not
    visible: `bstore-bridge claim` prints what the incumbent's wallet takes
    in, and nothing reaches the chain until that wallet spends the output.
@@ -273,8 +273,8 @@ not do, stated so that nobody finds it by accident.
     to is delivered nothing; a directory host should not subscribe to one.
 12. **A settlement remitted before it mines can stay unmined.** A
     settlement at or below the acceptance threshold is remitted on arcade's
-    word that the network took it (race state `remitted`). When the node
-    serves no proof of it for an hour, the gateway's
+    word that the network took it (race state `remitted`). When the chain
+    view serves no proof of it for an hour, the gateway's
     `bstore_s3d_races_remitted_stale` gauge counts it and `bstore doctor`
     names it as an alarm. If it never mines because its fee coin went
     elsewhere, the next settlement of the race is remitted only once it
@@ -289,14 +289,23 @@ not do, stated so that nobody finds it by accident.
 14. **The images are not published yet.** The command, provider, host and
     local chain images are built from a checkout (`make docker-build`,
     `make docker-build-host`) until the repositories are public.
-15. **Fees are above mainnet's policy.** `fee_sat_per_byte` is a whole
-    number of satoshis a byte, so the least it can be is 1, ten times the
-    100 satoshis a kilobyte mainnet miners take. Every fee here is at that
-    rate.
-16. **Funding is by import.** A pool takes coin through `fund -txid`, a
-    payment from the user's own wallet imported once it is mined;
-    `fund -from` and `rescan -from` find coinbase only (coinbase: only on
-    a regtest chain you run, development and tests).
+15. **The measured fees are at the older rate.** The fees here were
+    measured at 1 satoshi a byte, ten times the 100 satoshis per 1000
+    bytes mainnet miners take. The default is now the network's rate,
+    with a floor of 250 satoshis a transaction (the `fee` setting), so
+    every transaction under 2,500 bytes pays the floor and the figures
+    here are upper bounds.
+16. **Funding is by import.** A pool takes coin through `fund -beef` (the
+    BEEF the user's wallet hands over; it may not have mined yet) or
+    `fund -txid` (a mined payment); `fund -from` and `rescan -from` find
+    coinbase only (coinbase: only on a regtest chain you run, development
+    and tests).
+17. **The chain view's "unspent" is trusted.** With no node, transactions
+    and proofs from WhatsOnChain are checked, but its word that an output
+    is unspent, or that a transaction is not known or not mined, is
+    taken as given. A node of your own (`chain asset:<url>`) removes
+    that trust. Its free tier allows 3 requests a second: a busy provider
+    or gateway needs an API key (`woc_key`) or a node.
 
 See [spec.md](spec.md) section 20 for what the contract itself does not do.
 

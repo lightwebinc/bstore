@@ -101,6 +101,24 @@ $ make docker-build      # the images: bstore, bstore-provider, bstore-devchain
 The bridge is its own repository,
 [bstore-bridge](https://github.com/lightwebinc/bstore-bridge).
 
+**No node is needed.** On mainnet and testnet a home reads the chain from
+WhatsOnChain, checks every header's proof of work and every proof against
+those headers, and broadcasts through GorillaPool's public arcade. From
+install to use:
+
+1. `bstore init -network main -hosts URLS` (testnet: `-network test`).
+2. `bstore fund` prints the fund address: pay it a small amount from your
+   own wallet.
+3. `bstore fund -beef FILE` with the BEEF your wallet hands over (no
+   lookup, and it need not have mined), or `bstore fund -txid TXID` once
+   the payment has a block.
+4. Use it: make a bucket, put, read.
+
+A node of your own is the better chain view (`-chain asset:URL`): it
+removes the one thing WhatsOnChain is trusted for, its word that an output
+is unspent. Every backend is a setting
+([configuration.md](configuration.md#networks-and-endpoints)).
+
 ## 4. Words
 
 | Word | Means |
@@ -132,11 +150,11 @@ The bridge is its own repository,
 ## 6. The bucket's owner
 
 ```console
-$ bstore init -network main -node https://node.example.com \
-    -settle arcade:https://arcade.example.com -headers woc:main \
+$ bstore init -network main \
     -hosts https://overlay-a.example.com,https://overlay-b.example.com
 $ bstore fund                       # the fund address; pay it from your own wallet, then
-$ bstore fund -txid <txid>          # once mined, import the payment into the pool
+$ bstore fund -beef payment.beef    # import the payment your wallet handed over, or
+$ bstore fund -txid <txid>          # once mined, import it by its txid
 $ bstore bucket new photos -writers 02...
 bucket photos_hmqzvtkwrx
 owner  02...
@@ -198,7 +216,7 @@ it mines (the race shows `remitted`), and a later `settle` collects its
 proof; a larger settlement is remitted once mined. `settle` resumes a
 settlement in flight and never builds a second. A payee that passed through a bridge is told by
 the bridge, so its remittance is listed as forwarded and is not owed; any
-payee whose output the node shows spent has its share.
+payee whose output the chain view shows spent has its share.
 
 `bstore due` lists what is owed and exits 3 while anything is.
 
@@ -255,14 +273,18 @@ one. [s3.md](s3.md) has the compatibility matrix.
 ```console
 $ bstore-provider init -data /var/lib/bstore-provider
 $ bstore-provider address -config provider.json      # pay the fund address from your own wallet
-$ bstore-provider fund -config provider.json -txid <txid>   # once mined, import it
+$ bstore-provider fund -config provider.json -beef payment.beef   # or -txid <txid> once mined
 $ bstore-provider run -config provider.json
 $ bstore-provider doctor -config provider.json       # reads only: does everything answer
 ```
 
 The configuration names the public `https` URL the routes are reached at,
-the node, the settlement leg, the header source, the hosts and the buckets
-you serve ([provider.md](provider.md)). You set your terms: the price of a
+the hosts and the buckets you serve, and optionally the chain view, the
+settlement leg and the header source ([provider.md](provider.md)): with
+none named, WhatsOnChain and GorillaPool's arcade. A busy provider asks
+the chain view more than WhatsOnChain's free 3 requests a second allow:
+give it an API key (`woc_key`, `woc_rate`) or a node of your own
+(`chain`). You set your terms: the price of a
 challenge (`base`, `perSample`), the free challenges you owe a bounty
 (`freeC`, `minBounty`, `minAge`), and the price of a renewal. Fund the
 wallet: every advertisement and renewal is a mined transaction you pay
@@ -351,6 +373,9 @@ through the command line with the gateway stopped.
 | `bucket new` exits 1, refused | a host refused the first token | read the reason (`-v`); make a fresh bucket if it is the token's |
 | a put answers `503 SlowDown` | no hold output ready, or the entry not taken in time | wait and retry; the same write retried within an hour is answered from the entry already made, with no second entry |
 | `challenge` exits 2, cannot pay | the pool's change waits for a proof | `bstore sync` after a block, or fund the home |
+| `fund -txid` exits 3, not mined yet | the payment has no block yet | run it again after a block, or import the BEEF your wallet gave you (`fund -beef`) |
+| `fund` exits 1, pays nothing | the transaction does not pay this home's fund address | check the address `bstore fund` prints and the txid |
+| WhatsOnChain answers 429, or calls are slow | the free tier's 3 requests a second are spent | an API key (`woc_key`, `woc_rate`), or a node (`chain asset:URL`) |
 | `due` lists a forwarded remittance | a bridged incumbent's share, forwarded by its bridge | nothing: it clears when the payee spends its output |
 | a provider named as serving wrong bytes | its copy is damaged or it lies | challenge it; publish the outcome |
 

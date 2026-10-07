@@ -13,17 +13,30 @@ on one machine, use the development sandbox in
 | What | Mainnet | Testnet |
 | --- | --- | --- |
 | `-network` | `main` | `test` |
-| A node's asset API (`-node`) | a Teranode asset service you run or are given access to | the same, on testnet |
-| A settlement leg (`-settle`) | `arcade:<url>` of an arcade broadcaster | the same, on testnet |
-| A header source (`-headers`) | `woc:main`, or `chaintracks:<url>` | `woc:test` |
 | Overlay hosts (`-hosts`) | hosts that carry your bucket ([host.md](host.md)) | the same |
 | Coin | 100,000 satoshis or more in your own wallet | testnet coin from your own testnet wallet |
 
+Nothing else. No node is needed: unless you name others, the chain view
+and the header source are WhatsOnChain (`woc:main`, `woc:test`; every
+header held to its proof of work, every proof to those headers) and
+transactions are broadcast through GorillaPool's public arcade
+(`arcade:main`, `arcade:test`). Each is a setting:
+
+| Optional | Mainnet | Testnet |
+| --- | --- | --- |
+| A chain view (`-chain`) | your own node, `asset:<url>`: the better choice, since WhatsOnChain's "unspent" is taken on its word | the same, on testnet |
+| A settlement leg (`-settle`) | your own arcade (`arcade:<url>`), ARC (`arc:<url>`), or a node (`rpc:<url>`) | the same, on testnet |
+| A header source (`-headers`) | your own block-headers-service (`bhs:<url>`), an arcade's (`arcade:<url>`), or `chaintracks:<url>` | the same, on testnet |
+| A WhatsOnChain API key (`-woc-key`) | for a busy home, gateway or provider: the free tier allows 3 requests a second | the same |
+
 ## What it costs
 
-bstore pays 1 satoshi a byte with a floor of 250 (the least its fee
-setting allows; mainnet miners take 100 satoshis a kilobyte, so these are
-upper figures). From [limits.md](limits.md):
+bstore pays the network's rate, 100 satoshis per 1000 bytes, with a floor
+of 250 satoshis a transaction (the `fee` setting; `-fee-source arc`
+follows the broadcaster's published rate instead). The fees below were
+measured at the older 1 satoshi a byte and are upper figures: at the
+network's rate every transaction under 2,500 bytes pays the floor. From
+[limits.md](limits.md):
 
 | Step | Mined bytes | Fee |
 | --- | --- | --- |
@@ -41,8 +54,7 @@ ahead of time; set `hold_ahead` lower or fund more.
 ## Set up a home and fund it
 
 ```console
-$ bstore init -network main -node https://node.example.com \
-    -settle arcade:https://arcade.example.com -headers woc:main \
+$ bstore init -network main \
     -hosts https://overlay-a.example.com,https://overlay-b.example.com \
     -providers https://provider.example.com
 identity 02...
@@ -53,8 +65,17 @@ fund address 1...
 pool         0 output(s), 0 satoshis
 ```
 
-Send 100,000 satoshis from your own wallet to the fund address. Once the
-payment has a block, import it by its txid:
+Send 100,000 satoshis from your own wallet to the fund address, then
+import the payment. If your wallet hands you the payment as BEEF, import
+that at once; it need not have mined:
+
+```console
+$ bstore fund -beef payment.beef
+4f3c...e9a1 not mined yet (held until it mines): 1 output(s) to the fund address, 1 imported (100000 satoshis), 0 already held, 0 spent
+pool 1 output(s), 100000 satoshis
+```
+
+Or, once the payment has a block, import it by its txid:
 
 ```console
 $ bstore fund -txid 4f3c...e9a1
@@ -63,14 +84,32 @@ pool 1 output(s), 100000 satoshis
 $ bstore doctor
 ```
 
-`fund -txid` checks the payment's proof against your header source and asks
-the node that each output is unspent. Before the payment is mined it exits
-3 (`not mined yet`); run it again after the next block. Importing it twice
-adds nothing. `doctor` shows the pool and whether the node, the header
-source, the hosts and the providers answer; it spends nothing.
+`fund -beef` reads the payment from the BEEF (a file, or `-` for standard
+input) with no lookup: a mined payment's proof is checked against your
+header source, and one not mined yet is taken when every transaction it
+spends is proven, sent to the settlement leg in case your wallet did not
+broadcast it, and held in the pool until it mines (`-refuse-unmined`, or
+`refuse_unmined` in `config.json`, takes mined payments only). `fund -txid`
+fetches the payment and its proof from the chain view, checks the proof
+against your header source and asks the chain view that each output is
+unspent; before the payment is mined it exits 3 (`not mined yet`). A
+payment that pays the fund address nothing is refused (exit 1). Importing
+it twice adds nothing. `doctor` shows the pool, the fee policy and whether
+the chain view, the header source, the settlement leg, the hosts and the
+providers answer; it spends nothing.
 
-On testnet: `-network test -headers woc:test`; the fund address starts
-with `m` or `n`.
+Given a mined mainnet transaction that pays someone else, a fresh home
+answers:
+
+```console
+$ bstore fund -txid 52854619b1c2e78d6c1e9a91fdb14c4bef1b8d1897de3253a538e152bd055be6
+bstore: bwallet: the payment pays nothing to this wallet's fund address: 52854619b1c2e78d6c1e9a91fdb14c4bef1b8d1897de3253a538e152bd055be6
+```
+
+The transaction was fetched from WhatsOnChain and its proof checked
+against the WhatsOnChain headers before its outputs were read.
+
+On testnet: `-network test`; the fund address starts with `m` or `n`.
 
 Keep `~/.bstore` backed up: the wallet in it is the identity and its coin.
 Several identities are several homes (`-home DIR` or `BSTORE_HOME`).
@@ -161,7 +200,7 @@ Running one ([s3.md](s3.md)):
 $ bstore s3d init -config s3d.json
 identity main 03...
 $ bstore s3d address -config s3d.json -identity main
-$ bstore s3d fund -config s3d.json -identity main -txid <txid>
+$ bstore s3d fund -config s3d.json -identity main -beef payment.beef   # or -txid <txid>
 $ bstore s3d run -config s3d.json
 ```
 
@@ -170,21 +209,26 @@ $ bstore s3d run -config s3d.json
 ```console
 $ bstore-provider init -data /var/lib/bstore-provider
 $ bstore-provider address -config provider.json
-$ bstore-provider fund -config provider.json -txid <txid>
+$ bstore-provider fund -config provider.json -beef payment.beef        # or -txid <txid>
 $ bstore-provider doctor -config provider.json
 $ bstore-provider run -config provider.json
 ```
 
 `provider.json` needs `"mainnet": true` on mainnet, a public `https`
-`public_url`, and the buckets you serve ([provider.md](provider.md)).
+`public_url`, and the buckets you serve ([provider.md](provider.md)); with
+no `chain`, `settle` or `headers` it uses WhatsOnChain and GorillaPool's
+arcade. A provider answers every writer's entries and challenges, so it
+reads the chain far more than a home: past WhatsOnChain's free 3 requests
+a second it needs an API key (`woc_key`, with `woc_rate` raised to the
+plan's) or a node of its own (`chain: asset:<url>`). The S3 gateway is the
+same.
 
 ## In a container
 
 ```console
 $ docker build -t bstore .
 $ docker run --rm -v bstore-home:/home/nonroot/.bstore bstore init -network main \
-    -node https://node.example.com -settle arcade:https://arcade.example.com \
-    -headers woc:main -hosts https://overlay.example.com
+    -hosts https://overlay.example.com
 $ docker run --rm -v bstore-home:/home/nonroot/.bstore bstore fund
 $ docker run --rm -v bstore-home:/home/nonroot/.bstore bstore \
     get photos/cat.jpg - -proof-root > cat.jpg
