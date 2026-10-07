@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/lightwebinc/bcommon/chirp"
 	"github.com/lightwebinc/bcommon/commit"
@@ -144,32 +145,46 @@ func CheckRoot(rootBytes []byte, root [32]byte, size uint64, contentHash [32]byt
 // or canonical construction is root (the closure the root names is not
 // valid, whoever serves it); content-hash is content.
 func VerifyCHIRP(rootHash [32]byte, fetch chirp.Fetch) (*chirp.Closure, error) {
-	wrong := false
-	checked := func(h [32]byte) ([]byte, error) {
+	checked, wrong := CheckedFetch(fetch)
+	c, err := chirp.Verify(rootHash, checked, ClosureLimits)
+	if err != nil {
+		return nil, ClosureError(err, wrong())
+	}
+	return c, nil
+}
+
+// CheckedFetch wraps fetch to take only bytes hashing to the hash asked
+// for: other bytes are refused as not served. wrong reports whether that
+// ever happened, so ClosureError can tell missing from hash.
+func CheckedFetch(fetch chirp.Fetch) (checked chirp.Fetch, wrong func() bool) {
+	var w atomic.Bool
+	checked = func(h [32]byte) ([]byte, error) {
 		o, err := fetch(h)
 		if err != nil {
 			return nil, err
 		}
 		if sha256.Sum256(o) != h {
-			wrong = true
+			w.Store(true)
 			return nil, errors.New("served other bytes")
 		}
 		return o, nil
 	}
-	c, err := chirp.Verify(rootHash, checked, ClosureLimits)
-	if err == nil {
-		return c, nil
-	}
+	return checked, w.Load
+}
+
+// ClosureError labels a refusal of bcommon chirp.Verify, or of
+// chirp.Incremental, as VerifyCHIRP does; wrong is CheckedFetch's report.
+func ClosureError(err error, wrong bool) error {
 	code, _ := chirp.Reason(err)
 	switch {
 	case errors.Is(err, chirp.ErrMissing) && wrong:
-		return nil, ruled(ErrClosure, "hash")
+		return ruled(ErrClosure, "hash")
 	case errors.Is(err, chirp.ErrMissing), errors.Is(err, chirp.ErrHash):
-		return nil, ruled(ErrClosure, code)
+		return ruled(ErrClosure, code)
 	case errors.Is(err, chirp.ErrContentHash):
-		return nil, ruled(ErrContent, code)
+		return ruled(ErrContent, code)
 	default:
-		return nil, ruled(ErrRoot, code)
+		return ruled(ErrRoot, code)
 	}
 }
 

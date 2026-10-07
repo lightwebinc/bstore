@@ -75,14 +75,17 @@ the root's own size and content hash:
 
 The work is done as the pieces arrive: each piece is hashed by the request
 that brings it (its segment leaves and subtree root, on whatever core
-serves it), and once the root has arrived the content hash advances over
-the blobs in order as they land. When the entry is evaluated, a root that
-names blobs only is checked from what was computed: rebuilt from its blob
-references and the content hash (profile 1's canonical construction), the
-proof files written from the leaves already hashed, nothing read back. A
-closure with branch nodes (over 1 GiB), or pieces that arrived before a
-restart, takes the full check, reading every blob once more. Leaves are
-kept for at most 1,024 pieces and content hashes for 64 roots at a time.
+serves it) and handed to the root's closure walk (bcommon
+`chirp.Incremental`), which checks the closure as `chirp.Verify` does as
+far as the pieces on hand allow, the content hash advancing over the blobs
+in order. When the entry is evaluated, the walk is finished from where it
+stopped and the proof files are written from the leaves already hashed.
+Closures with branch nodes (over 1 GiB) are walked the same way. A root
+whose walk is not kept, after a restart for instance, starts a new walk
+that reads back the pieces already held, once each, and continues as more
+arrive. Leaves are kept for at most 1,024 pieces, walks for 64 roots, and
+each walk keeps at most 8 MiB of pieces that arrived ahead of it (others
+are read back from the store when the walk reaches them).
 
 A closure that fails is the writer's fault: every entry it fails is
 declined, and the reason recorded. One that is not complete yet is waited

@@ -9,6 +9,8 @@ import (
 	"io"
 	"sync"
 
+	"github.com/lightwebinc/bcommon/chirp"
+
 	"github.com/lightwebinc/bstore/storerec"
 )
 
@@ -37,7 +39,7 @@ func (s *Staged) Release() {
 }
 
 // StageWorkers is how many blobs Stage hashes and stores at once
-// (storerec.Parallel); 0 is storerec.DefaultWorkers.
+// (storerec.Parallel); 0 is chirp.DefaultWorkers.
 var StageWorkers = 0
 
 // Stage reads content from r to its end, at most max bytes, building the
@@ -65,7 +67,7 @@ func (st *Store) Stage(ctx context.Context, r io.Reader, max uint64) (*Staged, e
 		mu.Unlock()
 		return err
 	}
-	b := storerec.NewParallel(cmpOr(StageWorkers, storerec.DefaultWorkers()), func(i int, h [32]byte, blob []byte) error {
+	b := storerec.NewParallel(cmpOr(StageWorkers, chirp.DefaultWorkers()), func(i int, h [32]byte, blob []byte) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}

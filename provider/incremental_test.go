@@ -2,6 +2,7 @@ package provider
 
 import (
 	"crypto/sha256"
+	"errors"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
@@ -12,9 +13,10 @@ import (
 	"github.com/lightwebinc/bstore/storerec"
 )
 
-// The closure checked on arrival, pieces in any order, is the one the full
-// check verifies; anything missing leaves it to the full check.
-func TestQuickClosureMatchesFull(t *testing.T) {
+// The closure walked as pieces arrive, in any order, is the one the full
+// check verifies, and is missing (closure) until the last piece; a walk
+// made after a restart reads back what the store holds and agrees too.
+func TestIncrementalClosureMatchesFull(t *testing.T) {
 	rng := rand.New(rand.NewPCG(3, 4))
 	for _, size := range []int{1, storerec.BlobSize, 3*storerec.BlobSize + 7} {
 		content := make([]byte, size)
@@ -40,27 +42,61 @@ func TestQuickClosureMatchesFull(t *testing.T) {
 				t.Fatal(err)
 			}
 			p.arrived(h, o, b.RootHash)
-			if k < len(objs)-1 && p.quickClosure(b.RootHash, b.Root) != nil {
-				t.Fatalf("size %d: a closure before its last piece", size)
+			if k < len(objs)-1 {
+				if _, err := p.checkClosure(b.RootHash); !errors.Is(err, storerec.ErrClosure) {
+					t.Fatalf("size %d: before the last piece: %v", size, err)
+				}
 			}
-		}
-		q := p.quickClosure(b.RootHash, b.Root)
-		if q == nil {
-			t.Fatalf("size %d: no quick closure", size)
 		}
 		full, err := storerec.VerifyCHIRP(b.RootHash, p.fetch)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if q.RootHash != full.RootHash || !q.Canonical || !slices.Equal(q.Objects, full.Objects) || !slices.Equal(q.Blobs, full.Blobs) {
-			t.Fatalf("size %d: quick closure differs", size)
+		restarted := &Provider{store: st, inc: newIncremental(), cfg: p.cfg}
+		for _, pp := range []*Provider{p, restarted} {
+			q, err := pp.checkClosure(b.RootHash)
+			if err != nil {
+				t.Fatalf("size %d: %v", size, err)
+			}
+			if q.RootHash != full.RootHash || !q.Canonical || !slices.Equal(q.Objects, full.Objects) || !slices.Equal(q.Blobs, full.Blobs) {
+				t.Fatalf("size %d: incremental closure differs", size)
+			}
+			pr, _, err := pp.writeProofFiles("ab", q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if pr != b.ProofRoot {
+				t.Fatalf("size %d: proof root", size)
+			}
 		}
-		pr, _, err := p.writeProofFiles("ab", q)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if pr != b.ProofRoot {
-			t.Fatalf("size %d: proof root", size)
-		}
+	}
+}
+
+// A store serving other bytes for a piece is labeled closure hash, as
+// VerifyCHIRP labels it, and a bad content hash is content.
+func TestIncrementalClosureLabels(t *testing.T) {
+	content := make([]byte, 2*storerec.BlobSize+1)
+	b, err := storerec.Build(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := backend.OpenNative(t.TempDir(), "http://x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &Provider{store: st, inc: newIncremental(), cfg: &Config{Data: t.TempDir()}}
+	objs := b.Objects()
+	for _, o := range objs[:len(objs)-1] {
+		h := sha256.Sum256(o)
+		_ = st.Put(h, o)
+		p.arrived(h, o, b.RootHash)
+	}
+	last := objs[len(objs)-1]
+	lh := sha256.Sum256(last)
+	_ = st.Put(lh, append([]byte{1}, last[1:]...))
+	_, err = p.checkClosure(b.RootHash)
+	_, want := storerec.VerifyCHIRP(b.RootHash, p.fetch)
+	if !errors.Is(err, storerec.ErrClosure) || err.Error() != want.Error() {
+		t.Fatalf("got %v, VerifyCHIRP %v", err, want)
 	}
 }

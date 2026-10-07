@@ -7,6 +7,8 @@ import (
 	"math/rand/v2"
 	"sync"
 	"testing"
+
+	"github.com/lightwebinc/bcommon/commit"
 )
 
 // The parallel builder makes exactly the closure, proof root and blob
@@ -78,4 +80,20 @@ func TestParallelStoreError(t *testing.T) {
 	_, _ = q.Write(make([]byte, BlobSize+1))
 	q.Abort()
 	q.Abort()
+}
+
+// The parallel builder's per-blob subtree, commit.SegmentRoot at the
+// segment size, is BlobSubtree.
+func TestBlobSubtreeIsSegmentRoot(t *testing.T) {
+	rng := rand.New(rand.NewPCG(3, 4))
+	for _, size := range []int{0, 1, SegmentSize, SegmentSize + 1, BlobSize - 1, BlobSize} {
+		blob := make([]byte, size)
+		for i := range blob {
+			blob[i] = byte(rng.Uint32())
+		}
+		r, err := commit.SegmentRoot(blob, SegmentSize)
+		if err != nil || r != BlobSubtree(blob) {
+			t.Fatalf("size %d: SegmentRoot differs from BlobSubtree", size)
+		}
+	}
 }

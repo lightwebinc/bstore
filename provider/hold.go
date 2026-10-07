@@ -252,10 +252,7 @@ func (p *Provider) verifyRoot(ctx context.Context, rootHex string, entries []*En
 		return false, nil
 	}
 	entries = fit
-	c := p.quickClosure(root, rootBytes)
-	if c == nil {
-		c, err = storerec.VerifyCHIRP(root, p.fetch)
-	}
+	c, err := p.checkClosure(root)
 	if err != nil {
 		if errors.Is(err, storerec.ErrClosure) {
 			// Not all here yet; looked at again when the next piece lands.
@@ -264,6 +261,7 @@ func (p *Provider) verifyRoot(ctx context.Context, rootHex string, entries []*En
 		for _, x := range entries {
 			p.decide(x.C, why(err))
 		}
+		p.inc.forget(root, nil)
 		return false, nil
 	}
 	if !c.Canonical {
