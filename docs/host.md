@@ -6,7 +6,12 @@ file, `host/bundle/bstore-module.js`, which mounts the topic manager
 where the host's topics name one, and the lookup service `ls_bstore` for
 all of them ([spec.md](spec.md) sections 11 and 12). The module imports
 nothing but `@bsv/sdk` (the host's own copy) and Node's built-ins; bcommon
-is inlined. It holds no bytes of any object, fetches nothing a record
+is inlined. The terms route, its BRC-104 hardening, the payee ledger and
+payment acceptance are bcommon's shared host module
+(`@lightwebinc/bcommon/host`), bound to bstore's service, classes, settle
+protocol and `bstore` metric names, with the `payee` ledger layout and a
+session's response budget taken before the request's signature is
+verified. It holds no bytes of any object, fetches nothing a record
 names, and broadcasts nothing.
 
 This page is in two parts: what the module does, and an operator's guide.

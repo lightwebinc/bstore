@@ -117,6 +117,10 @@ func (h *home) printRace(r *publish.Race) {
 		}
 		seen := time.Unix(0, c.FirstSeen).UTC().Format("15:04:05.000")
 		g.out("  %2d. %s  first seen %s  %s%s", i+1, c.Advertiser, seen, c.Status, last)
+		// What became of its draws, kept apart from the progress notes.
+		for _, a := range c.DrawLog {
+			g.out("      draw %s  %s c=%d %s", time.Unix(a.At, 0).UTC().Format("15:04:05"), a.Outcome, a.C, a.Why)
+		}
 	}
 	if s := r.Settlement; s != nil {
 		g.out("  settlement %s", s.Txid)

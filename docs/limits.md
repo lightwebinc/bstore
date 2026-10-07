@@ -192,15 +192,15 @@ not do, stated so that nobody finds it by accident.
    block's hash, say), which changes amendment A1's rule and its vectors: an
    amendment, not a clarification, and the gain is a rank among ties in one
    look only.
-3. **A bridged incumbent gets one draw.** Its own derived front does not
-   exist: the first draw at it is spent, at once when the incumbent answers
-   `404` and after three tries when it does not answer, and that front is
-   not asked again (C23, C29); the second draw reaches the bridge's front in
-   the same look. A native provider has two draws in which to answer.
-   Clarification C31 ([frozen.md](frozen.md) section 14, pending owner
-   confirmation) would not count a `404 ERR_ROUTE_NOT_FOUND` from a
-   derived front as a draw, giving the incumbent two; until it is
-   confirmed the clients count it as C23 and C29 say.
+3. **A bridged incumbent's derived front must answer `404`.** Clarification
+   C31 ([frozen.md](frozen.md) section 14, signed) does not count a `404
+   ERR_ROUTE_NOT_FOUND` from the advertiser's own derived front as a draw,
+   so a bridged incumbent gets two draws at the bridge's front, as a native
+   provider does. An incumbent whose derived front does not answer at all
+   (or refuses the BRC-104 handshake the client sends) still spends a draw
+   after three tries (C23, C29): the client's BRC-104 handshake is go-sdk's,
+   and until the go-sdk bcommon pins sends the wire shape a TypeScript
+   server accepts, such an incumbent gets one draw.
 4. **Incumbents that ignore `Range` cost 4 MiB a sample.** A bridge reads
    each sampled segment from the incumbent's URL; when the incumbent
    answers a ranged request with the whole blob, a challenge of `c` reads

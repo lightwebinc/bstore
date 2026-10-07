@@ -260,6 +260,20 @@ func cmdDoctor(ctx context.Context, g *global, args []string) error {
 	}
 	g.out("races       %d %v", len(races), states)
 	for _, r := range races {
+		if r.State != publish.RaceOpen && r.State != publish.RaceClosed && r.State != publish.RaceLapsed {
+			continue
+		}
+		// Why a candidate's draws went, from the draw log, which progress
+		// notes never push out.
+		for _, c := range r.Cands {
+			if c.Status == publish.CandPassed || len(c.DrawLog) == 0 {
+				continue
+			}
+			a := c.DrawLog[len(c.DrawLog)-1]
+			g.out("draws       race %s advertiser %s: %s, %d spent, last %s: %s", short(r.Entry), short(c.Advertiser), c.Status, c.Draws, a.Outcome, a.Why)
+		}
+	}
+	for _, r := range races {
 		if age, ok := r.RemittedAge(time.Now()); ok && age >= publish.RemittedStale {
 			g.out("ALARM       race %s: settlement %s remitted %s ago, no proof served: it may never mine", short(r.Entry), short(r.Settlement.Txid), age.Truncate(time.Second))
 		}

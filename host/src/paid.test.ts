@@ -30,14 +30,14 @@ import {
   type PeerSession,
   type WalletInterface,
 } from '@bsv/sdk'
-import { DefaultBudget, type BudgetConfig, type ResponseBudgetConfig } from './budget.js'
+import { DefaultBudget, type BudgetConfig, type ResponseBudgetConfig } from '@lightwebinc/bcommon/host'
 import { MemoryJournal } from './journal.js'
 import { storeModule } from './module.js'
 import { BoundedSessions, LedgerReceiver, LookupFront, MemoryReceiver, PaymentProtocol, ledgerLine, parsePrices, spentOutpoints, termsDocument, type ReceivedPayment } from './paid.js'
 import { Chain, OwnerSim, Party, PayingWallet, Provider, Buyer, Writer, T0, fromNowhere } from './testmint.js'
 import { Clock, bucket, config, engineOf, topic } from './testhost.js'
 import { FakeHost, MemoryStorage } from './testutil.js'
-import { ArcadeHttp, BroadcastRefused, PaymentGate, isFinal, overspends } from './accept.js'
+import { ArcadeHttp, BroadcastRefused, PaymentGate, isFinal, overspends } from '@lightwebinc/bcommon/host'
 import { TestNetwork } from './testnetwork.js'
 import { defaultAcceptancePolicy, type AcceptancePolicy } from '@lightwebinc/bcommon'
 import { readPage } from './testworld.js'
@@ -50,6 +50,7 @@ const all = 'history=5,chain=10,export=20,outcome-history=3,outcome-history-of=4
 interface Rig {
   url: string
   server: Server
+  ls: { lookup: (q: unknown) => Promise<unknown> }
   receiver: MemoryReceiver
   wallet: PayingWallet
   client: Party
@@ -109,6 +110,7 @@ async function rig(prices: string, sessions?: { max: number; ttlSeconds: number 
   return {
     url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
     server,
+    ls: m.ls as unknown as Rig["ls"],
     receiver,
     wallet: new PayingWallet(client.key, chain),
     client,
@@ -215,7 +217,7 @@ test('the terms document, free questions without authentication, and refusals as
   assert.equal((await fetch(`${r.url}/lookup`, post({ service: 'ls_bstore', query: { ...chainQ(r), id: r.owner.idHex } }))).status, 400)
   assert.equal((await fetch(`${r.url}/lookup`, post({ service: 'ls_bstore', query: free(r) }, { 'x-bsv-auth-nonce': 'x' }))).status, 400)
   // The engine's own route refuses a priced class with an error that says where to ask.
-  await assert.rejects((async () => await (r.front as unknown as { o: { ls: { lookup: (q: unknown) => Promise<unknown> } } }).o.ls.lookup({ service: 'ls_bstore', query: chainQ(r) }))(), /priced on this host/)
+  await assert.rejects((async () => await r.ls.lookup({ service: 'ls_bstore', query: chainQ(r) }))(), /priced on this host/)
 
   const none = await rig('')
   assert.equal((await fetch(`${none.url}/ls_bstore/terms`)).status, 404, 'a host that prices nothing serves no terms')
@@ -400,7 +402,7 @@ test('the ledger writes the shared payee ledger line, byte for byte as the golde
   assert.equal(line, readFileSync(golden, 'utf8'))
   const dir = mkdtempSync(join(tmpdir(), 'bstore-ledger-'))
   try {
-    const ledger = new LedgerReceiver(dir, () => at * 1000)
+    const ledger = new LedgerReceiver(dir, { now: () => at * 1000 })
     assert.equal(ledger.claim(p), 'accepted')
     ledger.close()
     assert.equal(readFileSync(join(dir, 'payments.jsonl'), 'utf8'), line)

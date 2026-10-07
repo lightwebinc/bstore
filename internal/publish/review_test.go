@@ -47,10 +47,13 @@ type fakeFront struct {
 	// noRoute answers every request 404, as a host with no bstore routes;
 	// delay holds each answer.
 	noRoute bool
-	delay   time.Duration
-	mu      sync.Mutex
-	seen    map[string]int // nonce -> requests
-	srv     *httptest.Server
+	// notFound answers every request 404 with a code other than
+	// ERR_ROUTE_NOT_FOUND: a route that is there and refused.
+	notFound bool
+	delay    time.Duration
+	mu       sync.Mutex
+	seen     map[string]int // nonce -> requests
+	srv      *httptest.Server
 }
 
 func newFakeFront(t *testing.T, content []byte) *fakeFront {
@@ -84,6 +87,9 @@ func newFakeFront(t *testing.T, content []byte) *fakeFront {
 			time.Sleep(f.delay)
 			if f.noRoute {
 				return auth104.Error(http.StatusNotFound, "ERR_ROUTE_NOT_FOUND", "no such route")
+			}
+			if f.notFound {
+				return auth104.Error(http.StatusNotFound, "ERR_NOT_FOUND", "no such object")
 			}
 			if f.refuse {
 				return auth104.JSON(422, map[string]string{"error": "unknown-root"})

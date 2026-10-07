@@ -60,13 +60,54 @@ func TestNoRouteSpendsTheDrawAndMovesOn(t *testing.T) {
 	if gone.draws() != 1 || c.Draws != 2 || c.Status != CandPassed || !slices.Contains(c.BadFronts, gone.srv.URL+"/store/bstore/v1") {
 		t.Fatalf("404 front asked %d times; %d draws spent; %s; bad %v; %+v", gone.draws(), c.Draws, c.Status, c.BadFronts, c.Attempts)
 	}
-	// The advertiser's own front answering 404 spends one draw, once.
+	// The advertiser's own derived front answering 404 ERR_ROUTE_NOT_FOUND
+	// is not a draw (row C31): asked once, nothing spent, not asked again,
+	// and the reason kept in the draw log.
 	dead := newFakeFront(t, content)
 	dead.noRoute = true
 	c2 := candAt(race, dead)
 	challengeAlone(r.ctx, r.p, race, c2, blobs, tip.Height)
-	if dead.draws() != 1 || c2.Draws != 1 || c2.Status == CandPassed {
-		t.Fatalf("own 404 front: asked %d, %d draws, %s", dead.draws(), c2.Draws, c2.Status)
+	if dead.draws() != 1 || c2.Draws != 0 || c2.Status == CandPassed || c2.Status == CandFailed ||
+		len(c2.DrawLog) == 0 || c2.DrawLog[len(c2.DrawLog)-1].Outcome != OutcomeNotADraw {
+		t.Fatalf("own 404 route-not-found front: asked %d, %d draws, %s, log %+v", dead.draws(), c2.Draws, c2.Status, c2.DrawLog)
+	}
+	// Any other 404 from the derived front spends the draw (C23).
+	other := newFakeFront(t, content)
+	other.notFound = true
+	c3 := candAt(race, other)
+	challengeAlone(r.ctx, r.p, race, c3, blobs, tip.Height)
+	if other.draws() != 1 || c3.Draws != 1 || c3.Status == CandPassed {
+		t.Fatalf("own 404 front: asked %d, %d draws, %s", other.draws(), c3.Draws, c3.Status)
+	}
+}
+
+// Progress notes never push the reason a draw was spent out of the draw
+// log: it is kept apart from the attempt notes.
+func TestDrawLogKeepsTheReason(t *testing.T) {
+	r := newRaceRig(t)
+	content := r.stageContent(64 << 10)
+	race := r.put("k", Bounty{Satoshis: 4000, T: 1, K: 1, Retention: 3600, DeadlineBlocks: 500, CheckC: 30})
+	other := newFakeFront(t, content)
+	other.notFound = true
+	c := candAt(race, other)
+	blobs, _ := r.p.closureBlobs(r.ctx, race.entry)
+	tip, _ := r.p.cfg.Asset.BestHeader(r.ctx)
+	challengeAlone(r.ctx, r.p, race, c, blobs, tip.Height)
+	// The front is now bad and no other states it answers: every later step
+	// notes "waiting".
+	for range 100 {
+		challengeAlone(r.ctx, r.p, race, c, blobs, tip.Height)
+	}
+	if len(c.Attempts) != maxNotes {
+		t.Fatalf("%d attempt notes kept", len(c.Attempts))
+	}
+	for _, a := range c.Attempts {
+		if a.Outcome != "waiting" {
+			t.Fatalf("the spent draw is still among the notes: %+v", c.Attempts)
+		}
+	}
+	if len(c.DrawLog) == 0 || c.DrawLog[len(c.DrawLog)-1].Outcome != "spent" || !strings.Contains(c.DrawLog[len(c.DrawLog)-1].Why, "404") {
+		t.Fatalf("draw log %+v", c.DrawLog)
 	}
 }
 

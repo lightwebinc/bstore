@@ -193,7 +193,17 @@ $ bstore settle
   it can serve and refuse the rest: refusing only delays it. A refusal of
   the request itself, a signed answer, or a front with no challenge route
   (`404`, `410`) spends the draw at once; after a front with no route the
-  next draw goes to the next front in the same look.
+  next draw goes to the next front in the same look. One exception (row
+  C31): a `404` with code `ERR_ROUTE_NOT_FOUND` from the advertiser's own
+  derived front is not a draw (an incumbent behind a bridge has no bstore
+  route there), so that front is dropped and both draws go to fronts that
+  state they answer for the advertiser.
+- **The draw log.** What became of each draw (its answer, a draw spent and
+  why, one not counted, the candidate failing) is kept in the race apart
+  from the progress notes ("waiting", "priced", "not asked"), which a step
+  writes every few seconds. `bstore holds` prints each candidate's draw log
+  under it, and `bstore doctor` names, for every race not yet settled, each
+  candidate's last draw outcome and its reason.
 - **Whose failure.** A failure is the answerer's (spec section 7.4): at the
   advertiser's own front it fails the candidate; at a front that is not the
   advertiser it is the front's, that front is not asked again, and the

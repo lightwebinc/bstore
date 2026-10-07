@@ -6,8 +6,7 @@ already published. Once one record using it is on a public host, readers
 verify against it for as long as anyone reads that record, so changing it
 afterwards is a new identifier or a new record version, never an edit.
 
-**Status: signed, clarifications C1 to C30 signed, C31 pending owner
-confirmation; one owner-approved amendment (section 15, row A1).** Every other row below is signed with the
+**Status: signed, clarifications C1 to C31 signed; one owner-approved amendment (section 15, row A1).** Every other row below is signed with the
 value it gives, and none is provisional. The rows marked "vectors" are pinned byte for byte by
 the golden vectors the codec generates ([spec.md](spec.md) section 22); a
 vector that disagrees with a row is a defect in the codec, not a change to
@@ -205,12 +204,11 @@ least 1024. As ceilings, not floors: the BEEF ceilings of section 2.
 ## 14. Clarifications
 
 A clarification rewords a signed rule where the signed wording leaves a
-case open. Rows C1 to C30 are signed by the owner; C31 is proposed and
-PENDING owner confirmation, and nothing follows it yet. The
+case open. Rows C1 to C31 are signed by the owner. The
 codec and its vectors (C1 to C7, C30), the host module (C8), the provider
 (C9 to C11, C30), the S3 gateway (C13 to C16), the command line (C17 to
-C24, C30) and the provider as a front and the bridge (C25 to C30) already
-follow them.
+C24, C30, C31) and the provider as a front and the bridge (C25 to C30)
+already follow them.
 C12 rewords how the contract describes the challenge seed, and binds a later
 on-chain form.
 
@@ -246,7 +244,7 @@ on-chain form.
 | C28 | Settlement for a bridged advertiser, spec sections 9.5 and 17, rows C22 and C24 | A writer remits to the advertiser's own derived route (row C24), which an unchanged incumbent does not serve. A front's `/settle` refuses remittances (`400`: a front is not a payee); the front finds each spend of a held entry's hold output from public data once it is mined and forwards it to the advertiser's operator: the transaction as Atomic BEEF with its proof, the BRC-29 prefix, the sender, and the suffix of every rank 1 to `K`, since only the advertiser's key tells which output is its own. This is spec section 17's "forwards the remittance" | SIGNED |
 | C29 | The settlement challenge, spec section 9.4, row C23 | A draw that the advertiser's own derived front leaves unanswered three times is spent, and that front is not asked again in the race, as a third-party front's is not: the next draw goes to a front that states it answers for the advertiser. An incumbent with no bstore routes is reached through its bridge; draws stay at two per candidate, every front counted | SIGNED |
 | C30 | A payment not taken, spec sections 7.3 and 10.1 (spec section 10.4) | A front that refuses a `challenge` request that came with a BRC-105 payment it did not take adds `"notTaken"` to the refusal: base64 of `[body, signature]`, at most 512 bytes, the body a record under the magic `stn` `0x01` with keys 0 magic, 1 payment (the txid, 32 bytes, hash byte order), 2 request (SHA-256 of the request encoding), 3 reason (1 to 64 of `a`-`z`, `0`-`9`, `-`), 4 time (Unix seconds, at most `2^32 - 1`), 5 answerer (33 bytes), and the signature strict low-S DER over SHA-256 of the body under `derive(answerer, "challenge")`. No note on a `402` or a `409`; a front never takes a payment it signed a note for. A buyer releases the payment's coin on a note that verifies and names its payment, the SHA-256 of its request and the answerer it asked, and otherwise holds it as before. Vectors `nottaken-v1.json` | SIGNED |
-| C31 | A draw at a front with no bstore route, spec section 9.4, rows C23 and C29 | A settlement challenge that the advertiser's own derived front answers `404` with code `ERR_ROUTE_NOT_FOUND` was never a challenge: no bstore route received it, and nothing was signed or refused. It is not counted as a draw, and that front is not asked again in the race; both draws go to fronts that state they answer for the advertiser. Any other answer, and no answer, spends the draw as C23 and C29 say. A bridged incumbent then has two draws, as a native provider does | PENDING owner confirmation |
+| C31 | A draw at a front with no bstore route, spec section 9.4, rows C23 and C29 | A settlement challenge that the advertiser's own derived front answers `404` with code `ERR_ROUTE_NOT_FOUND` was never a challenge: no bstore route received it, and nothing was signed or refused. It is not counted as a draw, and that front is not asked again in the race; both draws go to fronts that state they answer for the advertiser. Any other answer, and no answer, spends the draw as C23 and C29 say. A bridged incumbent then has two draws, as a native provider does | Signed |
 
 ## 15. Amendments
 

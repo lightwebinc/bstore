@@ -5,7 +5,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { MerklePath, Transaction } from '@bsv/sdk'
-import { BroadcastRefused, type ArcadeStatus, type Broadcaster, type NodeView } from './accept.js'
+import { BroadcastRefused, type ArcadeStatus, type Broadcaster, type NodeView } from '@lightwebinc/bcommon/host'
 
 /** How arcade answers what it is sent. */
 export type ArcadeMode = 'accept' | 'double-spend' | 'reject' | 'refuse-http' | 'silent' | 'down'

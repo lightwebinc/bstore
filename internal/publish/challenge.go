@@ -66,6 +66,7 @@ type ChallengeResult struct {
 	Req        *storerec.Request
 	Status     int
 	Refusal    string // a 422's label
+	Code       string // a refusal's BRC-104 error code, as in ERR_ROUTE_NOT_FOUND
 	Signed     []byte
 	Verdict    storerec.Verdict
 	Outcome    int // storerec.OutcomePass .. OutcomeUnretrievable
@@ -167,6 +168,12 @@ func (p *Publisher) Challenge(ctx context.Context, ch *Challenge, fetch *http.Cl
 		res.Outcome, res.Why = storerec.OutcomeNoAnswer, "refused: "+e.Error
 		return res, nil
 	default:
+		var e struct {
+			Code string `json:"code"`
+		}
+		if json.Unmarshal(call.Body, &e) == nil {
+			res.Code = e.Code
+		}
 		res.Outcome, res.Why = storerec.OutcomeNoAnswer, fmt.Sprintf("no answer: %d %s", call.Status, firstLine(string(call.Body)))
 		return res, nil
 	}

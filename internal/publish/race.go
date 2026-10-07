@@ -114,6 +114,10 @@ type Cand struct {
 	Expiry   uint64    `json:"expiry"`
 	Status   string    `json:"status"`
 	Attempts []Attempt `json:"attempts,omitempty"`
+	// DrawLog is what became of each draw, apart from Attempts: progress
+	// notes ("waiting" every step, "priced", "not asked") go to Attempts
+	// only, so they never push out the reason a draw was spent.
+	DrawLog []Attempt `json:"drawLog,omitempty"`
 	// Draws are the settlement challenges spent; Pending is the one made
 	// and not yet answered; BadFronts are fronts not asked again.
 	Draws     int          `json:"draws,omitempty"`
@@ -564,6 +568,29 @@ func (p *Publisher) fronts(ctx context.Context, r *Race, c *Cand) []frontAt {
 	return out
 }
 
+// derived reports whether f is c's derived front (spec section 9.4): the
+// front its advertisement's URL names, answering for the advertiser.
+func derived(c *Cand, f frontAt) bool {
+	u, ok := storerec.DerivedFront(c.URL)
+	return ok && u == f.url
+}
+
+// OutcomeNotADraw is a candidate's note that a challenge did not count as
+// a draw (row C31).
+const OutcomeNotADraw = "not a draw"
+
+// IsDrawOutcome reports whether an attempt's outcome says what became of a
+// draw (an answer, a spent or uncounted draw, the candidate failing), as
+// against a progress note: "waiting", "priced" and "not asked" spend
+// nothing.
+func IsDrawOutcome(o string) bool {
+	switch o {
+	case "waiting", "priced", "not asked", "":
+		return false
+	}
+	return true
+}
+
 type frontAt struct {
 	url      string
 	answerer []byte
@@ -651,6 +678,7 @@ func (p *Publisher) judge(ctx context.Context, r *Race, tip uint32, o RaceOption
 func (c *Cand) clone() *Cand {
 	d := *c
 	d.Attempts = slices.Clone(c.Attempts)
+	d.DrawLog = slices.Clone(c.DrawLog)
 	d.BadFronts = slices.Clone(c.BadFronts)
 	if c.Pending != nil {
 		pd := *c.Pending
@@ -703,6 +731,9 @@ const (
 	maxDraws     = 2
 	maxFronts    = 4
 	pendingTries = 3
+	// maxNotes and maxDrawLog bound a candidate's Attempts and DrawLog.
+	maxNotes   = 32
+	maxDrawLog = 16
 	// candBudget bounds the time one candidate takes in one step.
 	candBudget = 4 * time.Minute
 )
@@ -742,8 +773,14 @@ func (p *Publisher) drawOnce(ctx context.Context, r *Race, c *Cand, blobs []chir
 	note := func(a Attempt) {
 		a.At = p.cfg.Now().Unix()
 		c.Attempts = append(c.Attempts, a)
-		if len(c.Attempts) > 32 {
-			c.Attempts = c.Attempts[len(c.Attempts)-32:]
+		if len(c.Attempts) > maxNotes {
+			c.Attempts = c.Attempts[len(c.Attempts)-maxNotes:]
+		}
+		if IsDrawOutcome(a.Outcome) {
+			c.DrawLog = append(c.DrawLog, a)
+			if len(c.DrawLog) > maxDrawLog {
+				c.DrawLog = c.DrawLog[len(c.DrawLog)-maxDrawLog:]
+			}
 		}
 	}
 	spend := func(why string) {
@@ -836,6 +873,17 @@ func (p *Publisher) drawOnce(ctx context.Context, r *Race, c *Cand, blobs []chir
 	case res.Status == http.StatusPaymentRequired:
 		c.Status = CandPriced
 		return false
+	case res.Status == http.StatusNotFound && res.Code == "ERR_ROUTE_NOT_FOUND" && own && derived(c, f):
+		// Row C31: the advertiser's own derived front has no bstore route
+		// at all (an incumbent host behind a bridge). No route received the
+		// challenge and nothing was signed or refused, so it was never a
+		// draw. That front is not asked again, and both draws go to fronts
+		// that state they answer for the advertiser.
+		c.BadFronts = append(c.BadFronts, f.url)
+		c.Pending = nil
+		note(Attempt{C: ch.C, Front: f.url, Outcome: OutcomeNotADraw, Why: "the advertiser's derived front has no bstore route (404 ERR_ROUTE_NOT_FOUND, row C31)"})
+		c.Status = CandSeen
+		return true
 	case res.Status == http.StatusNotFound || res.Status == http.StatusGone:
 		// The front has no challenge route: an answer, final for this
 		// front. The draw counts and the next front is asked now.
