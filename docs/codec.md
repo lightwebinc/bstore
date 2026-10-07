@@ -22,7 +22,7 @@ What the codec takes from elsewhere:
   `chirp` (CHIRP Profile 1: node encoding, the canonical construction, the
   closure check, identifiers) and, for the vectors, `mint`; in TypeScript the
   same readers and checks.
-- go-sdk v1.5.2 and `@bsv/sdk` 2.7.1, the versions bcommon pins. The SDK
+- go-sdk v1.7.1 and `@bsv/sdk` 2.7.1, the versions bcommon pins. The SDK
   release bcommon pins does not carry the SDK's advertisement check
   (`storage/UHRPAdvertisementValidation.ts`), so both codecs carry it step
   for step (`advert.go`, `advert.ts`).
