@@ -196,7 +196,9 @@ func TestTrimSweepsOrphans(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := io.MultiReader(bytes.NewReader(make([]byte, 5<<20)), &failing{})
+	// The body fails only once its first blob is on disk: a stage aborted
+	// earlier stores nothing, which would leave no orphan to sweep.
+	r := io.MultiReader(bytes.NewReader(make([]byte, 5<<20)), &failing{after: filepath.Join(dir, "objects")})
 	if _, err := store.Stage(context.Background(), r, 10<<20); err == nil {
 		t.Fatal("a body that failed was staged")
 	}
@@ -217,6 +219,22 @@ func TestTrimSweepsOrphans(t *testing.T) {
 	}
 }
 
-type failing struct{}
+// failing is a body that goes away. With after set, it first waits (up to
+// ten seconds) for a file to be written under that directory.
+type failing struct{ after string }
 
-func (*failing) Read([]byte) (int, error) { return 0, errors.New("the client went away") }
+func (f *failing) Read([]byte) (int, error) {
+	for end := time.Now().Add(10 * time.Second); f.after != "" && time.Now().Before(end); time.Sleep(time.Millisecond) {
+		found := false
+		_ = filepath.Walk(f.after, func(_ string, info os.FileInfo, err error) error {
+			if err == nil && !info.IsDir() {
+				found = true
+			}
+			return nil
+		})
+		if found {
+			break
+		}
+	}
+	return 0, errors.New("the client went away")
+}
