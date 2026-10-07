@@ -25,7 +25,7 @@ jobs:
       - name: vet
         run: make vet
       # The direct dependencies are exactly go-sdk and bcommon, go.mod is
-      # tidy, nothing is replaced, and go-sdk resolves to exactly v1.5.2.
+      # tidy, nothing is replaced, and go-sdk resolves to exactly v1.7.1.
       - name: dependency set
         run: make deps-check
       # LICENSE-THIRD-PARTY matches what the binaries link.

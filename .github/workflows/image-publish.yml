@@ -1,0 +1,31 @@
+name: image-publish
+
+# Manual, gated image publish of ghcr.io/lightwebinc/bstore (the command and
+# the S3 gateway, the Dockerfile's default target). No automated trigger.
+# bstore-provider, bstore-devchain and bstore-host are built locally
+# (make docker-build, make docker-build-host).
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type RELEASE to publish image to ghcr.io'
+        required: true
+      tag:
+        description: 'Image tag, a released version without the v (e.g. 0.6.1)'
+        required: true
+      dry-run:
+        description: 'Build only, push nothing'
+        type: boolean
+        default: false
+
+jobs:
+  publish:
+    if: inputs.confirm == 'RELEASE'
+    permissions:
+      contents: read
+      packages: write
+    uses: lightwebinc/ci/.github/workflows/image-publish.yml@3c61864e6d822d16119858e525129ea5c400d4d7 # v0.4.0
+    with:
+      tag: ${{ inputs.tag }}
+      environment: ""
+      dry-run: ${{ inputs.dry-run }}

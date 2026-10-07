@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*'
+
+permissions:
+  contents: read
+
+jobs:
+  # bstore ships two commands somebody installs: bstore (the command line
+  # and the S3 gateway) and bstore-provider. Four platforms, each tarball
+  # holding both static binaries beside the licenses.
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.1"
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+          GOWORK: "off"
+        run: |
+          set -eux
+          version="${GITHUB_REF_NAME#v}"
+          dir="bstore_${version}_${GOOS}_${GOARCH}"
+          mkdir -p "dist/${dir}"
+          for cmd in bstore bstore-provider; do
+            go build -trimpath -buildvcs=false \
+              -ldflags "-s -w -X main.version=${version}" \
+              -o "dist/${dir}/${cmd}" "./cmd/${cmd}"
+          done
+          # The licenses travel inside the tarball: a statically linked
+          # binary contains its dependencies' code, and their licenses
+          # require their text to reach whoever receives a binary.
+          cp LICENSE NOTICE LICENSE-THIRD-PARTY README.md "dist/${dir}/"
+          tar -C dist -czf "dist/${dir}.tar.gz" "${dir}"
+          ( cd dist && sha256sum "${dir}.tar.gz" > "${dir}.tar.gz.sha256" )
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bstore_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          set -eux
+          cd dist
+          cat *.sha256 | sort -k2 > SHA256SUMS
+          rm -f *.tar.gz.sha256
+          ls -l
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
