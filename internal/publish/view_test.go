@@ -3,7 +3,7 @@ package publish
 import (
 	"github.com/lightwebinc/bcommon/nodeapi"
 
-	"github.com/lightwebinc/bstore/internal/chaincfg"
+	"github.com/lightwebinc/bstore/chaincfg"
 )
 
 // nodeView is the chain view and tip of a test chain's node at url.

@@ -14,7 +14,7 @@ import (
 	"github.com/lightwebinc/bcommon/goldentest"
 	"github.com/lightwebinc/bcommon/testchain"
 
-	"github.com/lightwebinc/bstore/internal/chaincfg"
+	"github.com/lightwebinc/bstore/chaincfg"
 	"github.com/lightwebinc/bstore/internal/publish"
 )
 

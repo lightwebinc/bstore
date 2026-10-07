@@ -299,6 +299,10 @@ func (p *Publisher) splitCoin(ctx context.Context, pay *producer.Payer, value ui
 		pay.GiveBack()
 		return err
 	}
+	if err := capFee(p.fees(), tx); err != nil {
+		pay.GiveBack()
+		return err
+	}
 	// Every output pays the fund key. The split is not waited for: once the
 	// leg takes it, its outputs are in the pools unproven, and become
 	// spendable when their proof is collected (CollectChange), so a command

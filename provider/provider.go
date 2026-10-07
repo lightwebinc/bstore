@@ -42,7 +42,7 @@ import (
 
 	"github.com/lightwebinc/bstore/auth104"
 	"github.com/lightwebinc/bstore/backend"
-	"github.com/lightwebinc/bstore/internal/chaincfg"
+	"github.com/lightwebinc/bstore/chaincfg"
 	"github.com/lightwebinc/bstore/storerec"
 )
 

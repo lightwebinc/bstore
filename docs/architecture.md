@@ -106,12 +106,12 @@ The `-blocks` and `-from` funding flags, the `devchain` binary and
 | `storerec` | the byte-level contract: records, entries, pieces, outcomes, front statements, challenges, the key map, settlement, advertisements, a reader's checks |
 | `provider` | the provider: receiving, checking, the hold policy, advertising, challenges, renewals, settlement, serving |
 | `backend` | the hold-backend interface (frozen) and the native content-addressed store |
+| `chaincfg` | the chain view, header source, settlement leg and fee policy every configuration names (a provider's from `provider.Config.Spec`), and importing a payment (BEEF or txid) to a fund address into a pool; exported for a module that embeds a provider |
 | `auth104` | the server side of BRC-103/104 mutual authentication, with its hardening |
 | `internal/publish` | the publisher: staging, carriers, delivery, the outbox, the race, settlement, reclaim, paid calls |
 | `internal/anchor` | the owner's tooling: chain creation and anchoring |
 | `internal/reader` | the verified reader |
 | `internal/s3d` | the S3 gateway |
-| `internal/chaincfg` | the chain view, header source, settlement leg and fee policy every configuration names, and importing a payment (BEEF or txid) to a fund address into a pool |
 | `internal/efleg` | attaching inputs' source transactions for Extended Format settlement legs |
 | `internal/acceptcfg` | the payment acceptance settings shared by every configuration |
 | `host/` | the TypeScript host module: topic managers, `ls_bstore`, the terms route, retention |

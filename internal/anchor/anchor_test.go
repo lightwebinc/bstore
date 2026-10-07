@@ -30,7 +30,7 @@ import (
 	bpub "github.com/lightwebinc/bcommon/publish"
 	"github.com/lightwebinc/bcommon/testchain"
 
-	"github.com/lightwebinc/bstore/internal/chaincfg"
+	"github.com/lightwebinc/bstore/chaincfg"
 	"github.com/lightwebinc/bstore/internal/publish"
 	"github.com/lightwebinc/bstore/internal/reader"
 	"github.com/lightwebinc/bstore/internal/testwriter"

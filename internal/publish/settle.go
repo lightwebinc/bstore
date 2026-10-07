@@ -379,6 +379,10 @@ func (p *Publisher) buildSettlement(ctx context.Context, r *Race, hold *HoldReco
 		pay.GiveBack()
 		return nil, err
 	}
+	if err := capFee(p.fees(), tx); err != nil {
+		pay.GiveBack()
+		return nil, err
+	}
 	// The payouts are exactly the hold output, whatever was signed.
 	var out uint64
 	for _, py := range rec.Payees {
@@ -677,6 +681,10 @@ func (p *Publisher) reclaimHold(ctx context.Context, hold *HoldRecord) (*Reclaim
 		return nil, err
 	}
 	if err := tx.Sign(); err != nil {
+		pay.GiveBack()
+		return nil, err
+	}
+	if err := capFee(p.fees(), tx); err != nil {
 		pay.GiveBack()
 		return nil, err
 	}

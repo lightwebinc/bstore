@@ -208,8 +208,8 @@ func (p *Publisher) sweepTree(ctx context.Context, kt KillTree) (*SweepRecord, e
 		pay.GiveBack()
 		return nil, err
 	}
-	tx, err := carrier.Sweep(ctx, p.wallet, p.wallet.Originator, carrierParams(derivationOf(kt.Kind)), tree, vouts,
-		fee.Tx, fee.Vout, fee.Unlocker, change, p.wholeRate(), p.floor())
+	tx, err := carrier.SweepAt(ctx, p.wallet, p.wallet.Originator, carrierParams(derivationOf(kt.Kind)), tree, vouts,
+		fee.Tx, fee.Vout, fee.Unlocker, change, p.fees())
 	if err == nil {
 		err = refuseMixed(tx)
 	}

@@ -14,8 +14,8 @@ import (
 	"github.com/lightwebinc/bcommon/feepolicy"
 	"github.com/lightwebinc/bcommon/guard"
 
+	"github.com/lightwebinc/bstore/chaincfg"
 	"github.com/lightwebinc/bstore/internal/acceptcfg"
-	"github.com/lightwebinc/bstore/internal/chaincfg"
 	"github.com/lightwebinc/bstore/storerec"
 )
 
@@ -187,6 +187,21 @@ type Limits struct {
 }
 
 func (c *Config) defaults() {
+	// The chain keys take the zero-infrastructure profile here as well as
+	// in chaincfg, so a configuration past Check names what it uses and a
+	// module that embeds Config reads woc:<network> and arcade:<network>
+	// from it (a set node key stays the chain view, asset:<node>). Mainnet
+	// or testnet, so none of these can fail.
+	s := c.Spec()
+	if c.Chain == "" && c.Node == "" {
+		c.Chain, _ = s.ChainSpec()
+	}
+	if c.Settle == "" {
+		c.Settle, _ = s.SettleSpec()
+	}
+	if c.Headers == "" {
+		c.Headers, _ = s.HeadersSpec()
+	}
 	if c.Listen == "" {
 		c.Listen = "127.0.0.1:8095"
 	}

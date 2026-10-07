@@ -15,7 +15,7 @@ import (
 
 	"github.com/lightwebinc/bcommon/bwallet"
 
-	"github.com/lightwebinc/bstore/internal/chaincfg"
+	"github.com/lightwebinc/bstore/chaincfg"
 )
 
 // Doctor reports a provider's identity, its pool, its store, and whether

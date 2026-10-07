@@ -103,6 +103,19 @@ func TestConfigRefusals(t *testing.T) {
 	if s := bare.Spec(); s.Network != "test" {
 		t.Fatalf("network %q", s.Network)
 	}
+	// Named in the configuration itself, for a module that embeds it.
+	if bare.Chain != "woc:test" || bare.Settle != "arcade:test" || bare.Headers != "woc:test" {
+		t.Fatalf("defaults: chain %q settle %q headers %q", bare.Chain, bare.Settle, bare.Headers)
+	}
+	main := good()
+	main.Node, main.Settle, main.Headers, main.Mainnet = "", "", "", true
+	if err := main.Check(); err != nil || main.Chain != "woc:main" || main.Settle != "arcade:main" || main.Headers != "woc:main" {
+		t.Fatalf("mainnet defaults: %v: chain %q settle %q headers %q", err, main.Chain, main.Settle, main.Headers)
+	}
+	// A node key stays the chain view: chain is not filled beside it.
+	if n := good(); n.Check() != nil || n.Chain != "" {
+		t.Fatalf("node: chain %q", n.Chain)
+	}
 	for name, edit := range map[string]func(*Config){
 		"relative data":  func(c *Config) { c.Data = "x" },
 		"http public":    func(c *Config) { c.PublicURL = "http://provider.example" },

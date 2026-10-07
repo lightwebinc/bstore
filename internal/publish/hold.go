@@ -152,6 +152,10 @@ func (p *Publisher) mintHolds(ctx context.Context, sats uint64, n int) error {
 		pay.GiveBack()
 		return err
 	}
+	if err := capFee(p.fees(), tx); err != nil {
+		pay.GiveBack()
+		return err
+	}
 	txid := tx.TxID().String()
 	raw := hex.EncodeToString(tx.Bytes())
 	p.mu.Lock()

@@ -21,7 +21,7 @@ import (
 
 	"github.com/lightwebinc/bcommon/bwallet"
 
-	"github.com/lightwebinc/bstore/internal/chaincfg"
+	"github.com/lightwebinc/bstore/chaincfg"
 	"github.com/lightwebinc/bstore/internal/publish"
 	"github.com/lightwebinc/bstore/internal/s3d"
 )

@@ -51,7 +51,7 @@ import (
 	bpub "github.com/lightwebinc/bcommon/publish"
 	"github.com/lightwebinc/bcommon/pushdrop"
 
-	"github.com/lightwebinc/bstore/internal/chaincfg"
+	"github.com/lightwebinc/bstore/chaincfg"
 	"github.com/lightwebinc/bstore/internal/reader"
 	"github.com/lightwebinc/bstore/storerec"
 )
@@ -397,10 +397,27 @@ func (p *Publisher) rateFee(size uint64) uint64 {
 	return fee
 }
 
-// wholeRate is the fee rate rounded up to whole satoshis a byte, for a
-// builder that takes only that (carrier.Sweep): at least 1.
-func (p *Publisher) wholeRate() uint64 {
-	return max(p.rateFee(1), 1)
+// capFee holds a transaction built here rather than by package mint (the
+// hold outputs, the payment coin split, a settlement, a reclaim) to the fee
+// policy's per-transaction maximum (fee.max_tx), as mint holds its own:
+// mint.Fees.For at the signed size, and the fee actually paid, change too
+// small to keep included, each at most fees.Max. Overpaying is lost money,
+// so it fails closed with mint.ErrFeeTooHigh before anything is sent.
+func capFee(fees mint.Fees, tx *transaction.Transaction) error {
+	if _, err := fees.For(tx.Size()); err != nil {
+		return err
+	}
+	if fees.Max == 0 {
+		return nil
+	}
+	paid, err := tx.GetFee()
+	if err != nil {
+		return err
+	}
+	if paid > fees.Max {
+		return fmt.Errorf("%w: %d satoshis paid for %d bytes, maximum %d", mint.ErrFeeTooHigh, paid, tx.Size(), fees.Max)
+	}
+	return nil
 }
 
 // Delivery is how the identity reaches hosts and providers.

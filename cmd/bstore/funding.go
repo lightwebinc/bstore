@@ -9,7 +9,7 @@ import (
 	"github.com/lightwebinc/bcommon/mint"
 	"github.com/lightwebinc/bcommon/nodeapi"
 
-	"github.com/lightwebinc/bstore/internal/chaincfg"
+	"github.com/lightwebinc/bstore/chaincfg"
 )
 
 // fundError is an import's error with its exit code: not mined yet is

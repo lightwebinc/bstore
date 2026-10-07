@@ -62,7 +62,7 @@ serves all three).
 | `fee.source` | `static` | `static`, or `arc`: the policy the broadcaster publishes (`GET /v1/policy`), refreshed every 5 minutes, held to `min_rate` and `max_rate`, falling back to the static rate. Opt-in |
 | `fee.policy_urls` | the settlement leg's arcade or ARC | where `source: arc` reads the policy |
 | `fee.min_rate`, `fee.max_rate` | `100/1000`, `1/1` | the bounds a live policy is held to; `max_rate` also caps `rate` |
-| `fee.max_tx` | none | the most one funding tree, token or payment may pay in fee; above it, it is refused rather than paid |
+| `fee.max_tx` | none | the most one transaction may pay in fee (a funding tree, token, payment, sweep, hold outputs, payment coin split, settlement or reclaim); above it, it is refused rather than paid |
 | `fee_sat_per_byte`, `fee_floor` | none | the older keys: `rate {fee_sat_per_byte, 1}` and `floor`. Either beside the `fee` key it aliases is refused |
 
 ```json

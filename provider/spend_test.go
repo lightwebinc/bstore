@@ -15,7 +15,7 @@ import (
 
 	"github.com/lightwebinc/bcommon/headers"
 
-	"github.com/lightwebinc/bstore/internal/chaincfg"
+	"github.com/lightwebinc/bstore/chaincfg"
 )
 
 // A spend source that does not say "unspent" is no evidence: the hold

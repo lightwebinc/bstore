@@ -13,8 +13,8 @@ import (
 	"github.com/lightwebinc/bcommon/feepolicy"
 	"github.com/lightwebinc/bcommon/guard"
 
+	"github.com/lightwebinc/bstore/chaincfg"
 	"github.com/lightwebinc/bstore/internal/acceptcfg"
-	"github.com/lightwebinc/bstore/internal/chaincfg"
 	"github.com/lightwebinc/bstore/internal/publish"
 
 	"github.com/lightwebinc/bstore/storerec"
