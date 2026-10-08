@@ -199,7 +199,7 @@ func (p *Publisher) sweepTree(ctx context.Context, kt KillTree) (*SweepRecord, e
 		return nil, nil
 	}
 	pay := p.newPayer(ctx)
-	fee, err := pay.TakeAtLeast(ctx, p.floor()*4+p.rateFee(uint64(len(vouts))*160))
+	fee, err := pay.TakeAtLeast(ctx, max(p.floor()*4, p.feeAt(uint64(len(vouts))*160+200)+p.dust()))
 	if err != nil {
 		return nil, feeError(err)
 	}

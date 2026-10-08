@@ -50,7 +50,7 @@ type Config struct {
 	WoCKey       string  `json:"woc_key,omitempty"`
 	WoCRate      float64 `json:"woc_rate,omitempty"`
 	// Fee is the miner fee policy (default 100 satoshis per 1000 bytes,
-	// floor 250); fee_sat_per_byte and fee_floor are its older keys.
+	// floor 100, capped at 100/1000); fee_sat_per_byte and fee_floor are its older keys.
 	Fee *feepolicy.Config `json:"fee,omitempty"`
 	// RefuseUnmined makes fund -beef take mined payments only.
 	RefuseUnmined bool `json:"refuse_unmined,omitempty"`

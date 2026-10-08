@@ -87,7 +87,7 @@ type Config struct {
 	Limits Limits `json:"limits"`
 	// TreeCount and TreeSats size the funding trees advertisements and
 	// renewals spend. Fee is the miner fee policy (feepolicy.Config;
-	// default 100 satoshis per 1000 bytes, floor 250); FeeRate and FeeFloor
+	// default 100 satoshis per 1000 bytes, floor 100, capped at 100/1000); FeeRate and FeeFloor
 	// are its older keys fee_sat_per_byte and fee_floor, still read.
 	TreeCount int               `json:"tree_count"`
 	TreeSats  uint64            `json:"tree_sats"`

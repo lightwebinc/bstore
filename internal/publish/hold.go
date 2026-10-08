@@ -129,8 +129,8 @@ func (p *Publisher) mintHolds(ctx context.Context, sats uint64, n int) error {
 	if h, err := p.bestHeader(ctx); err == nil {
 		pay.Tip = h.Height
 	}
-	fee := p.floor() + p.rateFee(uint64(200+45*n))
-	coin, err := pay.TakeAtLeast(ctx, uint64(n)*sats+fee+p.floor())
+	fee := p.feeAt(uint64(200 + 45*n))
+	coin, err := pay.TakeAtLeast(ctx, uint64(n)*sats+fee+p.dust())
 	if err != nil {
 		return err
 	}
@@ -140,7 +140,7 @@ func (p *Publisher) mintHolds(ctx context.Context, sats uint64, n int) error {
 		tx.AddOutput(&transaction.TransactionOutput{Satoshis: sats, LockingScript: &lock})
 	}
 	in := coin.Tx.Outputs[coin.Vout].Satoshis
-	if change := in - uint64(n)*sats - fee; change >= p.floor() {
+	if change := in - uint64(n)*sats - fee; change >= p.dust() {
 		cs, err := p.signer.FundScript()
 		if err != nil {
 			pay.GiveBack()

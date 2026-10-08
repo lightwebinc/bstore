@@ -370,10 +370,19 @@ func (v *View) Report(ctx context.Context) []Line {
 	default:
 		out = append(out, Line{"settle", v.SettleSpec})
 	}
+	return append(out, v.feeLine(ctx))
+}
+
+// feeLine is the fee policy in force: the rate paid, a rate above the cap
+// shown lowered to it.
+func (v *View) feeLine(ctx context.Context) Line {
 	f := v.Fees(ctx)
 	rate := f.Rate
 	if rate.IsZero() {
 		rate.Sats, rate.Bytes = f.SatPerByte, 1
+	}
+	if !f.MaxRate.IsZero() && rate.Cmp(f.MaxRate) > 0 {
+		rate = f.MaxRate
 	}
 	src := feepolicy.SourceStatic
 	if a, ok := v.FeeSource.(*feepolicy.ARC); ok {
@@ -383,8 +392,7 @@ func (v *View) Report(ctx context.Context) []Line {
 			src += " (" + firstLine(st.Err) + ")"
 		}
 	}
-	out = append(out, Line{"fee", fmt.Sprintf("%s satoshis/bytes, floor %d, %s", rate, f.Floor, src)})
-	return out
+	return Line{"fee", fmt.Sprintf("%s satoshis/bytes, floor %d, %s", rate, f.Floor, src)}
 }
 
 func firstLine(err error) string {

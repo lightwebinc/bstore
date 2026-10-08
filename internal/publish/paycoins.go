@@ -276,8 +276,8 @@ func (p *Publisher) FillPayCoins(ctx context.Context, maxPay uint64) {
 }
 
 func (p *Publisher) splitCoin(ctx context.Context, pay *producer.Payer, value uint64, n int) error {
-	fee := p.floor() + p.rateFee(uint64(200+34*n))
-	coin, err := pay.TakeAtLeast(ctx, uint64(n)*value+fee+p.floor())
+	fee := p.feeAt(uint64(200 + 34*n))
+	coin, err := pay.TakeAtLeast(ctx, uint64(n)*value+fee+p.dust())
 	if err != nil {
 		return err
 	}
@@ -292,7 +292,7 @@ func (p *Publisher) splitCoin(ctx context.Context, pay *producer.Payer, value ui
 		tx.AddOutput(&transaction.TransactionOutput{Satoshis: value, LockingScript: fs})
 	}
 	in := coin.Tx.Outputs[coin.Vout].Satoshis
-	if change := in - uint64(n)*value - fee; change >= p.floor() {
+	if change := in - uint64(n)*value - fee; change >= p.dust() {
 		tx.AddOutput(&transaction.TransactionOutput{Satoshis: change, LockingScript: fs})
 	}
 	if err := tx.Sign(); err != nil {

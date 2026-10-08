@@ -23,7 +23,7 @@ better chain view.
 | chain | the chain view: `woc:main` or `woc:test` (WhatsOnChain, the default for the network), `asset:<url>` (a Teranode asset API, yours or one you are given access to), or a comma-separated list, each item optionally serving one method (`tx=`, `proof=`, `spend=`, `known=`): `asset:<url>,woc:main` asks the node and then WhatsOnChain for what it lacks; `woc:test,spend=asset:<url>` takes spends from the node only. `woc_key` and `woc_rate` are a WhatsOnChain API key and its requests a second. The older key `node` (a node's asset API URL) still works and means `asset:<url>`; set one of them |
 | settle | the settlement leg transactions are broadcast through: `arcade:main` or `arcade:test` (GorillaPool's public arcade, no key; the default for the network), `arcade:<url>` (any arcade, your own included), `arc:<url>` (an ARC installation, opt-in; TAAL's needs a key), `rpc:<url>` (a node's JSON-RPC, with `rpc_user`, `rpc_pass`) or `tcp:<host:port>` (a fabric ingress). `arcade_key` is the bearer token of an arcade or ARC leg. Payment acceptance before a block (`accept_threshold_sats`) needs arcade or ARC |
 | headers | the header source proofs are checked against: `woc:main` or `woc:test` (the public WhatsOnChain API, the default for the network), `bhs:<url>` (a [block-headers-service](https://github.com/bsv-blockchain/block-headers-service); `headers_token` is its bearer token), `arcade:<url>` (the header server an arcade installation embeds), `chaintracks:<url>` (a chaintracks v2 service), or a bridge URL (an overlay bridge's native `/v1/root/<height>` and `/v1/tip`, which carries no proof of work to check). Every kind but a bridge serves the header fields, and every header is hashed and held to the proof of work its bits claim |
-| fee | the miner fee policy, a block (below); the default is the network's rate, 100 satoshis per 1000 bytes, with a 250 satoshi floor. The older keys `fee_sat_per_byte` and `fee_floor` still work |
+| fee | the miner fee policy, a block (below); the default is the network's rate, 100 satoshis per 1000 bytes, with a 100 satoshi floor, never more than 100 per 1000 bytes. The older keys `fee_sat_per_byte` and `fee_floor` still work, held to the same cap |
 
 The zero-infrastructure profile, what an unset network gets:
 
@@ -57,16 +57,16 @@ serves all three).
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `fee.rate` | `{"satoshis": 100, "bytes": 1000}` | satoshis per bytes of the signed transaction, as miners publish it |
-| `fee.floor` | 250 | the least fee a transaction pays |
-| `fee.dust` | the floor | the least change kept as an output; less goes to the fee |
+| `fee.floor` | 100 | the least fee a transaction pays |
+| `fee.dust` | 100 | the least change kept as an output; less goes to the fee |
 | `fee.source` | `static` | `static`, or `arc`: the policy the broadcaster publishes (`GET /v1/policy`), refreshed every 5 minutes, held to `min_rate` and `max_rate`, falling back to the static rate. Opt-in |
 | `fee.policy_urls` | the settlement leg's arcade or ARC | where `source: arc` reads the policy |
-| `fee.min_rate`, `fee.max_rate` | `100/1000`, `1/1` | the bounds a live policy is held to; `max_rate` also caps `rate` |
+| `fee.min_rate`, `fee.max_rate` | `100/1000`, `100/1000` | the bounds a live policy is held to; `max_rate` also caps `rate` (and the older `fee_sat_per_byte`): a miner charging more is refused until `max_rate` is raised |
 | `fee.max_tx` | none | the most one transaction may pay in fee (a funding tree, token, payment, sweep, hold outputs, payment coin split, settlement or reclaim); above it, it is refused rather than paid |
 | `fee_sat_per_byte`, `fee_floor` | none | the older keys: `rate {fee_sat_per_byte, 1}` and `floor`. Either beside the `fee` key it aliases is refused |
 
 ```json
-"fee": {"rate": {"bytes": 1000, "satoshis": 100}, "floor": 250, "source": "static"}
+"fee": {"rate": {"bytes": 1000, "satoshis": 100}, "floor": 100, "source": "static"}
 ```
 
 ## bstore
@@ -132,7 +132,7 @@ serves all three).
 | `race_window_seconds` | 3600 | the writer's race window |
 | `publish_outcomes` | true | publish failed settlement challenges and every challenge's outcome as outcome records |
 | `piece_tree`, `entry_tree` | 256, 16 | outputs of a new funding tree (outcome trees take `entry_tree`); the next tree of each kind is minted ahead, in the background, so a put of up to `piece_tree` pieces never waits for a block |
-| `fee` | 100 satoshis per 1000 bytes, floor 250 | the miner fee policy ([the fee block](#the-fee-block)); `fee_sat_per_byte` and `fee_floor` are its older keys |
+| `fee` | 100 satoshis per 1000 bytes, floor 100, cap 100/1000 | the miner fee policy ([the fee block](#the-fee-block)); `fee_sat_per_byte` and `fee_floor` are its older keys |
 | `refuse_unmined` | false | `fund -beef` takes mined payments only |
 | `accept_threshold_sats` | 25000000 | a settlement whose largest payout is at or below it is remitted once arcade says the network took it and the chain view shows its inputs spent by it alone, before it mines (race state `remitted`); above it, remitted once mined. Needs settle through arcade or ARC |
 | `accept_payer_limit`, `accept_total_limit`, `accept_window_seconds`, `accept_watch_seconds` | one and ten thresholds, 3600, 0 | the rest of the acceptance rule, as for a provider ([provider.md](provider.md)) |

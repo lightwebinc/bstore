@@ -385,16 +385,30 @@ func (p *Publisher) fees() mint.Fees {
 // floor is the least fee a transaction pays.
 func (p *Publisher) floor() uint64 { return p.fees().Floor }
 
-// rateFee is the fee rate's part of a size's fee, rounded up, with no
-// floor: what a builder that adds the floor itself adds to it.
-func (p *Publisher) rateFee(size uint64) uint64 {
-	f := p.fees()
-	f.Floor, f.Max = 0, 0
-	fee, err := f.For(int(min(size, 1<<40))) //nolint:gosec // bounded above
-	if err != nil {
-		return 0
+// dust is the least change a transaction built here keeps as an output,
+// as mint keeps its own: Fees.Dust, or the floor when Dust is zero.
+func (p *Publisher) dust() uint64 { return dustOf(p.fees()) }
+
+func dustOf(f mint.Fees) uint64 {
+	if f.Dust == 0 {
+		return f.Floor
 	}
-	return fee
+	return f.Dust
+}
+
+// feeAt is the fee a transaction of an estimated size pays, as
+// mint.Fees.For prices it: the rate (capped at MaxRate) rounded up, at
+// least the floor. Never the floor and the rate added together.
+func (p *Publisher) feeAt(size uint64) uint64 { return feeAt(p.fees(), size) }
+
+func feeAt(f mint.Fees, size uint64) uint64 {
+	g := f
+	g.Floor, g.Max = 0, 0
+	fee, err := g.For(int(min(size, 1<<40))) //nolint:gosec // bounded above
+	if err != nil {
+		fee = 0
+	}
+	return max(fee, f.Floor)
 }
 
 // capFee holds a transaction built here rather than by package mint (the

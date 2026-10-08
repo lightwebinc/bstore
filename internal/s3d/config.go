@@ -85,7 +85,8 @@ type Config struct {
 	Limits    Limits        `json:"limits"`
 	// PieceTree and EntryTree size funding trees. Fee is the miner fee
 	// policy (feepolicy.Config; default 100 satoshis per 1000 bytes, floor
-	// 250); FeeRate and FeeFloor are its older keys, still read.
+	// 100, capped at 100/1000); FeeRate and FeeFloor are its older keys,
+	// still read and held to the same cap.
 	PieceTree int               `json:"piece_tree"`
 	EntryTree int               `json:"entry_tree"`
 	Fee       *feepolicy.Config `json:"fee,omitempty"`

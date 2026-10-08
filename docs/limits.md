@@ -41,11 +41,11 @@ spending one mined funding output.
 
 | What | Cost | Kind |
 | --- | --- | --- |
-| A funding output | a 64-output piece funding tree is 3,328 bytes, 52 bytes an output, so about 52 satoshis at 1 satoshi a byte (bcommon `mint.LegacyFees`, floor 250; about 5 at the network's rate); the contract's arithmetic says about 57 | measured |
-| A 100 MiB put's funding | 26 piece outputs and one entry output: about 1.4 KB mined, about 1,400 satoshis | measured rate, contract count |
+| A funding output | a 64-output piece funding tree is 3,328 bytes, 52 bytes an output, so about 5.2 satoshis at the network's rate, 100 per 1000 bytes (measured at 1 satoshi a byte, bcommon `mint.LegacyFees`: about 52); the contract's arithmetic says about 57 bytes | measured |
+| A 100 MiB put's funding | 26 piece outputs and one entry output: about 1.4 KB mined, about 140 satoshis | measured rate, contract count |
 | An entry carrier | 1,915 to 2,176 bytes of BEEF on a 16-output entry tree | measured (8 entries) |
 | A piece carrier | the blob plus about 1.2 KB and 49 bytes per output of its funding tree: about 4.3 KB over the blob on the default 64-output piece tree, so a 100 MiB put delivers about 0.1 % above its content to each provider | contract arithmetic |
-| The hold output's transaction | 240 and 241 bytes, 495 satoshis of fee, for one hold output (up to 16 a transaction when minted ahead) | measured |
+| The hold output's transaction | 240 and 241 bytes, 100 satoshis of fee (the floor; 495 when measured at the older 1 satoshi a byte, floor 250), for one hold output (up to 16 a transaction when minted ahead) | measured |
 | The bounty | the writer's choice; the test runs used 30,000 satoshis, `t = 3`, `K = 3` | set by the writer |
 | A 100 MiB `PutObject` through the gateway | 7.9 s from the first byte to the `200`, with no block wait (hold outputs and funding trees minted ahead; staging hashed on several cores) | measured (v0.5.0; 9.8 s on v0.3.0) |
 | Staging 100 MiB (closure, proof root, store writes) | 0.6 to 0.8 s locally, was 2.9 to 3.3 s on one core | measured (v0.5.0) |
@@ -289,12 +289,13 @@ not do, stated so that nobody finds it by accident.
 14. **The images are not published yet.** The command, provider, host and
     local chain images are built from a checkout (`make docker-build`,
     `make docker-build-host`) until the repositories are public.
-15. **The measured fees are at the older rate.** The fees here were
+15. **The fees were measured at the older rate.** The sizes here were
     measured at 1 satoshi a byte, ten times the 100 satoshis per 1000
     bytes mainnet miners take. The default is now the network's rate,
-    with a floor of 250 satoshis a transaction (the `fee` setting), so
-    every transaction under 2,500 bytes pays the floor and the figures
-    here are upper bounds.
+    with a floor of 100 satoshis a transaction and a cap of 100 per 1000
+    bytes (the `fee` setting), so every transaction under 1,000 bytes
+    pays the floor; the fees quoted here are recomputed at that default
+    from the measured sizes.
 16. **Funding is by import.** A pool takes coin through `fund -beef` (the
     BEEF the user's wallet hands over; it may not have mined yet) or
     `fund -txid` (a mined payment); `fund -from` and `rescan -from` find

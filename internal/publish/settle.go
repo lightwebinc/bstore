@@ -330,7 +330,9 @@ func (p *Publisher) buildSettlement(ctx context.Context, r *Race, hold *HoldReco
 		return nil, fmt.Errorf("publish: the payouts sum to %d, not the hold output's %d", sum, hold.Sats)
 	}
 	pay := p.newPayer(ctx)
-	fee, err := pay.TakeAtLeast(ctx, p.floor()*4)
+	size := uint64(10 + 2*150 + (len(s.Payees)+1)*34)
+	cost := p.feeAt(size)
+	fee, err := pay.TakeAtLeast(ctx, max(p.floor()*4, cost+p.dust()))
 	if err != nil {
 		return nil, feeError(err)
 	}
@@ -368,9 +370,7 @@ func (p *Publisher) buildSettlement(ctx context.Context, r *Race, hold *HoldReco
 		return nil, err
 	}
 	feeIn := fee.Tx.Outputs[fee.Vout].Satoshis
-	size := uint64(10 + 2*150 + (len(tx.Outputs)+1)*34)
-	cost := max(p.floor(), p.rateFee(size))
-	if feeIn < cost+p.floor() {
+	if feeIn < cost+p.dust() {
 		pay.GiveBack()
 		return nil, fmt.Errorf("fee input: %d satoshis does not cover the fee %d", feeIn, cost)
 	}
@@ -674,7 +674,7 @@ func (p *Publisher) reclaimHold(ctx context.Context, hold *HoldRecord) (*Reclaim
 	tx.AddInputFromTx(holdTx, hold.Vout, storerec.HoldDerivation.Unlocker(ctx, p.wallet, p.wallet.Originator))
 	tx.AddInputFromTx(fee.Tx, fee.Vout, fee.Unlocker)
 	in := hold.Sats + fee.Tx.Outputs[fee.Vout].Satoshis
-	cost := max(p.floor(), p.rateFee(uint64(10+2*150+34)))
+	cost := p.feeAt(uint64(10 + 2*150 + 34))
 	tx.AddOutput(&transaction.TransactionOutput{Satoshis: in - cost, LockingScript: change})
 	if err := refuseMixed(tx); err != nil {
 		pay.GiveBack()

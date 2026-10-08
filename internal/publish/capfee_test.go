@@ -23,7 +23,7 @@ func TestCapFee(t *testing.T) {
 	unlock := script.Script(bytes.Repeat([]byte{0x51}, 107))
 	tx.Inputs[0].UnlockingScript = &unlock
 	tx.AddOutput(&transaction.TransactionOutput{Satoshis: 700, LockingScript: &lock}) // pays 300
-	fees := mint.DefaultFees                                                          // floor 250
+	fees := mint.DefaultFees                                                          // floor 100
 	for _, c := range []struct {
 		max  uint64
 		fail bool

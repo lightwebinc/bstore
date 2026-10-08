@@ -32,19 +32,19 @@ transactions are broadcast through GorillaPool's public arcade
 ## What it costs
 
 bstore pays the network's rate, 100 satoshis per 1000 bytes, with a floor
-of 250 satoshis a transaction (the `fee` setting; `-fee-source arc`
-follows the broadcaster's published rate instead). The fees below were
-measured at the older 1 satoshi a byte and are upper figures: at the
-network's rate every transaction under 2,500 bytes pays the floor. From
-[limits.md](limits.md):
+of 100 satoshis a transaction and never more than 100 per 1000 bytes (the
+`fee` setting; `-fee-source arc` follows the broadcaster's published rate
+instead, held to that cap). Every transaction under 1,000 bytes pays the
+floor; change under 100 satoshis goes to the fee. Sizes from
+[limits.md](limits.md), fees at the default:
 
 | Step | Mined bytes | Fee |
 | --- | --- | --- |
-| A bucket token (`bucket new`, each `anchor`) | 616 to 727 | about 620 to 730 satoshis |
-| A piece funding tree, 256 outputs (minted ahead, one a put of up to 256 pieces) | about 13 KB | about 13,300 satoshis |
-| A 100 MiB put's funding, from those trees | about 1.4 KB | about 1,400 satoshis |
-| A hold output's transaction (with a bounty) | 240 | about 495 satoshis, plus the bounty |
-| A settlement | about 406 | about 446 satoshis |
+| A bucket token (`bucket new`, each `anchor`) | 616 to 727 | 100 satoshis (the floor) |
+| A piece funding tree, 256 outputs (minted ahead, one a put of up to 256 pieces) | about 13 KB | about 1,330 satoshis |
+| A 100 MiB put's funding, from those trees | about 1.4 KB | about 140 satoshis |
+| A hold output's transaction (with a bounty) | 240 | 100 satoshis (the floor), plus the bounty |
+| A settlement | about 406 | 100 satoshis (the floor) |
 | A challenge, a renewal | not mined by you | the provider's price: 40 at `c = 30` on terms of 10 + 1; a renewal's minimum, often 500 |
 
 100,000 satoshis (0.001 BSV) is ample to make a bucket and put objects

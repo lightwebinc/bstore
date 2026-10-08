@@ -589,7 +589,11 @@ func (w *Writer) Settle(ctx context.Context, put *Put, payees []Payee) (*Settlem
 	if err != nil {
 		return nil, err
 	}
-	fee, err := pay.TakeAtLeast(ctx, w.Fees.Floor*4)
+	cost, err := w.Fees.For(10 + 2*150 + (len(payees)+1)*34)
+	if err != nil {
+		return nil, err
+	}
+	fee, err := pay.TakeAtLeast(ctx, max(w.Fees.Floor*4, cost+max(w.Fees.Dust, w.Fees.Floor)))
 	if err != nil {
 		return nil, err
 	}
@@ -606,7 +610,7 @@ func (w *Writer) Settle(ctx context.Context, put *Put, payees []Payee) (*Settlem
 	}
 	change, _ := w.Signer.FundScript()
 	feeIn := fee.Tx.Outputs[fee.Vout].Satoshis
-	tx.AddOutput(&transaction.TransactionOutput{Satoshis: feeIn - w.Fees.Floor*2, LockingScript: change})
+	tx.AddOutput(&transaction.TransactionOutput{Satoshis: feeIn - cost, LockingScript: change})
 	if err := tx.Sign(); err != nil {
 		pay.GiveBack()
 		return nil, err

@@ -28,7 +28,7 @@ func TestDoctorReports(t *testing.T) {
 	}
 	got := out.String()
 	for _, want := range []string{"identity     " + id, "pool         0 output(s)", "chain        asset:" + cs.URL + ": node tip 700",
-		"headers      " + cs.URL + ": height 700", "settle       rpc:" + cs.URL + "/rpc", "fee          100/1000 satoshis/bytes, floor 250, static", "host         " + cs.URL + ": answers", "front        https://127.0.0.1:1/store/bstore/v1: does not answer",
+		"headers      " + cs.URL + ": height 700", "settle       rpc:" + cs.URL + "/rpc", "fee          100/1000 satoshis/bytes, floor 100, static", "host         " + cs.URL + ": answers", "front        https://127.0.0.1:1/store/bstore/v1: does not answer",
 		"store        0 object(s)"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q in:\n%s", want, got)
