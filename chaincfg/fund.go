@@ -13,6 +13,7 @@ import (
 	"github.com/bsv-blockchain/go-sdk/chainhash"
 
 	"github.com/lightwebinc/bcommon/bwallet"
+	"github.com/lightwebinc/bcommon/nodeapi"
 )
 
 // Funded is what an import of a payment took into a pool.
@@ -47,7 +48,14 @@ func (v *View) FundTxid(ctx context.Context, s *bwallet.Signer, pool *bwallet.Po
 	if err != nil {
 		return Funded{}, err
 	}
-	im, err := bwallet.ImportTxid(ctx, txid, fund, v.Chain, v.Headers)
+	// Only the transaction and its proof are read here: take checks each
+	// output's spend itself and counts the spent ones, so the chain view is
+	// passed without its spend view (which ImportTxid would check first).
+	src := struct {
+		nodeapi.TxSource
+		nodeapi.ProofSource
+	}{v.Chain, v.Chain}
+	im, err := bwallet.ImportTxid(ctx, txid, fund, src, v.Headers)
 	if err != nil {
 		return Funded{}, err
 	}

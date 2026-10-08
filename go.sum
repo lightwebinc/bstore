@@ -2,8 +2,8 @@ github.com/bsv-blockchain/go-sdk v1.7.1 h1:IOyxmpL0yWdUhp/49nBVbCelnDxN4grq1+LmS
 github.com/bsv-blockchain/go-sdk v1.7.1/go.mod h1:F7wz/PdFcLNIFlvkzKJ7dZexbZoRzwR0VzQYKUCaXqU=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/lightwebinc/bcommon v0.15.0 h1:0eq4FmaPBlJHj77JflXRpf5PqR7wVzNQ2FT4tVeLvEc=
-github.com/lightwebinc/bcommon v0.15.0/go.mod h1:mQti30BuGy2zzPsO03uUBCd4Ixw/iCtNA07ZmzMa8hc=
+github.com/lightwebinc/bcommon v0.16.0 h1:/2xYTlI8ExXtOPl2haYFigFB8eOzY5qhObxTXcr0jr8=
+github.com/lightwebinc/bcommon v0.16.0/go.mod h1:mQti30BuGy2zzPsO03uUBCd4Ixw/iCtNA07ZmzMa8hc=
 github.com/mrz1836/go-whatsonchain v1.3.0 h1:uOq5mHPTMUfiyMAFv+wqRgZXZ5L3CrObaIdShnX/yzU=
 github.com/mrz1836/go-whatsonchain v1.3.0/go.mod h1:SAMQltVzWjjBSSIM9KBoLRTFuv9fIrejyEUK95qPDZI=
 github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
