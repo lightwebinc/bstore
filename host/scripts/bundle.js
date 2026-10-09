@@ -8,7 +8,7 @@
  * The result is refused, and deleted, unless every input esbuild read is a
  * file of src/ or of the library's own package (not of a package nested
  * inside either), at least one of them is the library's, and the file
- * imports nothing but @bsv/sdk and node: built-ins (bundle-check.js).
+ * imports nothing but @bsv/sdk and node: built-ins (bcommon's bundleRefusals).
  * Without this a second SDK, or another package's runtime code, would reach
  * the shipped file through a dependency change no line of this repository
  * shows.
@@ -16,7 +16,7 @@
 import { readFileSync, rmSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
-import { refusals } from './bundle-check.js'
+import { bundleRefusals } from '@lightwebinc/bcommon/testing'
 
 const library = '@lightwebinc/bcommon'
 const sdk = '@bsv/sdk'
@@ -52,7 +52,7 @@ const result = await build({
   logLevel: 'warning',
 })
 
-const problems = refusals(result.metafile, outfile, library, sdk)
+const problems = bundleRefusals(result.metafile, outfile, library, sdk)
 if (problems.length > 0) {
   rmSync(new URL(`../${outfile}`, import.meta.url), { force: true })
   for (const p of problems) console.error(`bundle: ${p}`)

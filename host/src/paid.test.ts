@@ -38,7 +38,7 @@ import { Chain, OwnerSim, Party, PayingWallet, Provider, Buyer, Writer, T0, from
 import { Clock, bucket, config, engineOf, topic } from './testhost.js'
 import { FakeHost, MemoryStorage } from './testutil.js'
 import { ArcadeHttp, BroadcastRefused, PaymentGate, isFinal, overspends } from '@lightwebinc/bcommon/host'
-import { TestNetwork } from './testnetwork.js'
+import { TestNetwork } from '@lightwebinc/bcommon/testing'
 import { defaultAcceptancePolicy, type AcceptancePolicy } from '@lightwebinc/bcommon'
 import { readPage } from './testworld.js'
 

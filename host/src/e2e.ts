@@ -29,7 +29,7 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createServer, request, type Server } from 'node:http'
-import { TestNetwork, serveNetwork } from './testnetwork.js'
+import { TestNetwork, serveNetwork } from '@lightwebinc/bcommon/testing'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
