@@ -93,6 +93,11 @@ anyone:
   sync                        send what is owed and record what the chain anchored
   due                         what is owed: exit 3 when anything is
 
+a host's payee (a host's BSTORE_PAYEE_KEY is this home's identity):
+  payee key -out FILE         write BSTORE_PAYEE_KEY for this home's identity
+  payee settle <payments.jsonl>...
+                              take every payment a host accepted into the wallet
+
 the S3 gateway:
   s3d <command> -config FILE  (bstore s3d -h)
 
@@ -190,6 +195,7 @@ func init() {
 		"init":      cmdInit,
 		"kill":      cmdKill,
 		"ls":        cmdLs,
+		"payee":     cmdPayee,
 		"put":       cmdPut,
 		"reclaim":   cmdReclaim,
 		"renew":     cmdRenew,

@@ -366,6 +366,25 @@ advertisement; 1 an answer that does not check; 2 a price over the budget.
   operator (`bstore-bridge claim`) is not visible from here: it changes
   nothing on chain until the incumbent's wallet spends the output.
 
+## A host's payee
+
+A host that prices its bulk questions (`BSTORE_PRICES`) is paid to its
+payee key, `BSTORE_PAYEE_KEY`: each payment is recorded in the host's
+`payments.jsonl` and is money only once settled ([host.md](host.md)).
+
+- `payee key -out FILE` writes `BSTORE_PAYEE_KEY=<this home's identity
+  private key>` to FILE (mode 0600, never over a file), or with `-out -` to
+  standard output: the home is then the payee's wallet.
+- `payee settle <payments.jsonl>... [-in-flight N]` takes every payment in
+  the ledgers that this home has not settled into its pool: checked to pay
+  the key the identity derives, verified against the headers, broadcast,
+  waited for until it mines, pooled, and recorded in `payee.json` in the
+  home. A payment the network refuses for good is reported once and passed
+  over after. Run it on a schedule. It holds the home's lock, so run it
+  from a home no gateway is using.
+
+The verbs are bcommon's `payeecmd`, the same in every application.
+
 ## The kill switch
 
 ```console

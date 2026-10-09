@@ -448,9 +448,11 @@ would be lost, and a retracted carrier replayed could be answered.
 ### Settling payments
 
 A payment is money only once it is broadcast and mined. Settle
-`payments.jsonl` promptly with the payee tooling that reads the shared
-ledger (bcommon `payee`): it checks each payment pays the key the payee
-derives, broadcasts it, waits for it to mine and records it settled.
+`payments.jsonl` promptly with `bstore payee settle <payments.jsonl>...`
+from the home whose identity is `BSTORE_PAYEE_KEY` (`bstore payee key -out
+FILE` writes that line): it checks each payment pays the key the payee
+derives, broadcasts it, waits for it to mine, takes it into the home's
+pool and records it settled in the home's `payee.json`.
 
 ## What the module does not do
 

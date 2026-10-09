@@ -332,8 +332,9 @@ BSTORE_STATE_DIR=/var/lib/bstore
 
 A directory host holds no bytes and should not carry the blob topics.
 Price the bulk questions on the module's own route (`BSTORE_LISTEN`,
-`BSTORE_PRICES`, `BSTORE_PAYEE_KEY`); the payee's ledger is settled with
-`bsecret payee settle`. Back up the database and the state directory
+`BSTORE_PRICES`, `BSTORE_PAYEE_KEY`); `bstore payee key -out FILE` writes
+that key line from a bstore home, and `bstore payee settle
+<payments.jsonl>...` settles the host's ledger into that home's pool. Back up the database and the state directory
 together ([host.md](host.md)).
 
 ## 13. Plane or unicast
