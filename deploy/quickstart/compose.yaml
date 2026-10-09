@@ -54,7 +54,7 @@ services:
       - certs:/certs
 
   db:
-    image: mysql:9@sha256:30a0abfa7b502a496e12339b54cd07aaa70363396dc4b8e8a72a92804a505cd6
+    image: mysql:26@sha256:9d48c42f8341068f199116dfccb919b607c99765b5c61e549a548a43033471a4
     environment:
       MYSQL_DATABASE: overlay_a
       MYSQL_USER: overlay
