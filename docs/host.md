@@ -271,7 +271,8 @@ stays in storage, unanswered, and is a duplicate when offered again.
   dropped; any other line that does not parse stops the host, because a
   mark or a sweep's outpoint skipped could let a retracted carrier be
   answered again.
-- `payments.jsonl`: every payment the route accepted (below).
+- `payments.jsonl` and `unsettleable.jsonl`: the payment ledger and the
+  lost-payment flags of the shared host module (below).
 
 ## The route
 
@@ -286,95 +287,37 @@ the module serves its own beside the host:
 
 Its base URL is what the host publishes as `ls_bstore`'s base, an origin
 with no path. A free question is answered with or without BRC-104. A class
-the host prices must be asked here, over BRC-104 (the host's own `/lookup`
-refuses it with an error that says so): without a payment it is answered
-402 with BRC-105's headers; with an `x-bsv-payment` header whose
-transaction's output 0 pays at least the price to the key BRC-29 derives
-for the prefix, the suffix and the asker, and which verifies against the
-host's headers, it is answered. One payment buys one question, one page.
-The provider routes of spec section 10.1 (`challenge`, `renew`, `settle`, a
-provider's `terms`) are a provider's, not a host's, and are not served
-here.
+the host prices (`history`, `chain`, `export`, `outcome-history`,
+`outcome-history-of`) must be asked here, over BRC-104; the host's own
+`/lookup` refuses it with an error that says so. One payment buys one
+question, one page. The provider routes of spec section 10.1 (`challenge`,
+`renew`, `settle`, a provider's `terms`) are a provider's, not a host's,
+and are not served here.
 
-| Status | When |
-| --- | --- |
-| 400 | the question is not one class's, names a bucket the host does not carry, or the payment is malformed, too small, to the wrong key or does not verify |
-| 401 | a priced class asked without BRC-104, a request that does not verify, or a signed request sent a second time |
-| 402 | a priced class asked without a payment |
-| 409 | a payment already used, or one that spends a coin an accepted payment spent |
-| 429 | a handshake over the budget, or a request over its session's budget of signed responses, with `Retry-After` |
-| 503 | the index is not restored yet |
-
-**Hardening.** A handshake is unauthenticated and costs a signature, so the
-route answers handshakes from a budget for the route and one for each
-remote address (an IPv6 address by its /64), checked before the body is
-read and before any signature, 429 over either. It keeps at most
-`BSTORE_SESSIONS` sessions and forgets one idle for `BSTORE_SESSION_TTL`.
-Each session has its own budget of requests, taken before the request's
-signature is verified and before anything is signed, so a stream of forged
-requests on one session costs that session's budget and not the host's
-work. A signed request sent again byte for byte is refused 401 before
-anything is verified or signed (the last 65536 are remembered). Behind a
-reverse proxy every client has the proxy's address, so the per-address
-budget becomes a second route budget: limit by address at the proxy.
-
-**The payment ledger** is the shared payee ledger (bcommon `payee`, version
-2): one line a payment, `txid`, `beef` (Atomic BEEF, base64),
-`outputIndex`, `satoshis`, `derivationPrefix`, `derivationSuffix`,
-`senderIdentityKey`, `class`, `inputs`, `at`, in that order, flushed before
-the question is answered. A txid is accepted once and a coin pays once,
-across restarts. `testdata/host/payments-v2.jsonl` is a golden line the
-TypeScript ledger writes byte for byte and bcommon's `payee` reads and
-writes back byte for byte.
-
+The terms route, its statuses (402 for a price, 202 `ERR_PAYMENT_HELD` for
+a held payment, 409 for a replay or conflict), the session bound, the
+handshake and response budgets, replay refusal and the payee ledger
+(`payments.jsonl`, bcommon `payee` version 2) are bcommon's shared host
+module: see [the host module](https://github.com/lightwebinc/bcommon/blob/main/docs/host-module.md).
+bstore's settings for them are the `BSTORE_SESSIONS`,
+`BSTORE_SESSION_TTL`, `BSTORE_HANDSHAKE*` and `BSTORE_RESPONSE*`
+variables above. bstore adds: 400 for a question that names a bucket the
+host does not carry, and 503 until the index is restored.
+`testdata/host/payments-v2.jsonl` is a golden ledger line the TypeScript
+ledger writes byte for byte and bcommon's `payee` reads and writes back
+byte for byte.
 
 ## Payment acceptance
 
-A paid question is answered only after the payment is held to bcommon's
-acceptance rule (package `acceptance`, the same rule for every layer):
-
-1. the route's own checks (prefix, output 0 pays the derived key, SPV
-   against the host's headers, a txid and coins never used before);
-2. finality (lock time 0, or every input final) and conservation (every
-   input carries its source, and the outputs do not exceed the inputs);
-3. the value: at or below `BSTORE_ACCEPT_THRESHOLD_SATS`, and within the
-   payer's and the total limits, it is fast; otherwise it is held;
-4. the host broadcasts it through `BSTORE_ARCADE_URL`, unmined ancestors first,
-   held or fast: this is how the payee collects;
-5. on the fast path the host answers only once arcade reports the network
-   took it (`SEEN_ON_NETWORK`, `ACCEPTED_BY_NETWORK`, ...), with no
-   `DOUBLE_SPEND_ATTEMPTED` and no competing transaction, and the node shows
-   every input unspent or spent by this payment.
-
-A refusal (arcade `REJECTED`, a definitive HTTP refusal, an input spent by
-another transaction, a payment that is not final or spends more than it
-holds) is answered 400 `ERR_PAYMENT_REFUSED`. Anything else that is not
-fast (above the threshold, a limit reached, a conflict reported, no
-verdict within 10 s, a spend view that cannot say) is answered 402
-`ERR_PAYMENT_HELD` with the reason and no BRC-105 headers, so a client
-does not pay again. The held payment is recorded in `payments.jsonl` with
-`"decision":"hold"`, keeps its coins, and the same payment sent again is
-answered once the node view serves its proof and that proof verifies
-against the host's headers. A host with no arcade or no node view holds
-every payment (with arcade alone it still broadcasts, and with the node
-view alone it answers a payment the node view shows mined). The node view
-is a node (`BSTORE_ASSET_URL`) or, with no node, WhatsOnChain
-(`BSTORE_CHAIN`). At most 100,000 fast payments are watched at
-once; past that a payment is held (`watch-limit`).
-
-Every fast payment is watched on the host's background tick (every 30 s,
-the 500 least recently checked each time) until it mines. One whose input
-another transaction spent, that arcade refuses, or that has not mined
-within a day, is written to `unsettleable.jsonl` in the state directory,
-logged, and counted; its payer is then held for confirmation on every
-later payment. Flags outlive a restart: the host reads `unsettleable.jsonl`
-when it starts, so an operator unflags a payer by removing its lines and
-restarting. Nothing is clawed back: the answer was given. A restart
-watches the fast lines of the last day again, and counts those of the last
-window against the limits.
-
-The ledger line carries `decision` (`fast`, `hold` or `mined`) and
-`reason`; `bstore payee settle` reads it as before.
+A paid question is answered only after bcommon's acceptance rule
+([the host module](https://github.com/lightwebinc/bcommon/blob/main/docs/host-module.md#payment-acceptance)):
+a held payment is answered 202 `ERR_PAYMENT_HELD`, recorded with
+`"decision":"hold"`, and answered when sent again once mined; a lost fast
+payment is written to `unsettleable.jsonl` and its payer held from then on.
+bstore's settings are the `BSTORE_ARCADE_URL`, `BSTORE_ASSET_URL` (or
+`BSTORE_CHAIN` with `BSTORE_WOC_KEY`, WhatsOnChain as the node view for a
+host with no node) and `BSTORE_ACCEPT_*` variables above. Without an
+arcade and a node view every payment is held until it mines.
 
 ## Metrics
 
@@ -447,12 +390,10 @@ would be lost, and a retracted carrier replayed could be answered.
 
 ### Settling payments
 
-A payment is money only once it is broadcast and mined. Settle
-`payments.jsonl` promptly with `bstore payee settle <payments.jsonl>...`
-from the home whose identity is `BSTORE_PAYEE_KEY` (`bstore payee key -out
-FILE` writes that line): it checks each payment pays the key the payee
-derives, broadcasts it, waits for it to mine, takes it into the home's
-pool and records it settled in the home's `payee.json`.
+Settle `payments.jsonl` promptly with `bstore payee settle
+<payments.jsonl>...` from the home whose identity is `BSTORE_PAYEE_KEY`
+(`bstore payee key -out FILE` writes that line); it records each payment
+settled in the home's `payee.json`. See [the host module](https://github.com/lightwebinc/bcommon/blob/main/docs/host-module.md#settling).
 
 ## What the module does not do
 

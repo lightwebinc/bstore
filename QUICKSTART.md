@@ -36,6 +36,12 @@ flowchart LR
   O -->|"settle, proofs, headers"| C["chain (local)"]
 ```
 
+Compose publishes these ports on loopback only: host-a's overlay API on
+`127.0.0.1:8591`, host-b's on `127.0.0.1:8592`, host-a's terms route on
+`127.0.0.1:8594`, and the S3 gateway on `127.0.0.1:9000` (`BSTORE_S3_PORT`).
+The chain, the database and the providers are reachable only inside the
+Compose network.
+
 ## 1. Start the local chain
 
 ```console

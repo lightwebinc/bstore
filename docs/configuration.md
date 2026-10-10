@@ -48,6 +48,10 @@ it. **A busy provider or gateway exceeds it**: give it a WhatsOnChain API
 key (`woc_key`, with `woc_rate` raised to the plan's rate) or a node
 (`chain: asset:<url>`).
 
+The `chain` grammar is bcommon's `nodeapi.ParseChain`; see
+[chain views](https://github.com/lightwebinc/bcommon/blob/main/docs/configuration.md#chain-views-nodeapi-interfaces)
+for how each backend is asked and checked.
+
 A regtest chain you run has no public services: set `chain` (or `node`),
 `settle` and `headers` (the [quickstart](../QUICKSTART.md)'s `devchain`
 serves all three).
