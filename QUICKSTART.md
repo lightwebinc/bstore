@@ -209,6 +209,12 @@ The challenge's outcome is published on the records topic, where anyone
 reads it. The renewal is answered by a successor advertisement that spends
 the old one, seven days later.
 
+The local chain has no arcade, so a provider takes each payment and holds
+it until it mines (a few seconds here): the challenge waits for that and
+sends the same payment again (`-held-wait`, default 10m), and the renewal
+answers `202 (paid ...)` and is made by the provider once the payment
+mines.
+
 ## 11. Delete, anchor, NoSuchKey
 
 ```console

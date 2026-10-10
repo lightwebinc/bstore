@@ -17,6 +17,7 @@ import (
 	"github.com/bsv-blockchain/go-sdk/chainhash"
 
 	"github.com/lightwebinc/bcommon/chirp"
+	"github.com/lightwebinc/bcommon/nodeapi"
 
 	"github.com/lightwebinc/bstore/storerec"
 )
@@ -54,6 +55,11 @@ type Challenge struct {
 	Nonce *[16]byte
 	// Budget is the most paid for the answer; 0 pays nothing.
 	Budget uint64
+	// HeldWait is how long a payment the answerer holds for confirmation
+	// (202, ERR_PAYMENT_HELD) is waited on before it is sent again with
+	// the request, which then buys the answer; zero does not wait, and the
+	// result says the payment is held.
+	HeldWait time.Duration
 	// Request, when set, is a request made before (its encoding), sent
 	// again as it is: a draw is not redrawn because an answer was not
 	// given.
@@ -151,6 +157,16 @@ func (p *Publisher) Challenge(ctx context.Context, ch *Challenge, fetch *http.Cl
 		res.Outcome, res.Why = storerec.OutcomeNoAnswer, "no answer: "+firstLine(err.Error())
 		return res, nil
 	}
+	if call.Status == http.StatusAccepted && call.Payment != nil && call.PaymentHeader != "" && ch.HeldWait > 0 {
+		if again, q2, raw2, ok := p.sendHeldAgain(ctx, ch, call, q, raw); ok {
+			call, q, raw = again, q2, raw2
+			res.Request, res.Req = raw, q
+			if call.Status == http.StatusOK {
+				// Answered for the payment made with the first request.
+				call.Paid = heldSats(call)
+			}
+		}
+	}
 	res.Status, res.Paid = call.Status, call.Paid
 	if call.Status != http.StatusOK && call.Payment != nil {
 		res.NotTaken = p.notTaken(call, raw, ch.Answerer)
@@ -159,6 +175,13 @@ func (p *Publisher) Challenge(ctx context.Context, ch *Challenge, fetch *http.Cl
 	case http.StatusOK:
 	case http.StatusPaymentRequired:
 		res.Outcome, res.Why = storerec.OutcomeNoAnswer, "priced: the answer was not paid for"
+		return res, nil
+	case http.StatusAccepted:
+		// The provider took the payment and holds it for confirmation
+		// (ERR_PAYMENT_HELD): the same payment, sent again once it is mined,
+		// buys the answer.
+		res.Code = "ERR_PAYMENT_HELD"
+		res.Outcome, res.Why = storerec.OutcomeNoAnswer, "held: the payment is broadcast and held for confirmation; challenge again once it is mined"
 		return res, nil
 	case http.StatusUnprocessableEntity:
 		var e struct {
@@ -349,4 +372,53 @@ func (f *segmentFetcher) Blob(blob uint64) ([]byte, error) {
 		return nil, errors.New("more than a blob")
 	}
 	return b, nil
+}
+
+// sendHeldAgain waits, up to ch.HeldWait, for a payment the answerer held
+// for confirmation to mine, then sends the request again carrying the same
+// payment, which buys the answer. A request whose seed has left the window
+// meanwhile is drawn again (the held payment stays good for a fresh seed).
+// ok is false when the payment did not mine in time or could not be sent:
+// the held answer stands.
+func (p *Publisher) sendHeldAgain(ctx context.Context, ch *Challenge, held *Call, q *storerec.Request, raw []byte) (*Call, *storerec.Request, []byte, bool) {
+	txid := short(held.Payment.TxID().String())
+	p.cfg.Logf("payment %s: held by the answerer for confirmation; waiting up to %s for it to mine", txid, ch.HeldWait)
+	wctx, cancel := context.WithTimeout(ctx, ch.HeldWait)
+	defer cancel()
+	if _, _, err := nodeapi.WaitSettledOn(wctx, p.cfg.Chain, p.cfg.Chain, held.Payment, p.cfg.Poll); err != nil {
+		p.cfg.Logf("payment %s: not mined in time (%v); it stays held", txid, err)
+		return nil, nil, nil, false
+	}
+	url := strings.TrimRight(ch.Front, "/") + "/challenge"
+	for try := 0; try < 2; try++ {
+		body, _ := json.Marshal(map[string]string{"request": base64.StdEncoding.EncodeToString(raw), "entry": ch.Entry})
+		cctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		call, err := p.PostPaid(cctx, url, body, held.PaymentHeader)
+		cancel()
+		if err != nil {
+			p.cfg.Logf("payment %s: sending it again failed (%v); it stays held", txid, err)
+			return nil, nil, nil, false
+		}
+		if call.Status == http.StatusUnprocessableEntity && strings.Contains(string(call.Body), `"seed"`) && try == 0 {
+			ch2 := *ch
+			ch2.Request = nil
+			q2, raw2, err := p.NewRequest(ctx, &ch2)
+			if err != nil {
+				return nil, nil, nil, false
+			}
+			q, raw = q2, raw2
+			continue
+		}
+		call.Payment, call.PaymentHeader = held.Payment, held.PaymentHeader
+		return call, q, raw, true
+	}
+	return nil, nil, nil, false
+}
+
+// heldSats is what a held payment paid, from its first output.
+func heldSats(c *Call) uint64 {
+	if c.Payment != nil && len(c.Payment.Outputs) > 0 {
+		return c.Payment.Outputs[0].Satoshis
+	}
+	return 0
 }

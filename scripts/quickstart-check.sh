@@ -136,8 +136,18 @@ PA=$(prov provider-a address -config /etc/bstore/provider.json | sed -n 's/^iden
 bs reader -bucket "$B" challenge photos/cat.bin -provider "$PA" -c 30 -budget 1000 | tee challenge.txt
 grep -q ': pass (c = 30, paid 40)' challenge.txt && grep -q '^  outcome record [0-9a-f]\{64\}' challenge.txt || fail "challenge, or its outcome not published"
 bs reader sync >/dev/null || true
-bs reader -bucket "$B" renew photos/cat.bin -provider "$PA" -days 7 -budget 2000 | tee renew.txt
-grep -q ': 200 (paid ' renew.txt || fail "renew"
+rc=0; bs reader -bucket "$B" renew photos/cat.bin -provider "$PA" -days 7 -budget 2000 >renew.txt || rc=$?; cat renew.txt
+# The local chain has no arcade, so the provider takes the payment and holds
+# it for confirmation (202), and makes the renewal itself once it mines.
+if ! { [ "$rc" = 0 ] && grep -q ': 200 (paid ' renew.txt; }; then
+	[ "$rc" = 3 ] && grep -q ': 202 (paid ' renew.txt || fail "renew: exit $rc"
+	made=""
+	for _ in $(seq 1 60); do
+		dc logs --no-color provider-a 2>/dev/null | grep -q 'mined; the renewal through [0-9]* is made now' && { made=yes; break; }
+		sleep 2
+	done
+	[ -n "$made" ] || fail "the held renewal was never made"
+fi
 
 step "11. delete, anchor, NoSuchKey"
 s3 s3api delete-object --bucket "$S3B" --key photos/cat.bin

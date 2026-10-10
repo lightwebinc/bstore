@@ -188,10 +188,13 @@ func (p *Provider) reencoded(txid string) bool {
 	return false
 }
 
-// heldReply is the answer to a payment held for confirmation: 402 with no
-// BRC-105 headers, so a client does not pay again.
+// heldReply is the answer to a payment held for confirmation: 202 with the
+// code ERR_PAYMENT_HELD, as a held renewal is answered. Not a 402: a BRC-105
+// client (go-sdk's AuthFetch, the TS AuthFetch) treats every 402 as a price
+// to pay, so a 402 without the BRC-105 headers fails inside the client and
+// never reaches the caller, and one with them would be paid again.
 func heldReply(txid string, v acceptance.Verdict) auth104.Reply {
-	return auth104.JSON(http.StatusPaymentRequired, map[string]any{"status": "error", "code": "ERR_PAYMENT_HELD", "txid": txid,
+	return auth104.JSON(http.StatusAccepted, map[string]any{"status": "error", "code": "ERR_PAYMENT_HELD", "txid": txid,
 		"reason": string(v.Reason), "description": fmt.Sprintf("the payment is broadcast and held for confirmation (%s); send it again once it is mined, with a request on a fresh seed for a challenge", v.Reason)})
 }
 

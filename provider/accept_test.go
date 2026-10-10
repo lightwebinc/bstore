@@ -80,7 +80,7 @@ func TestAcceptanceChallenge(t *testing.T) {
 		}
 		call, err := r.writer.Challenge(ctx, front, raw, "", 1000)
 		if err != nil {
-			return 0, nil // a held 402 carries no BRC-105 headers: the client stops
+			t.Fatal(err)
 		}
 		return call.Status, call.Body
 	}
@@ -106,7 +106,7 @@ func TestAcceptanceChallenge(t *testing.T) {
 	// chain mines at once here, so the watch releases them on its next
 	// sweep; asked before that, the third is held.
 	p.acc.Exposure.Charge(writer, strings.Repeat("cd", 32), 80, time.Now())
-	if s, _ := ask(); s != 0 || held("payer-limit") < 1 {
+	if s, _ := ask(); s != 202 || held("payer-limit") < 1 {
 		t.Fatalf("over the payer's limit: %d %v", s, held("payer-limit"))
 	}
 	p.acc.Exposure.Release(strings.Repeat("cd", 32))
@@ -115,7 +115,7 @@ func TestAcceptanceChallenge(t *testing.T) {
 	})
 
 	st.set("dsa")
-	if s, _ := ask(); s != 0 || held("double-spend-attempted") < 1 {
+	if s, _ := ask(); s != 202 || held("double-spend-attempted") < 1 {
 		t.Fatalf("DOUBLE_SPEND_ATTEMPTED: %d %v", s, held("double-spend-attempted"))
 	}
 	st.set("rejected")
@@ -147,13 +147,13 @@ func TestAcceptanceChallenge(t *testing.T) {
 		defer p.mu.Unlock()
 		return p.st.IsUnsettleable(lost.Txid)
 	})
-	if s, _ := ask(); s != 0 || held("payer-flagged") < 1 {
+	if s, _ := ask(); s != 202 || held("payer-flagged") < 1 {
 		t.Fatalf("a flagged payer: %d", s)
 	}
 }
 
 // With a threshold below every price, a challenge's payment is broadcast,
-// taken and held 402, and the same payment buys its answer once mined; a
+// taken and held 202, and the same payment buys its answer once mined; a
 // renewal answers 202 and is made once its payment mines.
 func TestAcceptanceHeld(t *testing.T) {
 	r := newRig(t)
@@ -170,8 +170,8 @@ func TestAcceptanceHeld(t *testing.T) {
 
 	r.chain.SetHold(true)
 	_, raw, _ := r.writer.Request(ctx, put.Object.Built, me, 30, [16]byte{1})
-	if _, err := r.writer.Challenge(ctx, front, raw, "", 1000); err == nil {
-		t.Fatal("a held challenge was answered")
+	if call, err := r.writer.Challenge(ctx, front, raw, "", 1000); err != nil || call.Status != 202 || !bytes.Contains(call.Body, []byte("ERR_PAYMENT_HELD")) {
+		t.Fatalf("a held challenge, through a BRC-105 client: %v %+v", err, call)
 	}
 	ps := p.ledger.payments()
 	if len(ps) != 1 || !p.isHeld(ps[0].Txid) || r.chain.Tx(ps[0].Txid) == nil {
@@ -179,7 +179,7 @@ func TestAcceptanceHeld(t *testing.T) {
 	}
 	pl := ps[0]
 	var chk *paymentLine
-	if rep, done := p.challengePayment(ctx, &pl, r.writer.Signer.IdentityHex(), &chk); !done || rep.Status != 402 {
+	if rep, done := p.challengePayment(ctx, &pl, r.writer.Signer.IdentityHex(), &chk); !done || rep.Status != 202 {
 		t.Fatalf("sent again before it mines: %v %d", done, rep.Status)
 	}
 	r.chain.SetHold(false)

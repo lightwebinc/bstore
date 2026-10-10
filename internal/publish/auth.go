@@ -35,6 +35,10 @@ type authClient struct {
 	mu     sync.Mutex
 	af     *authhttp.AuthFetch
 	paying *swapPurse
+	// sent is the x-bsv-payment header the call in flight sent, if it
+	// paid: what a payee that holds the payment is sent again once it is
+	// mined.
+	sent *paymentTap
 }
 
 // swapPurse is the AuthFetch's wallet: the purse of the call in flight.
@@ -51,8 +55,23 @@ func newAuthClient(p *Publisher, hc *http.Client) *authClient {
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	c.Transport = limitTransport{base: base, max: maxAnswer}
-	return &authClient{p: p, hc: &c}
+	tap := &paymentTap{base: limitTransport{base: base, max: maxAnswer}}
+	c.Transport = tap
+	return &authClient{p: p, hc: &c, sent: tap}
+}
+
+// paymentTap keeps the x-bsv-payment header of the last request that
+// carried one. Calls are made one at a time, under the client's lock.
+type paymentTap struct {
+	base   http.RoundTripper
+	header string
+}
+
+func (t *paymentTap) RoundTrip(req *http.Request) (*http.Response, error) {
+	if v := req.Header.Get("x-bsv-payment"); v != "" {
+		t.header = v
+	}
+	return t.base.RoundTrip(req)
 }
 
 // maxAnswer is the most any authenticated answer may be: a signed
@@ -111,6 +130,10 @@ type Call struct {
 	// identity key (hex) the BRC-104 session authenticated the answer as.
 	Payment *transaction.Transaction
 	Peer    string
+	// PaymentHeader is the x-bsv-payment header sent with Payment: a payee
+	// that answers 202 holds the payment, and the same header sent again
+	// once it is mined buys the answer.
+	PaymentHeader string
 
 	retryAfter string
 }
@@ -186,6 +209,10 @@ func (a *authClient) once(ctx context.Context, method, url string, headers map[s
 		a.af = authhttp.New(a.paying, authhttp.WithoutLogging(), authhttp.WithHttpClient(a.hc))
 	}
 	a.paying.Purse = pu
+	a.sent.header = ""
+	if v := headers["x-bsv-payment"]; v != "" {
+		a.sent.header = v
+	}
 	res, err := a.af.Fetch(ctx, url, &authhttp.SimplifiedFetchRequestOptions{Method: method, Headers: headers, Body: body})
 	if err != nil {
 		// A payment made may have reached the payee, which can broadcast
@@ -203,7 +230,7 @@ func (a *authClient) once(ctx context.Context, method, url string, headers map[s
 	}
 	b, rerr := io.ReadAll(io.LimitReader(res.Body, max+1))
 	c := &Call{Status: res.StatusCode, Body: b, retryAfter: res.Header.Get("Retry-After"),
-		Peer: strings.ToLower(res.Header.Get("x-bsv-auth-identity-key"))}
+		Peer: strings.ToLower(res.Header.Get("x-bsv-auth-identity-key")), PaymentHeader: a.sent.header}
 	if rerr != nil || int64(len(b)) > max || res.StatusCode >= 400 {
 		// Not answered, or refused: a payment sent is still the payee's
 		// to broadcast, so it is kept as uncertain, never refunded.
@@ -253,6 +280,12 @@ func payErr(err error) error {
 // or a statement named), paying a 402 up to maxPay.
 func (p *Publisher) Post(ctx context.Context, url string, body []byte, maxPay uint64) (*Call, error) {
 	return p.frontAuth.client(url).do(ctx, http.MethodPost, url, map[string]string{"content-type": "application/json"}, body, maxPay, storerec.MaxSignedResponse)
+}
+
+// PostPaid sends a POST over BRC-104 carrying payment, an x-bsv-payment
+// header sent before (a payment its payee held), and pays nothing more.
+func (p *Publisher) PostPaid(ctx context.Context, url string, body []byte, payment string) (*Call, error) {
+	return p.frontAuth.client(url).do(ctx, http.MethodPost, url, map[string]string{"content-type": "application/json", "x-bsv-payment": payment}, body, 0, storerec.MaxSignedResponse)
 }
 
 // Get sends a GET over BRC-104 and pays nothing.

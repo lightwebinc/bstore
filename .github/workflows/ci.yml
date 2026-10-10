@@ -60,3 +60,19 @@ jobs:
         run: npm run check
       - name: test
         run: npm test
+
+  # QUICKSTART.md, run as written (scripts/quickstart-check.sh): this
+  # repository's images, two hosts over MySQL, two providers, the S3
+  # gateway, a put, a race, settlement, a paid challenge and a renewal, a
+  # delete. It is what a newcomer runs, and it once stayed red unnoticed.
+  quickstart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: images
+        run: |
+          make docker-build
+          make docker-build-host REFERENCE_HOST_IMAGE=${{ vars.REFERENCE_HOST_IMAGE || 'ghcr.io/lightwebinc/overlay-blueprints:0.2.2' }}
+      - name: the quickstart, as written
+        run: scripts/quickstart-check.sh

@@ -304,8 +304,9 @@ outputs do not exceed its inputs, SPV against the provider's headers),
   **refused**.
 
 A paid challenge held is taken (the payment is broadcast and the payee
-collects it) and answered `402` `ERR_PAYMENT_HELD`, with no BRC-105 headers
-so a client does not pay again; the same payment sent again once mined buys
+collects it) and answered `202` `ERR_PAYMENT_HELD` (as a held renewal is), not
+`402`: a BRC-105 client treats every 402 as a price to pay, so a 402 would
+never reach its caller or would be paid again; the same payment sent again once mined buys
 its answer. The payment is not bound to its first request: the seed is
 checked against the tip when it is sent again, as for any answer, so a
 buyer that waited longer than the seed window sends it with a request on a

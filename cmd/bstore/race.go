@@ -331,7 +331,10 @@ provider's front over BRC-104 and paid, through the provider's 402, up to
 response is checked sample-major; a by-reference sample is fetched from the
 advertised URL and rechecked from the whole blob. The outcome is recorded
 in the home (outcomes.jsonl) and published as an outcome record on the
-bucket's records topic unless -no-publish.
+bucket's records topic unless -no-publish. A provider that takes the
+payment but holds it for confirmation answers 202; the command waits up to
+-held-wait (default 10m) for it to mine and sends the same payment again,
+which buys the answer.
 
 Exit 0 a pass; 1 invalid (a signed response that fails, provable by anyone
 who holds it); 3 no valid signed answer, or a sample the advertised URL did
@@ -360,6 +363,7 @@ func cmdChallenge(ctx context.Context, g *global, args []string) error {
 	provider := fs.String("provider", "", "the advertiser's identity key")
 	c := fs.Uint64("c", 30, "samples, 1 to 1024")
 	budget := fs.Uint64("budget", 0, "the most paid for the answer")
+	heldWait := fs.Duration("held-wait", 10*time.Minute, "how long a payment the provider holds for confirmation is waited on before it is sent again; 0 does not wait")
 	nonceHex := fs.String("nonce", "", "the nonce, 32 hex digits (default fresh)")
 	front := fs.String("front", "", "the answerer's front URL (default derived from the advertisement)")
 	answerer := fs.String("answerer", "", "the front's key when -front is not the provider's own")
@@ -438,7 +442,7 @@ func cmdChallenge(ctx context.Context, g *global, args []string) error {
 	}
 	blobs = obj.Blobs()
 	res, err := h.pub.Challenge(ctx, &publish.Challenge{Bucket: ch.Bucket, Root: e.Root, ProofRoot: e.ProofRoot, Size: e.Size,
-		Entry: f.Entry.Txid(), Provider: prov, Answerer: answer, Front: fr, URL: adURL, Blobs: blobs, C: *c, Nonce: nonce, Budget: *budget}, h.fetch)
+		Entry: f.Entry.Txid(), Provider: prov, Answerer: answer, Front: fr, URL: adURL, Blobs: blobs, C: *c, Nonce: nonce, Budget: *budget, HeldWait: *heldWait}, h.fetch)
 	if err != nil {
 		return err
 	}
