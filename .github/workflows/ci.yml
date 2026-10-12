@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   go:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, lax]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -44,7 +44,7 @@ jobs:
   # moves the bytes on one side and not the other fails in one job or the
   # other.
   ts:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, lax]
     defaults:
       run:
         working-directory: host
@@ -66,7 +66,7 @@ jobs:
   # gateway, a put, a race, settlement, a paid challenge and a renewal, a
   # delete. It is what a newcomer runs, and it once stayed red unnoticed.
   quickstart:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, lax]
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
