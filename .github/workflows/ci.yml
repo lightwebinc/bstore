@@ -74,5 +74,15 @@ jobs:
         run: |
           make docker-build
           make docker-build-host REFERENCE_HOST_IMAGE=${{ vars.REFERENCE_HOST_IMAGE || 'ghcr.io/lightwebinc/overlay-blueprints:0.2.2' }}
+      # The quickstart drives the S3 face with the AWS CLI v2, which a
+      # self-hosted runner does not carry.
+      - name: AWS CLI v2
+        run: |
+          if ! command -v aws >/dev/null; then
+            curl -fsSL -o "$RUNNER_TEMP/awscliv2.zip" https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+            unzip -q -o "$RUNNER_TEMP/awscliv2.zip" -d "$RUNNER_TEMP"
+            "$RUNNER_TEMP/aws/install" -i "$RUNNER_TEMP/aws-cli" -b "$RUNNER_TEMP/bin"
+            echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          fi
       - name: the quickstart, as written
         run: scripts/quickstart-check.sh
