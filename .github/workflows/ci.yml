@@ -84,5 +84,15 @@ jobs:
             "$RUNNER_TEMP/aws/install" -i "$RUNNER_TEMP/aws-cli" -b "$RUNNER_TEMP/bin"
             echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
           fi
+      # The self-hosted runners share one Docker daemon, and this stack
+      # publishes fixed host ports. The lock serializes this repository's
+      # quickstarts; holding it, any bstore-quickstart-check-* stack left is an
+      # orphan of a cancelled run (cancel skips the script's teardown), so it
+      # is removed first.
       - name: the quickstart, as written
-        run: scripts/quickstart-check.sh
+        run: |
+          flock /tmp/bstore-quickstart.lock sh -c '
+            docker ps -aq --filter name=^bstore-quickstart-check- | xargs -r docker rm -f
+            docker network ls -q --filter name=^bstore-quickstart-check- | xargs -r docker network rm
+            docker volume ls -q --filter name=^bstore-quickstart-check- | xargs -r docker volume rm
+            scripts/quickstart-check.sh'
