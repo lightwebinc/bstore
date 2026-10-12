@@ -34,6 +34,11 @@ flowchart LR
   HA --> D[(mysql)]
   HB --> D
   O -->|"settle, proofs, headers"| C["chain (local)"]
+  %% The last node is an invisible spacer in the rightmost rank: the rendered
+  %% viewer places its zoom and pan controls over the bottom-right corner.
+  HA ~~~ pad
+  pad["&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;"]:::pad
+  classDef pad fill:none,stroke:none,color:transparent
 ```
 
 Compose publishes these ports on loopback only: host-a's overlay API on

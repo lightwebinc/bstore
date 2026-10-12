@@ -40,6 +40,11 @@ flowchart LR
   W -.-> C
   P1 -.-> C
   R -.-> C
+  %% The last node is an invisible spacer in the rightmost rank: the rendered
+  %% viewer places its zoom and pan controls over the bottom-right corner.
+  P1 ~~~ pad
+  pad["&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;"]:::pad
+  classDef pad fill:none,stroke:none,color:transparent
 ```
 
 | Part | Binary or artifact | Holds | Trusts |
