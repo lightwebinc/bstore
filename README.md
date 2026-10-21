@@ -16,6 +16,8 @@ Object storage as a market on Bitcoin. A writer publishes an object once;
 storage providers compete to hold it for a bounty; a reader proves every
 byte it gets. Readers and writers may speak S3.
 
+> **Frozen (2026-10-21).** `host/src` takes bug fixes only; new behavior goes to the Go core. The Go overlay engine (go-overlay-services on MongoDB) will replace this host module. Design: `1bsv-ops` `docs/integration/overlay/go-engine-migration.md`.
+
 ## How it works
 
 - **Publish once, many providers.** An object is a CHIRP (BRC-167) closure
