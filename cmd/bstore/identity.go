@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -395,6 +396,15 @@ func firstLine(s string) string {
 	return s
 }
 
+// hostKey names a host in an outbox id: 12 hex digits of the URL's
+// SHA-256. An id is a file name, so it carries no slash, and hosts that
+// share a scheme and an address prefix (every lab host's URL begins
+// "http://192.1") get ids of their own.
+func hostKey(host string) string {
+	sum := sha256.Sum256([]byte(strings.TrimRight(host, "/")))
+	return hex.EncodeToString(sum[:6])
+}
+
 func short(s string) string {
 	if len(s) > 12 {
 		return s[:12]
@@ -548,7 +558,7 @@ func (h *home) fillEntries(ctx context.Context) (int, []string) {
 				}
 			}
 			if !has {
-				if ok := h.pub.Resend(ctx, l.Txid+"-"+short(host), "entry", beef, []publish.Target{publish.HostTarget(host, l.Bucket)}); len(ok) > 0 {
+				if ok := h.pub.Resend(ctx, l.Txid+"-"+hostKey(host), "entry", beef, []publish.Target{publish.HostTarget(host, l.Bucket)}); len(ok) > 0 {
 					sent++
 				}
 			}
@@ -598,7 +608,7 @@ func (h *home) fillTokens(ctx context.Context) (int, []string) {
 					problems = append(problems, err.Error())
 					break
 				}
-				if ok := h.pub.Resend(ctx, t.TxidHex()+"-"+short(host), "bucket token", beef, []publish.Target{publish.HostTarget(host, c.Bucket)}); len(ok) > 0 {
+				if ok := h.pub.Resend(ctx, t.TxidHex()+"-"+hostKey(host), "bucket token", beef, []publish.Target{publish.HostTarget(host, c.Bucket)}); len(ok) > 0 {
 					sent++
 				}
 			}

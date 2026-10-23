@@ -157,3 +157,25 @@ func TestPayee(t *testing.T) {
 		t.Fatalf("a refused settle wrote the book: %v", err)
 	}
 }
+
+// TestHostKey: fill names each host in an outbox id, and the id is a file
+// name: no slash, and hosts whose URLs share their first characters (the
+// lab's "http://192.1...") are told apart, so a fill to one does not stand
+// in for a fill to another.
+func TestHostKey(t *testing.T) {
+	hosts := []string{"http://192.168.110.22:8080", "http://192.168.110.22:8280", "http://192.168.110.23:8080", "https://h.example/"}
+	seen := map[string]string{}
+	for _, h := range hosts {
+		k := hostKey(h)
+		if len(k) != 12 || strings.ContainsAny(k, `/\:`) {
+			t.Fatalf("%s: key %q is not 12 hex digits", h, k)
+		}
+		if o, ok := seen[k]; ok {
+			t.Fatalf("%s and %s share key %s", h, o, k)
+		}
+		seen[k] = h
+	}
+	if hostKey("https://h.example") != hostKey("https://h.example/") {
+		t.Fatal("a trailing slash names another host")
+	}
+}
