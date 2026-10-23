@@ -7,7 +7,7 @@
 #   docker build --target provider -t ghcr.io/lightwebinc/bstore-provider .  # a storage provider
 #   docker build --target devchain -t ghcr.io/lightwebinc/bstore-devchain .  # the local chain
 #
-# The builder is pinned by digest and matches go.mod's Go 1.27.2, so
+# The builder is pinned by digest to the builder toolchain, Go 1.27.3, so
 # scanning sees the standard library that ships.
 #
 # No ENV defaults are baked in. The hosts, the header source, the node, the
@@ -30,7 +30,7 @@
 
 # The builder runs on the build machine's own platform and cross-compiles
 # to the target's, so an arm64 image needs no emulation.
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:738d1cf061836894ff6bb8c33881080ac66de8cf0586615012a0c8f592649cfa AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:b8c9b82affbbb82a020bbcf998dad2ba9516944ac7e883524642a481a9505e9c AS builder
 RUN apk add --no-cache git ca-certificates
 WORKDIR /src
 ENV GOWORK=off
