@@ -319,6 +319,29 @@ bstore's settings are the `BSTORE_ARCADE_URL`, `BSTORE_ASSET_URL` (or
 host with no node) and `BSTORE_ACCEPT_*` variables above. Without an
 arcade and a node view every payment is held until it mines.
 
+## The Go module
+
+The same module exists in Go, `module/` in this repository, written to
+bcommon's engine-neutral contract (`github.com/lightwebinc/bcommon/module`)
+for a Go overlay host that carries the adapter: `tm_bstore_<bucket>` for
+each bucket, `tm_bstoreblob_<bucket>` where the host's topics name one (it
+refuses everything, as above), `ls_bstore` for all of them with every class
+and the same answers, the journal `bstore-rows.jsonl` with the same lines,
+byte for byte, and the same retention floors and restore, and the terms
+route (bcommon's `termsroute`, the Go twin of the shared host module) with
+the same routes, codes, prices, metrics and ledger lines (`payments.jsonl`,
+the payee layout). It reads the same `BSTORE_` variables as the table above
+and refuses the same mistakes; on a Go host the terms route takes port 8294
+(`BSTORE_LISTEN`), beside the TypeScript host's 8094. Its admission rules
+are `storerec.Admit`, its folds and map answers storerec's, and its tests
+drive it with the transaction vectors and the TypeScript module's own
+cases. A host hands the topic manager the submission's bytes exactly as
+they arrived (`module.WithSubmission`): the rules decide on the wire form.
+To drop an object the module deletes its output and asks the host to forget
+the applied transaction (`DeleteOutput`, `DeleteAppliedTransaction` on the
+storage a restore is handed), so the same object offered again is decided
+afresh; a storage that cannot forget leaves it a duplicate.
+
 ## Metrics
 
 Counters: `bstore_admitted_total{kind}`, `bstore_admitted_repeats_total{kind}`,
@@ -425,4 +448,7 @@ reader's checks, the fold against the codec's on a thousand chains, every
 retention floor, restore in any order, the races, and the route with a
 paying client and the attacks the hardening answers. `make e2e
 REFERENCE_HOST=/path/to/host` runs the bundle on a local reference overlay
-host over MySQL (Docker), as above.
+host over MySQL (Docker), as above. `make go-test` runs the Go module's
+tests beside the codec's: the same cases on a stand-in for the Go engine's
+storage and admission path, the journal's bytes, restore in any order, and
+the terms route with a paying client.

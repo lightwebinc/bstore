@@ -16,7 +16,7 @@ Object storage as a market on Bitcoin. A writer publishes an object once;
 storage providers compete to hold it for a bounty; a reader proves every
 byte it gets. Readers and writers may speak S3.
 
-> **Frozen (2026-10-21).** `host/src` takes bug fixes only; new behavior goes to the Go core. The Go overlay engine (go-overlay-services on MongoDB) will replace this host module. Design: `1bsv-ops` `docs/integration/overlay/go-engine-migration.md`.
+> **Frozen (2026-10-21).** `host/src` takes bug fixes only; new behavior goes to the Go core. Its Go twin, `module/`, is what the Go overlay engine mounts ([docs/host.md](docs/host.md#the-go-module)). Design: `1bsv-ops` `docs/integration/overlay/go-engine-migration.md`.
 
 ## How it works
 
@@ -129,7 +129,7 @@ $ make module NODE=/path/to/node24  # host/bundle/bstore-module.js
 $ make docker-build                 # the images
 ```
 
-Go 1.27.2 and Node 24. bstore pins go-sdk v1.7.1 and bcommon v0.24.0.
+Go 1.27.2 and Node 24. bstore pins go-sdk v1.7.1 and bcommon v0.30.0.
 
 ## License
 
