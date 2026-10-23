@@ -60,7 +60,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # the chain after a restart, is kept in /var/lib/devchain; mount a volume
 # there. `devchain certs` writes a throwaway CA and server certificates
 # into /certs: a provider's advertised URL must be https.
-FROM gcr.io/distroless/static:nonroot@sha256:1c2c046bc09ed40fad370b599a0b1ae7987f55b01e247cf27a7c27cd97e5bbc7 AS devchain
+FROM gcr.io/distroless/static:nonroot@sha256:d62067879de890a1def9da0e7766b7d20810a5e5555cef8506b752437d7a3e88 AS devchain
 USER nonroot:nonroot
 COPY --from=builder /out/devchain /usr/local/bin/devchain
 COPY --from=builder --chown=65532:65532 --chmod=0700 /state/devchain /var/lib/devchain
@@ -72,7 +72,7 @@ ENTRYPOINT ["/usr/local/bin/devchain", "-journal", "/var/lib/devchain/journal"]
 # A storage provider (docs/provider.md): `run -config FILE` serves the
 # front, the object routes and /submit on the configuration's listen
 # address.
-FROM gcr.io/distroless/static:nonroot@sha256:1c2c046bc09ed40fad370b599a0b1ae7987f55b01e247cf27a7c27cd97e5bbc7 AS provider
+FROM gcr.io/distroless/static:nonroot@sha256:d62067879de890a1def9da0e7766b7d20810a5e5555cef8506b752437d7a3e88 AS provider
 USER nonroot:nonroot
 COPY --from=builder /out/bstore-provider /usr/local/bin/bstore-provider
 COPY --from=builder --chown=65532:65532 --chmod=0700 /state/bstore-provider /var/lib/bstore-provider
@@ -82,7 +82,7 @@ ENTRYPOINT ["/usr/local/bin/bstore-provider"]
 
 # The command line and the S3 gateway (`bstore s3d run -config FILE`).
 # Last, so a plain build produces it.
-FROM gcr.io/distroless/static:nonroot@sha256:1c2c046bc09ed40fad370b599a0b1ae7987f55b01e247cf27a7c27cd97e5bbc7 AS bstore
+FROM gcr.io/distroless/static:nonroot@sha256:d62067879de890a1def9da0e7766b7d20810a5e5555cef8506b752437d7a3e88 AS bstore
 USER nonroot:nonroot
 COPY --from=builder /out/bstore /usr/local/bin/bstore
 COPY --from=builder --chown=65532:65532 --chmod=0700 /state/.bstore /home/nonroot/.bstore

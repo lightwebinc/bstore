@@ -22,7 +22,7 @@ ARG REFERENCE_HOST_IMAGE=set-the-reference-host-image-build-arg
 # The bundle is JavaScript, the same bytes on every platform, so it is
 # built once on the build machine's own platform; the final stage only
 # copies files onto the host image, so an arm64 image needs no emulation.
-FROM --platform=$BUILDPLATFORM node:24@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4 AS bundle
+FROM --platform=$BUILDPLATFORM node:24@sha256:6449e19d8184d84062525b6a7524def03146c2cb04a7f08b076680d0e8e4240a AS bundle
 WORKDIR /src/host
 COPY host/package.json host/package-lock.json ./
 COPY host/vendor ./vendor
