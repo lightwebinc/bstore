@@ -55,6 +55,8 @@ const usage = `perfcorpus: a replayable corpus of real bstore records (lab only)
   build -root DIR -name SET -shapes S -count N
   check -set DIR -asset URL [-n K]    admit the first K of each shape locally
   info  -root DIR                     what the plan holds and what is proven
+  first-tokens -root DIR -out D       each bucket's first token as a host admits it
+  questions -root DIR                 ls_bstore questions (free and priced) about the perf buckets, JSON lines
 `
 
 func main() {
@@ -83,6 +85,10 @@ func main() {
 		err = cmdCheck(ctx, args)
 	case "info":
 		err = cmdInfo(args)
+	case "questions":
+		err = cmdQuestions(args)
+	case "first-tokens":
+		err = cmdFirstTokens(args)
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		return
