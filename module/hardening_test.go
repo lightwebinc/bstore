@@ -427,3 +427,49 @@ func outpointOf(txid string, vout uint32) transaction.Outpoint {
 	h, _ := chainhash.NewHashFromHex(txid)
 	return transaction.Outpoint{Txid: *h, Index: vout}
 }
+
+// TestFlushReleasesTheLockBetweenChunks: a pass with more drops than
+// FlushChunk takes them in chunks and gives the lock back between two
+// chunks (an admission or a lookup waits for one chunk, never the pass),
+// and still deletes and evicts every drop exactly as one pass would.
+func TestFlushReleasesTheLockBetweenChunks(t *testing.T) {
+	w := newWorld(t, worldOpts{})
+	ls, st := w.r.ls, w.r.storage
+	n := 2*FlushChunk + 3
+	var txids []string
+	ls.mu.Lock()
+	for i := 0; i < n; i++ {
+		var h chainhash.Hash
+		h[0], h[1] = byte(i), byte(i>>8)
+		txid := h.String()
+		txids = append(txids, txid)
+		op := transaction.Outpoint{Txid: h, Index: 0}
+		st.mu.Lock()
+		st.outputs[skey(topic, &op)] = &bmodule.Output{Outpoint: op, Topic: topic}
+		st.applied[topic+"|"+txid] = true
+		st.mu.Unlock()
+		ls.queueDrop(bucket, txid, 0)
+	}
+	ls.mu.Unlock()
+	breaks := 0
+	ls.betweenChunks = func() {
+		if !ls.mu.TryLock() {
+			t.Error("the lock is held between chunks")
+			return
+		}
+		ls.mu.Unlock()
+		breaks++
+	}
+	ls.Flush(context.Background())
+	if want := (n+FlushChunk-1)/FlushChunk - 1; breaks != want {
+		t.Fatalf("%d breaks between chunks, want %d", breaks, want)
+	}
+	if got := ls.Counts().PendingDrops; got != 0 {
+		t.Fatalf("%d drops left", got)
+	}
+	for _, txid := range txids {
+		if st.held(txid, 0, topic) || st.isApplied(txid, topic) {
+			t.Fatalf("%s not deleted and evicted", txid)
+		}
+	}
+}

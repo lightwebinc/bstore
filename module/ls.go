@@ -367,6 +367,9 @@ type Service struct {
 	warned    map[string]bool
 	// holdDrops keeps drops queued, for tests.
 	holdDrops bool
+	// betweenChunks, when set, runs between two chunks of a Flush, with the
+	// lock released (tests).
+	betweenChunks func()
 
 	last tally
 }
@@ -835,13 +838,49 @@ func (s *Service) queueDrop(b, txid string, vout uint32) {
 // told), for at most SettleMs. A store that cannot delete keeps what was
 // dropped, unanswered; a store that cannot evict leaves a dropped object a
 // duplicate when it is offered again. Each is said once in the log.
+//
+// Flush takes the drops waiting when it starts in chunks of FlushChunk,
+// releasing the lock between chunks: under a put load nearly every object
+// leaves a drop (the entry it supersedes), so one pass every FlushEvery can
+// carry thousands of storage deletes, and admissions (OutputAdmittedByTopic)
+// and lookups wait on the lock while a chunk runs, never for the whole pass.
+// Each drop is decided under the lock when its chunk runs, as before.
 func (s *Service) Flush(ctx context.Context) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.flush(ctx)
+	keys := s.dropKeys()
+	s.mu.Unlock()
+	for len(keys) > 0 {
+		n := min(FlushChunk, len(keys))
+		s.mu.Lock()
+		s.flushKeys(ctx, keys[:n])
+		s.mu.Unlock()
+		keys = keys[n:]
+		if len(keys) > 0 && s.betweenChunks != nil {
+			s.betweenChunks()
+		}
+	}
 }
 
-func (s *Service) flush(ctx context.Context) {
+// FlushChunk is how many drops one hold of the lock deletes in a Flush.
+const FlushChunk = 64
+
+// flush deletes every waiting drop at once, the lock held throughout (the
+// callers that already hold it: a retention pass and a restore).
+func (s *Service) flush(ctx context.Context) { s.flushKeys(ctx, s.dropKeys()) }
+
+// dropKeys are the waiting drops' keys in order (the lock held).
+func (s *Service) dropKeys() []string {
+	keys := make([]string, 0, len(s.drops))
+	for k := range s.drops {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// flushKeys decides the drops named by keys (the lock held); a key no longer
+// waiting is skipped.
+func (s *Service) flushKeys(ctx context.Context, keys []string) {
 	st := s.storage
 	if st == nil || len(s.drops) == 0 || s.holdDrops {
 		return
@@ -857,13 +896,11 @@ func (s *Service) flush(ctx context.Context) {
 		s.warnOnce("evict", "ls_bstore cannot evict a dropped transaction: the storage has no DeleteAppliedTransaction")
 	}
 	ap, canAsk := st.(AppliedChecker)
-	keys := make([]string, 0, len(s.drops))
-	for k := range s.drops {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
 	for _, k := range keys {
 		d := s.drops[k]
+		if d == nil {
+			continue // decided meanwhile
+		}
 		// Offered again and held again while the drop waited: nothing to drop.
 		if s.heldByTx[d.b+"|"+d.txid][d.vout] {
 			delete(s.drops, k)

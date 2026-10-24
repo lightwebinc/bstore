@@ -249,7 +249,11 @@ services, so a drop decided during an admission waits until the record
 exists (at most a minute), and drops still waiting are tried every two
 seconds; an output offered again and held again before its drop runs is
 left alone. A mined transaction's record is evicted only once none of its
-outputs is held.
+outputs is held. The Go module takes a pass's drops 64 at a time and
+releases the lookup service's lock between two chunks: under a put load
+nearly every admission leaves a drop (the entry it supersedes), and one
+pass holding the lock for all of them stalled every admission behind it for
+tens of milliseconds every two seconds.
 
 The reference host gives a module no handle on the engine, so the module
 cannot call the engine's `evictAppliedTransaction`. It does what that call
