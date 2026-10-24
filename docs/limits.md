@@ -149,6 +149,7 @@ every host.
 | --- | --- | --- |
 | Retention floors | a served chain's tokens for the host's life; anchored entries while named, then 31 days; entries no token names 7 days; advertisements, hold outputs, outcomes, front statements and sweep outpoints 31 days; retraction marks for served parties for life; everything else 24 hours ([host.md](host.md), Retention) | contract floors, set upward by `BSTORE_KEEP_DAYS`, `BSTORE_PENDING_DAYS`, `BSTORE_OTHER_HOURS` |
 | Priced questions | the host's `BSTORE_PRICES`: the test hosts priced `history` 5, `chain` 10, `export` 20, `outcome-history` 3, `outcome-history-of` 4 satoshis; every other class is free | set |
+| How long a written journal line may wait for its fsync (the Go module) | 100 ms (`BSTORE_JOURNAL_SYNC_MS`, 0 to 60000; 0 flushes each line before the admission completes, under the lookup service's lock): one fsync covers every line of the window, so a power loss loses at most the window and a process that dies loses nothing ([host.md](host.md)) | set |
 | What a directory host holds for a 100 MiB object | under 10 KB: the entry, the hold transaction, one advertisement a provider, the token's share | contract arithmetic |
 
 ## Plane and unicast
