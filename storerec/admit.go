@@ -105,17 +105,36 @@ type Admission struct {
 // never a verdict: every rule reads the submission's own bytes and the
 // host's headers alone. SPV of the BEEF is the engine's and is assumed to
 // have run. Every refusal is an error, which a topic manager raises.
+// Admit is Prepare and then Pending.Admit.
 func Admit(ctx context.Context, beef []byte, held []int, h Host) (*Admission, error) {
+	return Prepare(ctx, beef, h).Admit(held)
+}
+
+// Pending is one submission decided on every rule before held is known:
+// Prepare's half of Admit. Since no rule reads what the topic holds, a host
+// may prepare a submission before it takes the topic's lock and finish it
+// with held under the lock.
+type Pending struct {
+	// read is whether the BEEF was read: until then a refusal comes before
+	// held is looked at, after it held's range is checked first.
+	read bool
+	tx   *transaction.Transaction
+	a    *Admission // the verdict but Retain, when err is nil
+	err  error
+}
+
+// Prepare applies every rule of Admit to beef but the range of held.
+func Prepare(ctx context.Context, beef []byte, h Host) *Pending {
 	if CheckBucket(h.Bucket) != nil {
-		return nil, fmt.Errorf("%w: bucket identifier breaks the grammar", ErrHostConfig)
+		return &Pending{err: fmt.Errorf("%w: bucket identifier breaks the grammar", ErrHostConfig)}
 	}
 	bound, maxSweep, err := h.bounds()
 	if err != nil {
-		return nil, err
+		return &Pending{err: err}
 	}
 	w, err := chaintoken.ReadWire(beef, bound)
 	if err != nil {
-		return nil, err
+		return &Pending{err: err}
 	}
 	// A value above 2^53 - 1 satoshis is refused with the BEEF: no amount of
 	// money is that large, and a reader that holds values as doubles cannot
@@ -126,16 +145,37 @@ func Admit(ctx context.Context, beef []byte, held []int, h Host) (*Admission, er
 		}
 		for _, o := range e.Tx.Outputs {
 			if o != nil && o.Satoshis > MaxSafe {
-				return nil, fmt.Errorf("%w: an output of %d satoshis", ErrBEEF, o.Satoshis)
+				return &Pending{err: fmt.Errorf("%w: an output of %d satoshis", ErrBEEF, o.Satoshis)}
 			}
 		}
 	}
 	tx := w.SubjectTx()
-	retain, err := retained(tx, held)
+	a, err := decide(ctx, w, tx, len(beef), maxSweep, h)
+	return &Pending{read: true, tx: tx, a: a, err: err}
+}
+
+// Admit finishes a prepared admission with held, as Admit would have
+// decided it: a BEEF refused stays refused whatever held is, held out of
+// range comes before every other rule, and an admission retains held.
+func (p *Pending) Admit(held []int) (*Admission, error) {
+	if !p.read {
+		return nil, p.err
+	}
+	retain, err := retained(p.tx, held)
 	if err != nil {
 		return nil, err
 	}
-	a := &Admission{Txid: [32]byte(*tx.TxID()), Retain: retain}
+	if p.err != nil {
+		return nil, p.err
+	}
+	a := *p.a
+	a.Retain = retain
+	return &a, nil
+}
+
+// decide is Admit's rules after the BEEF was read, but held's range.
+func decide(ctx context.Context, w *chaintoken.Wire, tx *transaction.Transaction, size, maxSweep int, h Host) (*Admission, error) {
+	a := &Admission{Txid: [32]byte(*tx.TxID())}
 
 	claim, claims, at := ClaimNone, 0, 0
 	for i, o := range tx.Outputs {
@@ -154,14 +194,14 @@ func Admit(ctx context.Context, beef []byte, held []int, h Host) (*Admission, er
 	case ClaimPiece:
 		return nil, ErrPieceTx
 	case ClaimEntry, ClaimOutcome, ClaimFront:
-		c, err := checkCarrier(w, tx, claim, len(beef), h)
+		c, err := checkCarrier(w, tx, claim, size, h)
 		if err != nil {
 			return nil, err
 		}
 		a.Kind, a.Carrier, a.Outputs = c.Kind, c, []int{0}
 		return a, nil
 	case ClaimToken:
-		if err := a.checkToken(ctx, w, tx, at, len(beef), h); err != nil {
+		if err := a.checkToken(ctx, w, tx, at, size, h); err != nil {
 			return nil, err
 		}
 		a.Kind, a.Outputs = TxToken, []int{at}
@@ -190,8 +230,8 @@ func Admit(ctx context.Context, beef []byte, held []int, h Host) (*Admission, er
 		if err := w.Alone(tx); err != nil {
 			return nil, err
 		}
-		if len(beef) > MaxMinedBEEF {
-			return nil, fmt.Errorf("%w: a mined object's BEEF of %d bytes", ErrBEEF, len(beef))
+		if size > MaxMinedBEEF {
+			return nil, fmt.Errorf("%w: a mined object's BEEF of %d bytes", ErrBEEF, size)
 		}
 		if !chaintoken.Mined(ctx, tx, h.Headers) {
 			return nil, ErrUnmined
@@ -209,8 +249,8 @@ func Admit(ctx context.Context, beef []byte, held []int, h Host) (*Admission, er
 		if err := w.Alone(tx); err != nil {
 			return nil, err
 		}
-		if len(beef) > MaxSweepBEEF {
-			return nil, fmt.Errorf("%w: a sweep's BEEF of %d bytes", ErrBEEF, len(beef))
+		if size > MaxSweepBEEF {
+			return nil, fmt.Errorf("%w: a sweep's BEEF of %d bytes", ErrBEEF, size)
 		}
 		if !chaintoken.Mined(ctx, tx, h.Headers) {
 			return nil, ErrUnmined

@@ -349,6 +349,11 @@ Its admission rules are `storerec.Admit`, its folds and map answers
 storerec's, and its tests drive it with the transaction vectors and the
 TypeScript module's own cases. A host hands the topic manager the submission's bytes exactly as
 they arrived (`module.WithSubmission`): the rules decide on the wire form.
+No rule reads what the topic holds, so the manager also decides a
+submission before the host takes the topic's lock (`Precheck`, which
+overlay-engine calls where a manager has it; `storerec.Prepare`) and only
+finishes the verdict with the previous coins under the lock: the field
+signature and the key derivation leave the lock's hold.
 To drop an object the module deletes its output and asks the host to forget
 the applied transaction (`DeleteOutput`, `DeleteAppliedTransaction` on the
 storage a restore is handed), so the same object offered again is decided

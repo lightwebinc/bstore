@@ -1,6 +1,7 @@
 package module
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -106,9 +107,16 @@ func NewRecordsTopicManager(topic string, host bmodule.Host, headers chaintracke
 }
 
 // Admit applies the rules to the submission's bytes with the held inputs,
-// as the TypeScript manager's identifyAdmissibleOutputs does.
+// as the TypeScript manager's identifyAdmissibleOutputs does. A verdict
+// Precheck left in ctx for these bytes is finished with held instead.
 func (t *RecordsTopicManager) Admit(ctx context.Context, raw []byte, held []int) (overlay.AdmittanceInstructions, error) {
-	a, err := storerec.Admit(ctx, raw, held, t.h)
+	var a *storerec.Admission
+	var err error
+	if pc, ok := ctx.Value(precheckKey{t}).(*precheck); ok && bytes.Equal(pc.raw, raw) {
+		a, err = pc.p.Admit(held)
+	} else {
+		a, err = storerec.Admit(ctx, raw, held, t.h)
+	}
 	if err != nil {
 		reason := storerec.Reason(err)
 		if reason == "other" {
@@ -142,6 +150,30 @@ func (t *RecordsTopicManager) IdentifyAdmissibleOutputs(ctx context.Context, _ *
 		held = append(held, int(c))
 	}
 	return t.Admit(ctx, raw, held)
+}
+
+// precheck is a submission's verdict decided before the host took the
+// topic's lock.
+type precheck struct {
+	raw []byte
+	p   *storerec.Pending
+}
+
+type precheckKey struct{ t *RecordsTopicManager }
+
+// Precheck decides the submission in ctx (bcommon module.WithSubmission) on
+// every rule but the range of its previous coins (storerec.Prepare) and
+// returns ctx carrying the verdict, which Admit finishes under the lock.
+// No rule reads what the topic holds, so a host that runs this before it
+// takes the topic's lock (overlay-engine's pipeline does) holds the lock
+// only for what the topic holds. It counts and logs nothing: Admit does,
+// when the host shows it the transaction.
+func (t *RecordsTopicManager) Precheck(ctx context.Context) context.Context {
+	raw, ok := bmodule.Submission(ctx)
+	if !ok {
+		return ctx
+	}
+	return context.WithValue(ctx, precheckKey{t}, &precheck{raw: raw, p: storerec.Prepare(ctx, raw, t.h)})
 }
 
 // IdentifyNeededInputs implements module.InputIdentifier: nothing is
