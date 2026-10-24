@@ -5,10 +5,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bsv-blockchain/go-sdk/chainhash"
@@ -310,6 +312,10 @@ type Options struct {
 // (Deleter, Evicter).
 type Service struct {
 	mu sync.Mutex
+	// admitting counts the host's calls waiting for mu (lockAdmission): each
+	// holds its topic's lock in the host meanwhile, so a Flush gives mu up
+	// at its next drop while one waits.
+	admitting atomic.Int32
 
 	buckets       map[string]bool
 	served        map[string]bool
@@ -850,14 +856,24 @@ func (s *Service) Flush(ctx context.Context) {
 	keys := s.dropKeys()
 	s.mu.Unlock()
 	for len(keys) > 0 {
-		n := min(FlushChunk, len(keys))
 		s.mu.Lock()
-		s.flushKeys(ctx, keys[:n])
+		n := s.flushKeys(ctx, keys[:min(FlushChunk, len(keys))], true)
 		s.mu.Unlock()
 		keys = keys[n:]
-		if len(keys) > 0 && s.betweenChunks != nil {
-			s.betweenChunks()
+		if len(keys) > 0 {
+			if s.betweenChunks != nil {
+				s.betweenChunks()
+			}
+			s.giveWay()
 		}
+	}
+}
+
+// giveWay lets the host's calls waiting for mu take it before the next
+// chunk (a bounded number of yields, so a Flush always moves on).
+func (s *Service) giveWay() {
+	for i := 0; i < 64 && s.admitting.Load() > 0; i++ {
+		runtime.Gosched()
 	}
 }
 
@@ -866,7 +882,7 @@ const FlushChunk = 64
 
 // flush deletes every waiting drop at once, the lock held throughout (the
 // callers that already hold it: a retention pass and a restore).
-func (s *Service) flush(ctx context.Context) { s.flushKeys(ctx, s.dropKeys()) }
+func (s *Service) flush(ctx context.Context) { s.flushKeys(ctx, s.dropKeys(), false) }
 
 // dropKeys are the waiting drops' keys in order (the lock held).
 func (s *Service) dropKeys() []string {
@@ -879,24 +895,29 @@ func (s *Service) dropKeys() []string {
 }
 
 // flushKeys decides the drops named by keys (the lock held); a key no longer
-// waiting is skipped.
-func (s *Service) flushKeys(ctx context.Context, keys []string) {
+// waiting is skipped. With giveWay it stops before the next key once a call
+// of the host's waits for the lock (lockAdmission), having decided at least
+// one. It answers how many keys it took.
+func (s *Service) flushKeys(ctx context.Context, keys []string, giveWay bool) int {
 	st := s.storage
 	if st == nil || len(s.drops) == 0 || s.holdDrops {
-		return
+		return len(keys)
 	}
 	del, ok := st.(Deleter)
 	if !ok {
 		s.warnOnce("delete", "ls_bstore cannot delete dropped outputs: the storage has no DeleteOutput")
 		s.drops = map[string]*dropEntry{}
-		return
+		return len(keys)
 	}
 	ev, canEvict := st.(Evicter)
 	if !canEvict {
 		s.warnOnce("evict", "ls_bstore cannot evict a dropped transaction: the storage has no DeleteAppliedTransaction")
 	}
 	ap, canAsk := st.(AppliedChecker)
-	for _, k := range keys {
+	for i, k := range keys {
+		if giveWay && i > 0 && s.admitting.Load() > 0 {
+			return i
+		}
 		d := s.drops[k]
 		if d == nil {
 			continue // decided meanwhile
@@ -934,6 +955,7 @@ func (s *Service) flushKeys(ctx context.Context, keys []string) {
 		}
 		delete(s.drops, k)
 	}
+	return len(keys)
 }
 
 // ---- admission
@@ -955,11 +977,19 @@ func (s *Service) OutputAdmittedByTopic(ctx context.Context, p *bmodule.OutputAd
 		s.host.Log("ls_bstore ignored an admission whose BEEF did not parse", map[string]any{"topic": p.Topic})
 		return nil
 	}
-	s.mu.Lock()
+	s.lockAdmission()
 	defer s.mu.Unlock()
 	s.index(b, tx, p.Outpoint.Index, s.nowMs())
 	s.drain(ctx)
 	return nil
+}
+
+// lockAdmission takes mu for a call the host makes while it holds the
+// topic's lock: a Flush running gives way to it at its next drop.
+func (s *Service) lockAdmission() {
+	s.admitting.Add(1)
+	s.mu.Lock()
+	s.admitting.Add(-1)
 }
 
 // drain reads back the tokens a full seq turned away whose predecessor
@@ -997,7 +1027,7 @@ func (s *Service) drain(ctx context.Context) {
 
 // OutputEvicted implements module.LookupService.
 func (s *Service) OutputEvicted(_ context.Context, op *transaction.Outpoint) error {
-	s.mu.Lock()
+	s.lockAdmission()
 	defer s.mu.Unlock()
 	s.forget(op.Txid.String(), op.Index, "")
 	return nil
@@ -1009,7 +1039,7 @@ func (s *Service) OutputNoLongerRetainedInHistory(_ context.Context, op *transac
 	if !ok {
 		return nil
 	}
-	s.mu.Lock()
+	s.lockAdmission()
 	defer s.mu.Unlock()
 	s.forget(op.Txid.String(), op.Index, b)
 	return nil

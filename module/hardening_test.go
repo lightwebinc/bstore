@@ -473,3 +473,54 @@ func TestFlushReleasesTheLockBetweenChunks(t *testing.T) {
 		}
 	}
 }
+
+// TestFlushGivesWayToAdmissions: while a call of the host's waits for the
+// lock (lockAdmission, the host holding its topic's lock meanwhile), a
+// Flush gives the lock up after every drop rather than every chunk, and
+// still deletes and evicts every drop.
+func TestFlushGivesWayToAdmissions(t *testing.T) {
+	w := newWorld(t, worldOpts{})
+	ls, st := w.r.ls, w.r.storage
+	n := FlushChunk + 5
+	var txids []string
+	ls.mu.Lock()
+	for i := 0; i < n; i++ {
+		var h chainhash.Hash
+		h[0], h[1], h[2] = byte(i), byte(i>>8), 0x5a
+		txid := h.String()
+		txids = append(txids, txid)
+		op := transaction.Outpoint{Txid: h, Index: 0}
+		st.mu.Lock()
+		st.outputs[skey(topic, &op)] = &bmodule.Output{Outpoint: op, Topic: topic}
+		st.applied[topic+"|"+txid] = true
+		st.mu.Unlock()
+		ls.queueDrop(bucket, txid, 0)
+	}
+	ls.mu.Unlock()
+	ls.admitting.Add(1) // a call waiting for the lock throughout
+	breaks := 0
+	ls.betweenChunks = func() {
+		if !ls.mu.TryLock() {
+			t.Error("the lock is held between two holds of a Flush")
+			return
+		}
+		ls.mu.Unlock()
+		breaks++
+	}
+	ls.Flush(context.Background())
+	ls.admitting.Add(-1)
+	if breaks != n-1 {
+		t.Fatalf("%d breaks for %d drops, want one after every drop", breaks, n)
+	}
+	if got := ls.Counts().PendingDrops; got != 0 {
+		t.Fatalf("%d drops left", got)
+	}
+	for _, txid := range txids {
+		if st.held(txid, 0, topic) || st.isApplied(txid, topic) {
+			t.Fatalf("%s not deleted and evicted", txid)
+		}
+	}
+	if ls.admitting.Load() != 0 {
+		t.Fatal("admitting left counted")
+	}
+}

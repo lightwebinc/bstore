@@ -253,7 +253,9 @@ outputs is held. The Go module takes a pass's drops 64 at a time and
 releases the lookup service's lock between two chunks: under a put load
 nearly every admission leaves a drop (the entry it supersedes), and one
 pass holding the lock for all of them stalled every admission behind it for
-tens of milliseconds every two seconds.
+tens of milliseconds every two seconds. While an admission waits for the
+lock (the host holding that topic's lock meanwhile), a pass gives it up
+after every drop instead.
 
 The reference host gives a module no handle on the engine, so the module
 cannot call the engine's `evictAppliedTransaction`. It does what that call
