@@ -369,8 +369,10 @@ host admits through its ordinary path, in five phases:
    `BSTORE_CHAIN`); without one, or once the node no longer serves a fully
    spent tree, the chain is counted as a gap and waits for the owner's
    `fill`;
-2. named: `entry` for every entry a served chain's held tokens name that
-   the host does not hold;
+2. named: `entry` for every entry a served chain's current map holds, or a
+   token this host first saw inside the keep floor less a day names, that
+   the host does not hold (an entry only older tokens name has left every
+   host by its floor);
 3. unanchored: `unanchored` page by page for each served chain's owner and
    latest writers;
 4. mined: `ads` for each root a held entry names, `hold` for each hold

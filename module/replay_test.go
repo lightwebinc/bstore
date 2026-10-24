@@ -363,6 +363,56 @@ func TestReplayRetraction(t *testing.T) {
 	}
 }
 
+// TestReplayAsksNoDroppedHistory: an entry replaced longer ago than the
+// keep floor has left every host, so a walk does not ask for it, though a
+// token still names it; while it is inside the floor, a host that lacks it
+// is given it.
+func TestReplayAsksNoDroppedHistory(t *testing.T) {
+	rw := newReplayWorld(t, "e1")
+	b := rw.hostB(t)
+	asked := func(r *rig) (entries int) {
+		ask := peerOf(rw.a)
+		var cursor any
+		for {
+			a, err := r.ls.Replay(context.Background(), &bmodule.ReplayRequest{Topic: topic, Peer: "a", Cursor: cursor,
+				Ask: func(ctx context.Context, q *lookup.LookupQuestion) (*lookup.LookupAnswer, error) {
+					if strings.Contains(string(q.Query), `"entry"`) {
+						entries++
+					}
+					return ask(ctx, q)
+				},
+				Applied: func(_ context.Context, txid chainhash.Hash) (bool, error) {
+					return r.storage.isApplied(txid.String(), topic), nil
+				}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, o := range a.Objects {
+				r.submit(o.BEEF, "")
+			}
+			if a.Done {
+				return entries
+			}
+			cursor = a.Cursor
+		}
+	}
+	// e1 (key a, replaced by e3) is missing on B and inside the floor: asked
+	// for, and given.
+	if n := asked(b); n != 1 || !b.storage.isApplied(rw.objects[0].txid, topic) {
+		t.Fatalf("inside the floor: %d entry questions, e1 applied %v", n, b.storage.isApplied(rw.objects[0].txid, topic))
+	}
+	// Past the floor both hosts drop it, and no walk asks for it again.
+	rw.w.clock.advance(40 * dayDur)
+	rw.a.ls.Prune(context.Background())
+	b.ls.Prune(context.Background())
+	if b.storage.held(rw.objects[0].txid, 0, topic) {
+		t.Fatal("e1 is still held after its floor")
+	}
+	if n := asked(b); n != 0 {
+		t.Fatalf("past the floor: %d entry questions", n)
+	}
+}
+
 // treesOf is a chain view holding the given transactions.
 type treesOf []*transaction.Transaction
 

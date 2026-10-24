@@ -37,8 +37,10 @@ import (
 //     and its parent, parents first; a chain's first token takes its
 //     parent, the chain tree, from the chain view (BSTORE_ASSET_URL or
 //     BSTORE_CHAIN), since no host keeps one;
-//  2. named: for each served chain, every entry its held tokens name that
-//     the host does not hold (entry);
+//  2. named: for each served chain, every entry its current map holds, or a
+//     token first seen inside the keep floor less a day names, that the
+//     host does not hold (entry): an entry only older tokens name has left
+//     every host by its floor;
 //  3. unanchored: for each served chain's owner and latest writers, the
 //     peer's unanchored entries, page by page (unanchored);
 //  4. mined: the advertisements of each root the held entries name (ads),
@@ -246,7 +248,7 @@ func (s *Service) replayNamed(b string) replay.Phase {
 			return sortedKeys(keys), nil
 		},
 		Do: func(ctx context.Context, w *replay.Walk, item string, page *string) (bool, error) {
-			for _, c := range s.unheldNamed(b+"|"+item, *page) {
+			for _, c := range s.unheldNamed(ctx, b+"|"+item, *page) {
 				h, err := chainhash.NewHash(mustHex(c))
 				if err != nil {
 					continue
@@ -267,18 +269,40 @@ func mustHex(s string) []byte {
 	return b
 }
 
-// unheldNamed are the commitments a served chain's held tokens name whose
-// entry the host does not hold, ascending, after after.
-func (s *Service) unheldNamed(key, after string) []string {
+// unheldNamed are the commitments a served chain still keeps named whose
+// entry the host does not hold, ascending, after after: those its current
+// map holds, and those a token first seen inside the keep floor less a day
+// names (in its changes or consumed). An entry only older tokens name has
+// been replaced or removed for longer than the floor keeps it, on every host,
+// so asking for it every walk would ask for nothing, ever more often.
+func (s *Service) unheldNamed(ctx context.Context, key, after string) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	v := s.chains[key]
 	if v == nil {
 		return nil
 	}
+	wanted := map[string]bool{}
+	cutoff := s.nowMs() - s.keep + day
+	for _, t := range v.byTxid {
+		if t.at < cutoff || t.rec == nil {
+			continue
+		}
+		for _, ch := range t.rec.Changes {
+			wanted[hexOf(ch.C[:])] = true
+		}
+		for _, c := range t.rec.Consumed {
+			wanted[hexOf(c[:])] = true
+		}
+	}
+	if _, ms := s.view(ctx, v); ms != nil {
+		for _, c := range ms.cs {
+			wanted[hexOf(c[:])] = true
+		}
+	}
 	var out []string
-	for c := range v.named {
-		if c <= after {
+	for c := range wanted {
+		if c <= after || v.named[c] == 0 {
 			continue
 		}
 		if e, ok := s.carriers.get(c); ok && e.kind == "entry" {
