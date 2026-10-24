@@ -21,8 +21,14 @@ var AnyoneKey = func() []byte {
 }()
 
 // CheckKey holds b to the key rule of spec section 2: a canonical compressed
-// point (bcommon guard.ParsePubKey) that is not the anyone key.
+// point (bcommon guard.ParsePubKey) that is not the anyone key. A key that
+// held is remembered (keycache.go).
 func CheckKey(b []byte) (*ec.PublicKey, error) {
+	if len(b) == 33 {
+		if k, ok := checkedKeys.get([33]byte(b)); ok {
+			return k, nil
+		}
+	}
 	k, err := guard.ParsePubKey(b)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrIdentity, err)
@@ -30,6 +36,7 @@ func CheckKey(b []byte) (*ec.PublicKey, error) {
 	if bytes.Equal(b, AnyoneKey) {
 		return nil, fmt.Errorf("%w: the anyone key", ErrIdentity)
 	}
+	checkedKeys.put([33]byte(b), k)
 	return k, nil
 }
 

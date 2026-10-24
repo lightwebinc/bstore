@@ -353,7 +353,9 @@ No rule reads what the topic holds, so the manager also decides a
 submission before the host takes the topic's lock (`Precheck`, which
 overlay-engine calls where a manager has it; `storerec.Prepare`) and only
 finishes the verdict with the previous coins under the lock: the field
-signature and the key derivation leave the lock's hold.
+signature and the key derivation leave the lock's hold. Keys that held the
+key rule and locking keys derived are remembered by their bytes (4096 of
+each), since a bucket's writers sign many records.
 To drop an object the module deletes its output and asks the host to forget
 the applied transaction (`DeleteOutput`, `DeleteAppliedTransaction` on the
 storage a restore is handed), so the same object offered again is decided

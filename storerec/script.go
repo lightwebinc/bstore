@@ -73,13 +73,26 @@ func FundingScript(key *ec.PublicKey) []byte { return pushdrop.Script(key, [][]b
 func HoldScript(key *ec.PublicKey) []byte { return pushdrop.Script(key, [][]byte{TagHold}, nil) }
 
 // LockingKey is the key an identity's output is locked to under d, derived
-// from the identity key alone (counterparty anyone).
+// from the identity key alone (counterparty anyone). A key derived is
+// remembered (keycache.go).
 func LockingKey(d pushdrop.Derivation, identity []byte) (*ec.PublicKey, error) {
+	if len(identity) != 33 {
+		return nil, ErrIdentity // guard.ParsePubKey's first rule
+	}
+	ref := lockingRef{d: d, id: [33]byte(identity)}
+	if k, ok := lockingKeys.get(ref); ok {
+		return k, nil
+	}
 	pub, err := guard.ParsePubKey(identity)
 	if err != nil {
 		return nil, ErrIdentity
 	}
-	return d.ExpectedLockingKey(pub)
+	k, err := d.ExpectedLockingKey(pub)
+	if err != nil {
+		return nil, err
+	}
+	lockingKeys.put(ref, k)
+	return k, nil
 }
 
 func mustLockingKey(d pushdrop.Derivation, identity []byte) *ec.PublicKey {
