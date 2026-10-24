@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bsv-blockchain/go-sdk/transaction/chaintracker"
@@ -36,10 +37,11 @@ type Mounted struct {
 	Module bmodule.Module
 	LS     *Service
 	// Front is the terms route, when configured.
-	Front  *Front
-	config *Config
-	host   bmodule.Host
-	ledger *termsroute.Ledger
+	Front   *Front
+	config  *Config
+	host    bmodule.Host
+	ledger  *termsroute.Ledger
+	journal Journal
 }
 
 // Front is the terms route and where it listens.
@@ -82,6 +84,12 @@ func Mount(host bmodule.Host, c *Config, overlayTopics []string, journal Journal
 		m.Preset("bstore_dropped_total", map[string]string{"why": why})
 	}
 	m.Preset("bstore_retractions_total", nil)
+	m.Preset("bstore_journal_lines_total", nil)
+	m.Preset("bstore_journal_wait_seconds_total", nil)
+	for _, result := range []string{"ok", "error"} {
+		m.Preset("bstore_journal_syncs_total", map[string]string{"result": result})
+	}
+	m.Preset("bstore_journal_sync_seconds_total", nil)
 	priced := map[string]bool{}
 	for name, p := range c.Prices {
 		if p > 0 {
@@ -100,6 +108,8 @@ func Mount(host bmodule.Host, c *Config, overlayTopics []string, journal Journal
 		if err != nil {
 			return nil, err
 		}
+		fj.SyncEvery = c.JournalSync
+		fj.OnSync = journalSyncs(host)
 		journal = fj
 	}
 	ls, err := NewService(Options{Buckets: c.Buckets, Served: c.Served, Host: host, Journal: journal, Priced: priced, KeepDays: c.KeepDays,
@@ -148,7 +158,7 @@ func Mount(host bmodule.Host, c *Config, overlayTopics []string, journal Journal
 		topics[t] = tm
 		mountedBlobs = append(mountedBlobs, t)
 	}
-	out := &Mounted{Module: bmodule.Module{Topics: topics, Lookups: map[string]bmodule.LookupService{storerec.LookupService: ls}}, LS: ls, config: c, host: host}
+	out := &Mounted{Module: bmodule.Module{Topics: topics, Lookups: map[string]bmodule.LookupService{storerec.LookupService: ls}}, LS: ls, config: c, host: host, journal: journal}
 	var gate *termsroute.Gate
 	if c.Listen != "" {
 		var receiver termsroute.Receiver
@@ -200,10 +210,50 @@ func Mount(host bmodule.Host, c *Config, overlayTopics []string, journal Journal
 	if supplied {
 		headersLine = "supplied"
 	}
+	journalLine := "each line"
+	if c.JournalSync > 0 {
+		journalLine = fmt.Sprintf("every %s", c.JournalSync)
+	}
 	host.Log("bstore module mounted", map[string]any{"topics": strings.Join(recordNames, ","), "blobs": blobLine, "lookup": storerec.LookupService,
-		"served": len(c.Served), "headers": headersLine, "floors": fmt.Sprintf("keep %dd, pending %dd, other %dh", ls.keep/day, ls.pending/day, ls.other/hour),
+		"served": len(c.Served), "headers": headersLine, "floors": fmt.Sprintf("keep %dd, pending %dd, other %dh", ls.keep/day, ls.pending/day, ls.other/hour), "journal_sync": journalLine,
 		"terms": terms, "priced": orNone(pricedNames), "sessions": sessions, "handshakes": handshakes, "responses": responses, "payments": payments, "build": Build})
 	return out, nil
+}
+
+// journalSyncs counts the rows journal's timed fsyncs and logs the first
+// failure of a run of them and the recovery after it.
+func journalSyncs(host bmodule.Host) func(lines int, took time.Duration, err error) {
+	var mu sync.Mutex
+	failing := false
+	return func(lines int, took time.Duration, err error) {
+		m := host.Metrics()
+		m.Inc("bstore_journal_sync_seconds_total", nil, took.Seconds())
+		result := "ok"
+		if err != nil {
+			result = "error"
+		}
+		m.Inc("bstore_journal_syncs_total", map[string]string{"result": result}, 1)
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case err != nil && !failing:
+			failing = true
+			host.Log("ls_bstore could not sync the journal; its lines stay pending and the sync is tried again", map[string]any{"lines": lines, "err": err.Error()})
+		case err == nil && failing:
+			failing = false
+			host.Log("ls_bstore journal synced again", map[string]any{"lines": lines})
+		}
+	}
+}
+
+// Close flushes the rows journal and closes it (Start does when its context
+// ends). A host that stops without it leaves at most the last sync window's
+// lines in the page cache: written, not yet on disk.
+func (m *Mounted) Close() error {
+	if c, ok := m.journal.(interface{ Close() error }); ok {
+		return c.Close()
+	}
+	return nil
 }
 
 func orNone(a []string) string {
@@ -216,8 +266,10 @@ func orNone(a []string) string {
 // Start serves the terms route (when configured) until ctx ends, and runs
 // the background tick: drops still waiting every FlushEvery, the payment
 // watch every WatchEvery, and retention once the index is restored and
-// every PruneEvery after. It returns when ctx ends.
+// every PruneEvery after. It returns when ctx ends, after closing the rows
+// journal (Close).
 func (m *Mounted) Start(ctx context.Context) error {
+	defer func() { _ = m.Close() }()
 	go func() {
 		var pruned, watched time.Time
 		t := time.NewTicker(FlushEvery)

@@ -607,8 +607,16 @@ func (s *Service) apply(l *Line) {
 	}
 }
 
+// write appends a journal line and applies it. The time Append takes is
+// spent under the service's lock (bstore_journal_wait_seconds_total): the
+// write, and the fsync too when the journal syncs every line.
 func (s *Service) write(l Line) {
-	if err := s.journal.Append(l); err != nil {
+	start := time.Now()
+	err := s.journal.Append(l)
+	m := s.host.Metrics()
+	m.Inc("bstore_journal_wait_seconds_total", nil, time.Since(start).Seconds())
+	m.Inc("bstore_journal_lines_total", nil, 1)
+	if err != nil {
 		s.host.Log("ls_bstore could not write the journal", map[string]any{"kind": l.K, "err": err.Error()})
 	}
 	s.apply(&l)

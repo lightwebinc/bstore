@@ -264,8 +264,11 @@ stays in storage, unanswered, and is a duplicate when offered again.
   input outpoints of admitted sweeps, the retraction marks, the first sight
   of every carrier, token and mined output, and which held outputs a later
   transaction spent (storage hands a restore its unspent outputs only).
-  Each line is flushed to disk before the admission it records completes;
-  retention rewrites the file as the state it holds (a new file, flushed,
+  Each line is in the file before the admission it records completes. The
+  TypeScript module flushes it to disk then too; the Go module flushes the
+  lines of each `BSTORE_JOURNAL_SYNC_MS` window together (below), so a
+  process that dies loses none and a power loss at most that window.
+  Retention rewrites the file as the state it holds (a new file, flushed,
   then renamed over the old one). It names outpoints, txids, commitments
   and keys, never a record's contents. A last line cut short by a crash is
   dropped; any other line that does not parse stops the host, because a
@@ -332,10 +335,15 @@ route (bcommon's `termsroute`, the Go twin of the shared host module) with
 the same routes, codes, prices, metrics and ledger lines (`payments.jsonl`,
 the payee layout). It reads the same `BSTORE_` variables as the table above
 and refuses the same mistakes; on a Go host the terms route takes port 8294
-(`BSTORE_LISTEN`), beside the TypeScript host's 8094. Its admission rules
-are `storerec.Admit`, its folds and map answers storerec's, and its tests
-drive it with the transaction vectors and the TypeScript module's own
-cases. A host hands the topic manager the submission's bytes exactly as
+(`BSTORE_LISTEN`), beside the TypeScript host's 8094. It reads one more:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `BSTORE_JOURNAL_SYNC_MS` | 100 | the journal's group commit window, 0 to 60000 milliseconds. Each line is written to `bstore-rows.jsonl` before the admission completes and the lines of a window are flushed to disk together by a timer, off the lookup service's lock; closing the module and a rewrite flush too. A process that dies loses nothing (the lines are in the page cache); a power loss loses at most the window, the bound the engine's own store keeps (`OVERLAY_STORE_WAL_SYNC_MS`). 0 flushes each line before the admission completes, as the TypeScript module does, and costs one fsync of every admission that writes a line, under the lock |
+
+Its admission rules are `storerec.Admit`, its folds and map answers
+storerec's, and its tests drive it with the transaction vectors and the
+TypeScript module's own cases. A host hands the topic manager the submission's bytes exactly as
 they arrived (`module.WithSubmission`): the rules decide on the wire form.
 To drop an object the module deletes its output and asks the host to forget
 the applied transaction (`DeleteOutput`, `DeleteAppliedTransaction` on the
@@ -353,7 +361,13 @@ Counters: `bstore_admitted_total{kind}`, `bstore_admitted_repeats_total{kind}`,
 (paid questions by what the host did: `requested`, `fast`, `hold` or
 `refuse`, with the reason; [Payment acceptance](#payment-acceptance)),
 `bstore_payment_events_total{kind}` (`confirmed`, `double-spent`, `refused`,
-`unmined`), `bstore_sessions_evicted_total{why}`. Gauges:
+`unmined`), `bstore_sessions_evicted_total{why}`, and from the Go module
+alone the journal's: `bstore_journal_lines_total`,
+`bstore_journal_wait_seconds_total` (the time the lookup service spent
+writing lines under its lock, the fsync included when
+`BSTORE_JOURNAL_SYNC_MS` is 0), `bstore_journal_syncs_total{result}` (`ok`,
+`error`) and `bstore_journal_sync_seconds_total` (the timed fsyncs, off the
+lock). Gauges:
 `bstore_payments_unmined`, `bstore_buckets`,
 `bstore_tokens`, `bstore_tokens_pending`, `bstore_entries`,
 `bstore_outcomes`, `bstore_fronts`, `bstore_advertisements`,

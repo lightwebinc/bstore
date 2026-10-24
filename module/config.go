@@ -14,8 +14,9 @@
 // BSTORE_MAX_SWEEP_INPUTS, BSTORE_LISTEN, BSTORE_PRICES, BSTORE_PAYEE_KEY,
 // BSTORE_SESSIONS, BSTORE_SESSION_TTL, the handshake and response budgets,
 // BSTORE_ARCADE_URL, BSTORE_ASSET_URL, BSTORE_CHAIN, BSTORE_WOC_KEY and the
-// BSTORE_ACCEPT_* rule. Every mistake is an error, and the host refuses to
-// start.
+// BSTORE_ACCEPT_* rule, and one of its own, BSTORE_JOURNAL_SYNC_MS (the rows
+// journal's group commit window). Every mistake is an error, and the host
+// refuses to start.
 package module
 
 import (
@@ -44,6 +45,15 @@ const (
 	FloorOtherHours  = 24
 )
 
+// The rows journal's group commit window (BSTORE_JOURNAL_SYNC_MS): lines
+// are written at once and fsynced together this often, off the lookup
+// service's lock; 0 fsyncs each line before the admission goes on. The
+// default and the bound are the engine store's (OVERLAY_STORE_WAL_SYNC_MS).
+const (
+	DefaultJournalSyncMs = 100
+	MaxJournalSyncMs     = 60_000
+)
+
 // DefaultListenPort is the terms route's port on the Go host. The
 // TypeScript host's is 8094; the Go engine runs beside it on the same
 // hosts until a cutover, so the Go route takes its own.
@@ -61,6 +71,9 @@ type Config struct {
 	OtherHours     int
 	MaxBEEF        int
 	MaxSweepInputs int
+	// JournalSync is the rows journal's group commit window; 0 syncs every
+	// line.
+	JournalSync time.Duration
 	// Listen is the terms route's host:port; empty for none.
 	Listen   string
 	Prices   map[string]uint64
@@ -255,6 +268,14 @@ func ParseConfig(getenv func(string) string) (*Config, error) {
 			return nil, err
 		}
 	}
+	syncMs, err := integer("BSTORE_JOURNAL_SYNC_MS", getenv("BSTORE_JOURNAL_SYNC_MS"), DefaultJournalSyncMs, 0)
+	if err != nil {
+		return nil, err
+	}
+	if syncMs > MaxJournalSyncMs {
+		return nil, fmt.Errorf("BSTORE_JOURNAL_SYNC_MS: %d is over %d", syncMs, MaxJournalSyncMs)
+	}
+	c.JournalSync = time.Duration(syncMs) * time.Millisecond
 	if c.Prices, err = termsroute.ParsePrices(getenv("BSTORE_PRICES"), Classes, "BSTORE_PRICES"); err != nil {
 		return nil, err
 	}
