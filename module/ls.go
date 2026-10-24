@@ -18,6 +18,7 @@ import (
 	"github.com/lightwebinc/bcommon/guard"
 	bmodule "github.com/lightwebinc/bcommon/module"
 	"github.com/lightwebinc/bcommon/pushdrop"
+	"github.com/lightwebinc/bcommon/replay"
 
 	"github.com/lightwebinc/bstore/storerec"
 )
@@ -266,6 +267,12 @@ type Options struct {
 	Headers                           chaintracker.ChainTracker
 	// Now is the host's clock; time.Now when nil.
 	Now func() time.Time
+	// Trees is the chain view a replay reads a chain's first token's parent
+	// from (Replay); nil when the host has none.
+	Trees replay.TreeSource
+	// MaxBEEF and MaxSweepInputs are the topic managers' bounds, which a
+	// replay holds a token it assembles to; storerec's defaults when zero.
+	MaxBEEF, MaxSweepInputs int
 }
 
 // Service is ls_bstore: one lookup service for every bucket a host carries
@@ -315,6 +322,9 @@ type Service struct {
 	other         int64
 	headers       chaintracker.ChainTracker
 	now           func() time.Time
+	// What a replay needs beyond the index (Replay).
+	trees             replay.TreeSource
+	maxBEEF, maxSweep int
 
 	// What the journal holds.
 	rows      *omap[rowEntry]
@@ -397,7 +407,8 @@ func NewService(o Options) (*Service, error) {
 		o.Journal = &MemoryJournal{}
 	}
 	s := &Service{buckets: map[string]bool{}, served: map[string]bool{}, servedBuckets: map[string]bool{}, host: o.Host, journal: o.Journal,
-		priced: o.Priced, keep: keep * day, pending: pend * day, other: other * hour, headers: o.Headers, now: o.Now, warned: map[string]bool{}}
+		priced: o.Priced, keep: keep * day, pending: pend * day, other: other * hour, headers: o.Headers, now: o.Now, warned: map[string]bool{},
+		trees: o.Trees, maxBEEF: o.MaxBEEF, maxSweep: o.MaxSweepInputs}
 	for _, b := range o.Buckets {
 		s.buckets[b] = true
 	}

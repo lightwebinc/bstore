@@ -350,6 +350,44 @@ the applied transaction (`DeleteOutput`, `DeleteAppliedTransaction` on the
 storage a restore is handed), so the same object offered again is decided
 afresh; a storage that cannot forget leaves it a duplicate.
 
+### Ordered replay on a Go host
+
+The Go module repairs its own host from a sibling host by replay (spec
+section 12.6), never by an unordered synchronization of unspent outputs: its
+lookup service is a bcommon `module.Replayer`, which a Go host that carries
+the hook (overlay-engine 0.9 and later) asks on its catch-up schedule, once
+a round for each `tm_bstore_` topic and each peer. A walk asks the peer's
+`ls_bstore` only free classes and answers the objects to submit, which the
+host admits through its ordinary path, in five phases:
+
+1. tokens: for every chain of the bucket the host holds a token of or
+   serves, `bucket`, then `bucket-seq` at each seq up to the peer's latest
+   at which the host holds no token; each token goes in the BEEF of the
+   token and its parent (minimal paths, held to `storerec.Admit` first),
+   after its parent, never without it. A chain's first token takes its
+   parent, the chain tree, from the node view (`BSTORE_ASSET_URL`, else
+   `BSTORE_CHAIN`); without one, or once the node no longer serves a fully
+   spent tree, the chain is counted as a gap and waits for the owner's
+   `fill`;
+2. named: `entry` for every entry a served chain's held tokens name that
+   the host does not hold;
+3. unanchored: `unanchored` page by page for each served chain's owner and
+   latest writers;
+4. mined: `ads` for each root a held entry names, `hold` for each hold
+   output a held entry names and the host lacks;
+5. attached: `fronts` and `outcomes-of` for each advertiser the host holds
+   an advertisement of, and `sweep` for each held carrier's funding
+   outpoint.
+
+Replay never lengthens a floor: an entry no token names is replayed only
+while dated within the pending floor less a day, an outcome or a statement
+within the 24-hour floor less an hour, an advertisement or a hold output
+within 4032 blocks of the tip, and nothing on a funding outpoint the host
+retracted or gave to another carrier. What no free class leads to is not
+replayed: a sweep of a carrier the host never held (it retracts nothing
+here), an entry of a chain the host does not serve, a chain the host holds
+nothing of and does not serve.
+
 ## Metrics
 
 Counters: `bstore_admitted_total{kind}`, `bstore_admitted_repeats_total{kind}`,
@@ -399,7 +437,8 @@ bucket, owner, id, `seq`, txid and reason; a served map that is incomplete
 5. Fill the bucket by replay: tokens (each with its parent, from
    `bucket-seq` of a sibling host, the first with the chain tree from the
    owner), entries, advertisements, hold outputs, outcomes, statements and
-   sweeps, in any order.
+   sweeps, in any order. A Go host with peers does this itself (above),
+   but for a chain's first token where no node view gives its chain tree.
 
 ### Day to day
 

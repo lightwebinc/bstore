@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/lightwebinc/bcommon/headers"
 	bmodule "github.com/lightwebinc/bcommon/module"
+	"github.com/lightwebinc/bcommon/nodeapi"
+	"github.com/lightwebinc/bcommon/replay"
 	"github.com/lightwebinc/bcommon/termsroute"
 
 	"github.com/lightwebinc/bstore/storerec"
@@ -48,6 +51,21 @@ type Mounted struct {
 type Front struct {
 	*termsroute.Front
 	Addr string
+}
+
+// chainView is the configured node view as a replay's chain source (the
+// parent of a chain's first token, which no host keeps): the node's asset
+// API (BSTORE_ASSET_URL), else WhatsOnChain (BSTORE_CHAIN), else none.
+func chainView(a termsroute.AcceptConfig) replay.TreeSource {
+	switch {
+	case a.AssetURL != "":
+		return &nodeapi.Asset{Base: a.AssetURL, Client: &http.Client{Timeout: 30 * time.Second}}
+	case a.Chain != "":
+		if woc, err := nodeapi.NewWoC(a.Chain, a.WocKey); err == nil {
+			return woc
+		}
+	}
+	return nil
 }
 
 // Mount builds the module for c. overlayTopics is OVERLAY_TOPICS, when
@@ -113,7 +131,8 @@ func Mount(host bmodule.Host, c *Config, overlayTopics []string, journal Journal
 		journal = fj
 	}
 	ls, err := NewService(Options{Buckets: c.Buckets, Served: c.Served, Host: host, Journal: journal, Priced: priced, KeepDays: c.KeepDays,
-		PendingDays: c.PendingDays, OtherHours: c.OtherHours, Headers: hdrs, Now: now})
+		PendingDays: c.PendingDays, OtherHours: c.OtherHours, Headers: hdrs, Now: now, Trees: chainView(c.Accept),
+		MaxBEEF: c.MaxBEEF, MaxSweepInputs: c.MaxSweepInputs})
 	if err != nil {
 		return nil, err
 	}
