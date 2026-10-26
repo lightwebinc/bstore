@@ -70,7 +70,7 @@ func (l *linker) linked(id string) (*transaction.Transaction, error) {
 func cmdSend(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("send", flag.ExitOnError)
 	root := fs.String("root", "", "corpus root")
-	prop := fs.String("propagation", "http://10.10.10.120:20833", "Teranode propagation base URL (POST /txs, extended format)")
+	prop := fs.String("propagation", "http://10.10.11.120:20833", "Teranode propagation base URL (POST /txs, extended format)")
 	batch := fs.Int("batch", 500, "transactions per POST")
 	rate := fs.Int("rate", 2000, "transactions a second at most")
 	from := fs.Int("from-level", 0, "start at this level (a resumed send)")
@@ -154,7 +154,7 @@ func post(ctx context.Context, c *http.Client, url string, body []byte) (int, st
 func cmdProve(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("prove", flag.ExitOnError)
 	root := fs.String("root", "", "corpus root")
-	asset := fs.String("asset", "http://10.10.10.120:20090", "Teranode asset API")
+	asset := fs.String("asset", "http://10.10.11.120:20090", "Teranode asset API")
 	par := fs.Int("par", 48, "concurrent proof requests")
 	wait := fs.Duration("wait", 30*time.Minute, "give up after this long without progress")
 	_ = fs.Parse(args)
@@ -420,7 +420,7 @@ func blockPaths(ctx context.Context, a *nodeapi.Asset, c *http.Client, height ui
 func cmdProveLocal(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("prove-local", flag.ExitOnError)
 	root := fs.String("root", "", "corpus root")
-	asset := fs.String("asset", "http://10.10.10.120:20090", "Teranode asset API")
+	asset := fs.String("asset", "http://10.10.11.120:20090", "Teranode asset API")
 	from := fs.Uint("from", 0, "first block height to read (default: the funding's)")
 	to := fs.Uint("to", 0, "last block height (default: the tip)")
 	_ = fs.Parse(args)

@@ -535,7 +535,7 @@ func (h *assetHeaders) CurrentHeight(ctx context.Context) (uint32, error) {
 func cmdCheck(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("check", flag.ExitOnError)
 	set := fs.String("set", "", "set directory")
-	asset := fs.String("asset", "http://10.10.10.120:20090", "Teranode asset API (headers)")
+	asset := fs.String("asset", "http://10.10.11.120:20090", "Teranode asset API (headers)")
 	n := fs.Int("n", 200, "objects checked per shape, spread across the file")
 	_ = fs.Parse(args)
 	var m manifest
