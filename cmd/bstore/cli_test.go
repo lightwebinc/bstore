@@ -160,10 +160,10 @@ func TestPayee(t *testing.T) {
 
 // TestHostKey: fill names each host in an outbox id, and the id is a file
 // name: no slash, and hosts whose URLs share their first characters (the
-// lab's "http://192.1...") are told apart, so a fill to one does not stand
+// "http://192.0..." below) are told apart, so a fill to one does not stand
 // in for a fill to another.
 func TestHostKey(t *testing.T) {
-	hosts := []string{"http://192.168.110.22:8080", "http://192.168.110.22:8280", "http://192.168.110.23:8080", "https://h.example/"}
+	hosts := []string{"http://192.0.2.22:8080", "http://192.0.2.22:8280", "http://192.0.2.23:8080", "https://h.example/"}
 	seen := map[string]string{}
 	for _, h := range hosts {
 		k := hostKey(h)

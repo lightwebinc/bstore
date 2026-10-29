@@ -49,9 +49,11 @@ Anyone may buy one, and publish the outcome for everyone to read.
 the provider by anyone (a reader above all), extends it with a successor
 that spends the old one.
 
-**Incumbent UHRP hosts join unchanged** through a bridge that speaks their
-own HTTP routes: the bridge is the market front, the incumbent keeps the
-bytes and is paid by its own key.
+**Existing UHRP hosts join through a bridge** that speaks their own HTTP
+routes: the bridge is the market front, the incumbent keeps the bytes and is
+paid by its own key. Current uhrp-server-basic releases need a one-line fix
+to commit CHIRP roots; the bridge checks before it pays
+([bstore-bridge](https://github.com/lightwebinc/bstore-bridge)).
 
 ## 2. What it protects, and what it does not
 

@@ -15,10 +15,6 @@ the row. The registry rows of section 1 belong in bcommon's registry
 they are registered there before anything is published under them, and this
 repository does not edit that registry.
 
-Public copy: spec sections 7.7 and 21's reserved tag `st` `0x04` describe a
-later output that pays on a challenge proof. No public document describes
-them, beyond "reserved", until the owner's patent check clears them.
-
 ## 1. Registry entries
 
 Checked against the registered prefixes (`bf`, `gw`, `bl`, `bb`, `bo`, `se`,
@@ -134,7 +130,7 @@ registered names; no basket starts with `bstore`.
 | Outcome admission | the answerer's signature checked at admission for outcomes 1 and 2 (`response-signature`) | SIGNED (vectors) |
 | Outcome attribution | to the answerer; to the provider only when they are one key; unretrievable to the provider's URL | SIGNED |
 | Front statement keys | 0 `magic`, 1 `bucket`, 2 `front`, 3 `advertiser`, 4 `url`, 5 `created`; 6 and above unknown; 2,048 bytes | SIGNED |
-| Front statement url | spec section 8.2: the lexical rule, and the WHATWG parse as the advertisement check runs it, its host ASCII after percent-decoding with no `xn--` label (owner ruling, 2026-10-05; row C7's non-empty authority follows from it) | SIGNED (vectors) |
+| Front statement url | spec section 8.2: the lexical rule, and the WHATWG parse as the advertisement check runs it, its host ASCII after percent-decoding with no `xn--` label (row C7's non-empty authority follows from it) | SIGNED (vectors) |
 
 ## 9. Holding and settlement
 

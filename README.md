@@ -16,7 +16,7 @@ Object storage as a market on Bitcoin. A writer publishes an object once;
 storage providers compete to hold it for a bounty; a reader proves every
 byte it gets. Readers and writers may speak S3.
 
-> **Frozen (2026-10-21).** `host/src` takes bug fixes only; new behavior goes to the Go core. Its Go twin, `module/`, is what the Go overlay engine mounts ([docs/host.md](docs/host.md#the-go-module)). Design: `1bsv-ops` `docs/integration/overlay/go-engine-migration.md`.
+> The TypeScript host module under `host/` is frozen: bug fixes only. New behavior goes to its Go counterpart under `module/`, for Go overlay hosts ([docs/host.md](docs/host.md#the-go-module)). The `bstore-host` image runs the TypeScript module.
 
 ## How it works
 
@@ -33,9 +33,10 @@ byte it gets. Readers and writers may speak S3.
 - **The bucket proves its own listing.** The owner's chain of mined tokens
   commits to the whole key map, so a reader proves what a key names, that a
   key is absent and that a listing page is complete.
-- **Incumbent UHRP hosts join unchanged** through a bridge
+- **Existing UHRP hosts join through a bridge**
   ([bstore-bridge](https://github.com/lightwebinc/bstore-bridge)) that
-  speaks their HTTP routes.
+  speaks their HTTP routes. Current uhrp-server-basic releases need a
+  one-line fix to commit CHIRP roots; the bridge checks before it pays.
 - **Honest about limits.** Availability is a market outcome, keys are not
   copies, and enforcement is reputation in this version.
 

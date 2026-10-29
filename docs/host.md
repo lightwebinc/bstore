@@ -353,7 +353,7 @@ TypeScript module's own cases. A host hands the topic manager the submission's b
 they arrived (`module.WithSubmission`): the rules decide on the wire form.
 No rule reads what the topic holds, so the manager also decides a
 submission before the host takes the topic's lock (`Precheck`, which
-overlay-engine calls where a manager has it; `storerec.Prepare`) and only
+a Go host calls where a manager has it; `storerec.Prepare`) and only
 finishes the verdict with the previous coins under the lock: the field
 signature and the key derivation leave the lock's hold. Keys that held the
 key rule and locking keys derived are remembered by their bytes (4096 of
@@ -368,7 +368,7 @@ afresh; a storage that cannot forget leaves it a duplicate.
 The Go module repairs its own host from a sibling host by replay (spec
 section 12.6), never by an unordered synchronization of unspent outputs: its
 lookup service is a bcommon `module.Replayer`, which a Go host that carries
-the hook (overlay-engine 0.9 and later) asks on its catch-up schedule, once
+the hook asks on its catch-up schedule, once
 a round for each `tm_bstore_` topic and each peer. A walk asks the peer's
 `ls_bstore` only free classes and answers the objects to submit, which the
 host admits through its ordinary path, in five phases:

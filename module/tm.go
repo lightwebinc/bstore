@@ -165,7 +165,7 @@ type precheckKey struct{ t *RecordsTopicManager }
 // every rule but the range of its previous coins (storerec.Prepare) and
 // returns ctx carrying the verdict, which Admit finishes under the lock.
 // No rule reads what the topic holds, so a host that runs this before it
-// takes the topic's lock (overlay-engine's pipeline does) holds the lock
+// takes the topic's lock (a Go host's admission pipeline can) holds the lock
 // only for what the topic holds. It counts and logs nothing: Admit does,
 // when the host shows it the transaction.
 func (t *RecordsTopicManager) Precheck(ctx context.Context) context.Context {
