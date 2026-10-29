@@ -30,15 +30,29 @@ import (
 // tm_bstoreblob_<b> takes piece carriers; tm_bstore_<b> takes entry
 // carriers (and passes over everything else a records topic carries). The
 // answer is the engine's: per topic, the outputs taken.
+//
+// A piece is checked before any policy of this provider's, on any blob
+// topic, served or not, and answered as an engine answers: a carrier that
+// breaks a rule is refused (400, nothing taken on any topic), and one whose
+// funding tree is not yet in this provider's headers is a retry (503). A
+// valid piece is answered 200 whether or not this provider keeps it, with a
+// `refused` reason when it does not. So an overlay bridge whose facade
+// routes a blob topic here publishes exactly the valid pieces, and a bridge
+// feeding this provider from the plane retries a header lag and never a
+// refusal.
 func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		auth104.Write(w, auth104.Error(http.StatusMethodNotAllowed, "ERR_METHOD", "submit is a POST"))
 		return
 	}
-	if ok, retry := p.limits.submits.Take(auth104.AddressKey(p.clientAddr(r))); !ok {
-		p.metrics.inc("bstore_provider_submits_total", "result=limited")
-		auth104.Write(w, auth104.Error(http.StatusTooManyRequests, "ERR_RATE_LIMITED", "too many submissions; try again later", "Retry-After", strconv.Itoa(retry)))
-		return
+	// A configured feeder (the local bridge) skips the per-address budgets.
+	feeder := p.feeder(r)
+	if !feeder {
+		if ok, retry := p.limits.submits.Take(auth104.AddressKey(p.clientAddr(r))); !ok {
+			p.metrics.inc("bstore_provider_submits_total", "result=limited")
+			auth104.Write(w, auth104.Error(http.StatusTooManyRequests, "ERR_RATE_LIMITED", "too many submissions; try again later", "Retry-After", strconv.Itoa(retry)))
+			return
+		}
 	}
 	topics, err := parseTopics(r.Header.Get("x-topics"))
 	if err != nil {
@@ -51,12 +65,14 @@ func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 			bound = storerec.MaxPieceBEEF
 		}
 	}
-	addr := auth104.AddressKey(p.clientAddr(r))
-	if !p.limits.inflight.enter(addr) {
-		auth104.Write(w, auth104.Error(http.StatusTooManyRequests, "ERR_RATE_LIMITED", "too many submissions in flight from this address", "Retry-After", "1"))
-		return
+	if !feeder {
+		addr := auth104.AddressKey(p.clientAddr(r))
+		if !p.limits.inflight.enter(addr) {
+			auth104.Write(w, auth104.Error(http.StatusTooManyRequests, "ERR_RATE_LIMITED", "too many submissions in flight from this address", "Retry-After", "1"))
+			return
+		}
+		defer p.limits.inflight.leave(addr)
 	}
-	defer p.limits.inflight.leave(addr)
 	if r.ContentLength > bound {
 		auth104.Write(w, auth104.Error(http.StatusRequestEntityTooLarge, "ERR_TOO_LARGE", "the submission is over this topic's bound"))
 		return
@@ -84,9 +100,28 @@ func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		auth104.Write(w, auth104.Error(http.StatusRequestEntityTooLarge, "ERR_TOO_LARGE", "the submission is over this topic's bound"))
 		return
 	}
+	pieces := map[string]*storerec.PieceCarrier{}
+	for _, t := range topics {
+		bucket, ok := strings.CutPrefix(t, storerec.BlobPrefix)
+		if !ok {
+			continue
+		}
+		pc, err := storerec.CheckPieceCarrier(r.Context(), beef, bucket, p.hc)
+		if err != nil {
+			code, result := http.StatusBadRequest, "result=invalid"
+			hdr := []string{}
+			if errors.Is(err, storerec.ErrUnmined) {
+				code, result, hdr = http.StatusServiceUnavailable, "result=unmined", []string{"Retry-After", "2"}
+			}
+			p.metrics.inc("bstore_provider_submits_total", result)
+			writeEngineError(w, code, "piece: "+why(err), hdr...)
+			return
+		}
+		pieces[t] = pc
+	}
 	out := map[string]any{}
 	for _, t := range topics {
-		admitted, why := p.take(r.Context(), t, beef)
+		admitted, why := p.take(r.Context(), t, beef, pieces[t])
 		res := map[string]any{"outputsToAdmit": admitted, "coinsToRetain": []int{}}
 		if why != "" {
 			res["refused"] = why
@@ -141,16 +176,19 @@ func writerAllowed(b *BucketConfig, writer []byte) bool {
 }
 
 // take applies one submission to one topic; it returns the outputs taken
-// and, when nothing was, why.
-func (p *Provider) take(ctx context.Context, topic string, beef []byte) ([]int, string) {
+// and, when nothing was, why. pc is the piece carrier already checked on a
+// blob topic (handleSubmit checks every piece first), or nil.
+func (p *Provider) take(ctx context.Context, topic string, beef []byte, pc *storerec.PieceCarrier) ([]int, string) {
 	b, blob := p.bucketOf(topic)
 	if b == nil {
 		return []int{}, "not a topic of this provider's"
 	}
 	if blob {
-		pc, err := storerec.CheckPieceCarrier(ctx, beef, b.Bucket, p.hc)
-		if err != nil {
-			return []int{}, "piece: " + why(err)
+		if pc == nil {
+			var err error
+			if pc, err = storerec.CheckPieceCarrier(ctx, beef, b.Bucket, p.hc); err != nil {
+				return []int{}, "piece: " + why(err)
+			}
 		}
 		if !writerAllowed(b, pc.Piece.Writer) {
 			return []int{}, "writer: not a writer this provider takes for the bucket"
@@ -680,4 +718,15 @@ func (p *Provider) heldAnywhere(h [32]byte) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.heldObjectLocked(hex.EncodeToString(h[:]))
+}
+
+// writeEngineError answers as an overlay engine answers a refusal or a
+// retry: the status, then {"error": msg}, with any header pairs given.
+func writeEngineError(w http.ResponseWriter, code int, msg string, hdr ...string) {
+	for i := 0; i+1 < len(hdr); i += 2 {
+		w.Header().Set(hdr[i], hdr[i+1])
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }

@@ -33,6 +33,16 @@ There are two ways in, and the provider is the same behind both.
   section 12.1) and takes put entries; everything else a records topic
   carries is a host's business and is passed over. The answer is the
   engine's, per topic, with a `refused` reason when nothing was taken.
+  A piece is held to its rules first, on any blob topic, served or not,
+  before this provider's own policy, and answered as an engine answers: a
+  carrier that breaks a rule is a `400` with `{"error": "piece: <rule>"}`
+  and nothing is taken on any topic of the submission; one whose funding
+  tree is not yet in the provider's headers is a `503` with `Retry-After`;
+  a valid piece is a `200` whether or not this provider keeps it (a
+  bucket it does not serve, a writer it does not take, a full store), with
+  the `refused` reason. So an overlay bridge whose facade routes a blob
+  topic here publishes exactly the valid pieces, and a bridge that feeds
+  the provider from the plane retries a header lag and never a refusal.
 - **Unicast upload sessions** (spec section 14, BRC-167's baseline
   profile), over BRC-104: `POST <public>/chirp/v1/uploads` opens a
   session bound to the caller's identity; `PUT` (and `HEAD`)
@@ -421,7 +431,7 @@ how readers reach the bytes.
 | Signed answers | `responses_per_sec`, `response_burst` per session, taken before a request is verified |
 | Challenges | `challenges_per_buyer_per_min` with `challenge_burst` per buyer, `free_per_writer_per_min` free ones per writer, `challenge_workers` answered at once |
 | Renewals | `renewals_per_root_per_hour` per root |
-| Submissions | `submits_per_addr_per_sec`, `submit_burst` per address; 4 in flight from one address, uploads included; 64 bodies read or held at once; 16 processed at once, a slot taken only once the body is read |
+| Submissions | `submits_per_addr_per_sec`, `submit_burst` per address; 4 in flight from one address, uploads included (a connection from one of the `feeders` skips both); 64 bodies read or held at once; 16 processed at once, a slot taken only once the body is read |
 | Funding outpoints remembered | 200,000, each for seven days, recorded only for a carrier taken |
 | Reads | `object_readers` objects read at once, the slot released before the answer is written; `object_reads_per_addr_per_sec`, `object_read_burst` per address |
 | Upload sessions | `upload_sessions` open, 4 per identity and 8 per address, 60 opened an hour from one address, `upload_session_seconds` each, 65,536 objects each |
@@ -507,6 +517,7 @@ GorillaPool's public arcade.
 | `mainnet` | false | mainnet addresses, and the mainnet services by default |
 | `refuse_unmined` | false | `fund -beef` takes mined payments only |
 | `trusted_proxies` | none | CIDRs of proxies whose `X-Forwarded-For` names the client, for every per-address budget |
+| `feeders` | none | CIDRs of the plane's local feeders: the overlay bridge that hands this provider what the plane delivers. A submission whose connection comes from one skips the per-address submission budgets; the bounds on bodies held and processed still apply |
 | `metrics_listen` | none | where `/metrics` is served; it is served nowhere else |
 | `accept_threshold_sats` | 25000000 | the largest payment taken on the network's acceptance; above it, held until mined; 0 holds every payment |
 | `accept_payer_limit`, `accept_total_limit` | one and ten thresholds | satoshis taken fast and not yet mined, per payer and in all |
@@ -560,6 +571,25 @@ Behind a TLS proxy, route to the provider:
 - `/.well-known/auth` at the origin, where the SDK's clients send the
   BRC-104 handshake whatever the path of the route they call;
 - `/submit`, for the plane's listener or writers that submit directly.
+
+**On the plane.** A provider subscribes through an overlay bridge (one
+consumer subscription per site): the bridge routes the bucket's blob topic
+to the provider's `/submit`, and hands the records topic to the provider as
+an `also` target beside the site's engine, if it runs one:
+
+```text
+overlay-bridge ... \
+  -topics tm_bstore_<bucket>,tm_bstoreblob_<bucket> \
+  -engine-route 'tm_bstoreblob_*=http://127.0.0.1:8095' \
+  -engine-route 'tm_bstore_*=http://127.0.0.1:8280,also=http://127.0.0.1:8095'
+```
+
+Name the bridge's address in `feeders`. A bridge whose facade a writer
+publishes through routes the blob topic to this provider too, so the
+provider's check is what the facade publishes on: the writer's one publish
+reaches every provider subscribed to the blob topic, and the provider beside
+the facade takes it from the facade, as the plane does not deliver a site's
+own publications back to it.
 
 Behind a proxy, name it in `trusted_proxies`: otherwise every client is
 the proxy's address to every per-address budget. `/healthz` answers `ok`.

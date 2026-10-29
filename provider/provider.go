@@ -198,6 +198,7 @@ type Provider struct {
 	ln      net.Listener
 	msrv    *http.Server
 	proxies []*net.IPNet
+	feeders []*net.IPNet
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
 }
@@ -303,6 +304,10 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 	for _, c := range cfg.TrustedProxies {
 		_, n, _ := net.ParseCIDR(c)
 		p.proxies = append(p.proxies, n)
+	}
+	for _, c := range cfg.Feeders {
+		_, n, _ := net.ParseCIDR(c)
+		p.feeders = append(p.feeders, n)
 	}
 	if p.limits, err = newRouteLimits(cfg, opts.Now); err != nil {
 		return nil, err

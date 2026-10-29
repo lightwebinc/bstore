@@ -103,6 +103,12 @@ type Config struct {
 	// provider whose X-Forwarded-For names the client: every per-address
 	// budget is the client's, not the proxy's.
 	TrustedProxies []string `json:"trusted_proxies,omitempty"`
+	// Feeders are the addresses (CIDR) of the plane's local feeders: the
+	// overlay bridge that hands this provider what the plane delivers on its
+	// topics. A submission whose connection comes from one skips the
+	// per-address submission budgets, which a feed at plane speed would
+	// otherwise trip and lose pieces to; the global bounds still apply.
+	Feeders []string `json:"feeders,omitempty"`
 	// MetricsListen, when set, serves /metrics there, and only there.
 	MetricsListen string `json:"metrics_listen,omitempty"`
 	// Accept is the payment acceptance rule (accept_threshold_sats and the
@@ -402,6 +408,11 @@ func (c *Config) Check() error {
 	for _, cidr := range c.TrustedProxies {
 		if _, _, err := net.ParseCIDR(cidr); err != nil {
 			return fmt.Errorf("trusted_proxies: %q is not a CIDR", cidr)
+		}
+	}
+	for _, cidr := range c.Feeders {
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			return fmt.Errorf("feeders: %q is not a CIDR", cidr)
 		}
 	}
 	if c.TreeCount < 1 || c.TreeCount > 1023 {

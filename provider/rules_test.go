@@ -744,22 +744,21 @@ func TestPieceRefusals(t *testing.T) {
 		t.Fatal(err)
 	}
 	blob := storerec.BlobTopic(testBucket)
+	// What breaks a piece's rules is refused as an engine refuses, a 400
+	// naming the rule: on any blob topic, served or not, before any policy.
 	for name, c := range map[string]struct {
 		topic string
 		beef  []byte
 		want  string
 	}{
-		"an entry on the blob topic": {blob, put.BEEF, "piece"},
-		"another bucket's piece":     {storerec.BlobTopic("other_qzvmkwertz"), o.Pieces[0], "bucket"},
-		"not a topic of this one's":  {"tm_bstoreblob_nobody_abcdefghij", o.Pieces[0], "not a topic"},
-		"garbage":                    {blob, []byte("not beef"), "beef"},
+		"an entry on the blob topic":   {blob, put.BEEF, "shape"},
+		"another bucket's piece":       {storerec.BlobTopic("other_qzvmkwertz"), o.Pieces[0], "bucket"},
+		"a piece on an unserved topic": {"tm_bstoreblob_nobody_abcdefghij", o.Pieces[0], "bucket"},
+		"garbage":                      {blob, []byte("not beef"), "beef"},
 	} {
-		ans, err := r.writer.Submit(ctx, base, c.topic, c.beef)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if ok, why := testwriter.Admitted(ans, c.topic); ok || !strings.Contains(why, c.want) {
-			t.Errorf("%s: %v %q", name, ok, why)
+		_, err := r.writer.Submit(ctx, base, c.topic, c.beef)
+		if err == nil || !strings.Contains(err.Error(), ": 400 ") || !strings.Contains(err.Error(), "piece: "+c.want) {
+			t.Errorf("%s: %v", name, err)
 		}
 	}
 	// A writer the bucket does not take.

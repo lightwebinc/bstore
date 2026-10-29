@@ -239,6 +239,25 @@ func (p *Provider) clientAddr(r *http.Request) string {
 	return host
 }
 
+// feeder reports whether a request's connection comes from a configured
+// feeder (the connection's own address, never a forwarded one).
+func (p *Provider) feeder(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	for _, n := range p.feeders {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
 func (p *Provider) trusted(host string) bool {
 	ip := net.ParseIP(host)
 	if ip == nil {
