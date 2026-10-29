@@ -83,10 +83,10 @@ and a certificate for each provider: an advertised URL must be `https`.
 | `s3 ...` | the AWS CLI against the gateway |
 
 The images are `ghcr.io/lightwebinc/bstore` (the command and the S3
-gateway), `bstore-provider`, `bstore-host` and `bstore-devchain`. They are
-published with each release; to build them from a checkout instead: `make
-docker-build` and `make docker-build-host REFERENCE_HOST_IMAGE=<a reference
-overlay host image>`.
+gateway), `bstore-provider`, `bstore-host` and `bstore-devchain`, published
+with each release for linux/amd64 and linux/arm64. To build them from a
+checkout instead: `make docker-build` and `make docker-build-host
+REFERENCE_HOST_IMAGE=<a reference overlay host image>`.
 
 ## 2. The owner and a reader
 
