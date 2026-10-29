@@ -518,6 +518,7 @@ GorillaPool's public arcade.
 | `refuse_unmined` | false | `fund -beef` takes mined payments only |
 | `trusted_proxies` | none | CIDRs of proxies whose `X-Forwarded-For` names the client, for every per-address budget |
 | `feeders` | none | CIDRs of the plane's local feeders: the overlay bridge that hands this provider what the plane delivers. A submission whose connection comes from one skips the per-address submission budgets; the bounds on bodies held and processed still apply |
+| `feed_listen` | none | a loopback address where the local bridge submits: `POST /submit` and `/healthz` only, plain HTTP, no per-address budgets, the way a bridge reaches its engine. Every other route stays on `listen`. A non-loopback address is refused |
 | `metrics_listen` | none | where `/metrics` is served; it is served nowhere else |
 | `accept_threshold_sats` | 25000000 | the largest payment taken on the network's acceptance; above it, held until mined; 0 holds every payment |
 | `accept_payer_limit`, `accept_total_limit` | one and ten thresholds | satoshis taken fast and not yet mined, per payer and in all |
@@ -580,11 +581,12 @@ an `also` target beside the site's engine, if it runs one:
 ```text
 overlay-bridge ... \
   -topics tm_bstore_<bucket>,tm_bstoreblob_<bucket> \
-  -engine-route 'tm_bstoreblob_*=http://127.0.0.1:8095' \
-  -engine-route 'tm_bstore_*=http://127.0.0.1:8280,also=http://127.0.0.1:8095'
+  -engine-route 'tm_bstoreblob_*=http://127.0.0.1:8096' \
+  -engine-route 'tm_bstore_*=http://127.0.0.1:8280,also=http://127.0.0.1:8096'
 ```
 
-Name the bridge's address in `feeders`. A bridge whose facade a writer
+with `feed_listen: 127.0.0.1:8096` in the provider's configuration (or the
+bridge's address in `feeders`, when it reaches `listen`). A bridge whose facade a writer
 publishes through routes the blob topic to this provider too, so the
 provider's check is what the facade publishes on: the writer's one publish
 reaches every provider subscribed to the blob topic, and the provider beside

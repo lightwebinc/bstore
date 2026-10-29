@@ -111,6 +111,11 @@ type Config struct {
 	Feeders []string `json:"feeders,omitempty"`
 	// MetricsListen, when set, serves /metrics there, and only there.
 	MetricsListen string `json:"metrics_listen,omitempty"`
+	// FeedListen, when set, is a loopback address where the plane's local
+	// feeder (an overlay bridge on the same host) submits: POST /submit and
+	// /healthz only, plain HTTP, no BRC-104, and no per-address budgets, the
+	// way a bridge reaches its engine. Every other route stays on Listen.
+	FeedListen string `json:"feed_listen,omitempty"`
 	// Accept is the payment acceptance rule (accept_threshold_sats and the
 	// other accept_ keys, docs/provider.md).
 	acceptcfg.Config
@@ -413,6 +418,15 @@ func (c *Config) Check() error {
 	for _, cidr := range c.Feeders {
 		if _, _, err := net.ParseCIDR(cidr); err != nil {
 			return fmt.Errorf("feeders: %q is not a CIDR", cidr)
+		}
+	}
+	if c.FeedListen != "" {
+		host, _, err := net.SplitHostPort(c.FeedListen)
+		if err != nil {
+			return fmt.Errorf("feed_listen: %w", err)
+		}
+		if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+			return fmt.Errorf("feed_listen: %q is not a loopback address: submissions there skip the per-address budgets (name a remote bridge in feeders instead)", c.FeedListen)
 		}
 	}
 	if c.TreeCount < 1 || c.TreeCount > 1023 {

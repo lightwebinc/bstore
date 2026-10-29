@@ -197,6 +197,7 @@ type Provider struct {
 	server  *http.Server
 	ln      net.Listener
 	msrv    *http.Server
+	fsrv    *http.Server
 	proxies []*net.IPNet
 	feeders []*net.IPNet
 	cancel  context.CancelFunc
@@ -417,6 +418,25 @@ func (p *Provider) Start(ctx context.Context) error {
 		p.msrv = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 		go func() { _ = p.msrv.Serve(mln) }()
 	}
+	if p.cfg.FeedListen != "" {
+		fln, err := net.Listen("tcp", p.cfg.FeedListen)
+		if err != nil {
+			cancel()
+			ln.Close()
+			return err
+		}
+		mux := http.NewServeMux()
+		mux.HandleFunc("/submit", func(w http.ResponseWriter, r *http.Request) {
+			p.handleSubmit(w, r.WithContext(context.WithValue(r.Context(), fedKey{}, true)))
+		})
+		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
+		p.fsrv = &http.Server{
+			Handler: mux, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 2 * time.Minute,
+			WriteTimeout: 2 * time.Minute, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: maxHeaderBytes,
+			BaseContext: func(net.Listener) context.Context { return ctx },
+		}
+		go func() { _ = p.fsrv.Serve(fln) }()
+	}
 	p.wg.Add(3)
 	go func() {
 		defer p.wg.Done()
@@ -461,6 +481,11 @@ func (p *Provider) Close() error {
 	}
 	if p.msrv != nil {
 		_ = p.msrv.Close()
+	}
+	if p.fsrv != nil {
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = p.fsrv.Shutdown(sctx)
+		cancel()
 	}
 	p.wg.Wait()
 	_ = p.trees.Wait(context.Background())

@@ -154,3 +154,48 @@ func TestFeederSkipsThePerAddressBudget(t *testing.T) {
 		t.Fatalf("a feeder that is not a CIDR: %v", err)
 	}
 }
+
+// The feed listener takes the local bridge's submissions in plain HTTP,
+// without the per-address budgets, and serves nothing else; it must be a
+// loopback address.
+func TestFeedListener(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	o, err := r.writer.Build(ctx, bytes.Repeat([]byte("y"), 2*4096))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := r.config(t.TempDir())
+	cfg.Limits.SubmitsPerAddrPerSec, cfg.Limits.SubmitBurst = 0.001, 1
+	feed := r.config(t.TempDir()).Listen // a free loopback port
+	cfg.FeedListen = feed
+	r.start(cfg, false)
+	topic := storerec.BlobTopic(testBucket)
+	plain := &http.Client{}
+	for n := 0; n < 3; n++ {
+		req, _ := http.NewRequest(http.MethodPost, "http://"+feed+"/submit", bytes.NewReader(o.Pieces[0]))
+		req.Header.Set("x-topics", topic)
+		res, err := plain.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		if ok, why := taken(t, string(b), topic); res.StatusCode != http.StatusOK || !ok {
+			t.Fatalf("feed submission %d: %d taken=%v %q", n, res.StatusCode, ok, why)
+		}
+	}
+	res, err := plain.Get("http://" + feed + "/bstore/v1/terms")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("a public route on the feed listener: %d", res.StatusCode)
+	}
+	bad := r.config(t.TempDir())
+	bad.FeedListen = "0.0.0.0:8095"
+	if err := bad.Check(); err == nil || !strings.Contains(err.Error(), "loopback") {
+		t.Fatalf("a public feed listener: %v", err)
+	}
+}

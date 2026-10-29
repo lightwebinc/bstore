@@ -239,9 +239,16 @@ func (p *Provider) clientAddr(r *http.Request) string {
 	return host
 }
 
-// feeder reports whether a request's connection comes from a configured
-// feeder (the connection's own address, never a forwarded one).
+// fedKey marks a request that arrived on the feed listener.
+type fedKey struct{}
+
+// feeder reports whether a request came from the plane's local feeder: on
+// the feed listener, or over a connection from a configured feeder (the
+// connection's own address, never a forwarded one).
 func (p *Provider) feeder(r *http.Request) bool {
+	if r.Context().Value(fedKey{}) != nil {
+		return true
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
