@@ -69,9 +69,9 @@ on the gateway's own identity, `prov` runs a provider's command, and `s3`
 the AWS CLI against the gateway.
 
 The images are `ghcr.io/lightwebinc/bstore` (the command and the S3
-gateway), `bstore-provider`, `bstore-host` and `bstore-devchain`. They are
-published once the repositories are public; until then build them from a
-checkout: `make docker-build` and `make docker-build-host
+gateway), `bstore-provider`, `bstore-host` and `bstore-devchain`, published
+with each release for linux/amd64 and linux/arm64. To build them from a
+checkout instead: `make docker-build` and `make docker-build-host
 REFERENCE_HOST_IMAGE=<a reference overlay host image>`.
 
 ## 2. The owner and a reader

@@ -13,7 +13,7 @@ jobs:
   # and the S3 gateway) and bstore-provider. Four platforms, each tarball
   # holding both static binaries beside the licenses.
   build:
-    runs-on: [self-hosted, lax]
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
@@ -64,7 +64,7 @@ jobs:
 
   release:
     needs: build
-    runs-on: [self-hosted, lax]
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:

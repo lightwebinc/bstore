@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   go:
-    runs-on: [self-hosted, lax]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -44,7 +44,7 @@ jobs:
   # moves the bytes on one side and not the other fails in one job or the
   # other.
   ts:
-    runs-on: [self-hosted, lax]
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: host
@@ -66,7 +66,7 @@ jobs:
   # gateway, a put, a race, settlement, a paid challenge and a renewal, a
   # delete. It is what a newcomer runs, and it once stayed red unnoticed.
   quickstart:
-    runs-on: [self-hosted, lax]
+    runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -74,8 +74,8 @@ jobs:
         run: |
           make docker-build
           make docker-build-host REFERENCE_HOST_IMAGE=${{ vars.REFERENCE_HOST_IMAGE || 'ghcr.io/lightwebinc/overlay-blueprints:0.2.2' }}
-      # The quickstart drives the S3 face with the AWS CLI v2, which a
-      # self-hosted runner does not carry.
+      # The quickstart drives the S3 face with the AWS CLI v2; it is
+      # installed where the runner does not carry it.
       - name: AWS CLI v2
         run: |
           if ! command -v aws >/dev/null; then
@@ -84,7 +84,7 @@ jobs:
             "$RUNNER_TEMP/aws/install" -i "$RUNNER_TEMP/aws-cli" -b "$RUNNER_TEMP/bin"
             echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
           fi
-      # The self-hosted runners share one Docker daemon, and this stack
+      # A runner may share one Docker daemon between jobs, and this stack
       # publishes fixed host ports. The lock serializes this repository's
       # quickstarts; holding it, any bstore-quickstart-check-* stack left is an
       # orphan of a cancelled run (cancel skips the script's teardown), so it

@@ -53,8 +53,9 @@ $ go install github.com/lightwebinc/bstore/cmd/bstore-provider@latest   # a stor
 Release tarballs for Linux and macOS (amd64, arm64), each with its
 `SHA256SUMS` entry, are on the
 [releases page](https://github.com/lightwebinc/bstore/releases). The
-container images are built from the [Dockerfile](Dockerfile)
-(`ghcr.io/lightwebinc/bstore`, `bstore-provider`, `bstore-devchain`); see
+container images (`ghcr.io/lightwebinc/bstore`, `bstore-provider`,
+`bstore-devchain`, `bstore-host`) are published with each release, built
+from the [Dockerfile](Dockerfile) and [host/Dockerfile](host/Dockerfile); see
 [docs/configuration.md](docs/configuration.md#container-images).
 
 ## On mainnet
