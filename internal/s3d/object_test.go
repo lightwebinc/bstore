@@ -1,7 +1,9 @@
 package s3d
 
 import (
+	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -122,5 +124,28 @@ func TestRefuseUnsupported(t *testing.T) {
 func TestURLEncodeKey(t *testing.T) {
 	if got := urlEncodeKey("a b/c+d/é"); got != "a+b/c%2Bd/%C3%A9" {
 		t.Fatal(got)
+	}
+}
+
+// A read that fails after the object's headers are set answers as an error
+// and carries none of them: the AWS CLI holds a checksum header to the body
+// it came with, and dies on the error instead of retrying.
+func TestFailedReadCarriesNoObjectHeaders(t *testing.T) {
+	s := &Server{reads: make(chan struct{}, 1)}
+	s.reads <- struct{}{} // every read slot taken
+	w := httptest.NewRecorder()
+	w.Header().Set("x-amz-request-id", "kept")
+	ent := &storerec.Entry{Size: 1024, Created: 1}
+	e := s.serveObject(context.Background(), w, httptest.NewRequest("GET", "/b/k", nil), &bucket{name: "b"}, "k", ent)
+	if e == nil || e.Status != http.StatusServiceUnavailable {
+		t.Fatalf("got %v, want a 503", e)
+	}
+	if w.Header().Get("x-amz-request-id") != "kept" {
+		t.Fatal("the request's own header went too")
+	}
+	for _, name := range []string{"X-Amz-Checksum-Sha256", "X-Amz-Checksum-Type", "Last-Modified", "ETag", "Content-Length", "Accept-Ranges"} {
+		if v := w.Header().Get(name); v != "" {
+			t.Errorf("the error carries %s: %s", name, v)
+		}
 	}
 }

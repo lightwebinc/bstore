@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -139,7 +140,11 @@ func (s *Server) getObject(ctx context.Context, w http.ResponseWriter, r *http.R
 	if e != nil {
 		return e
 	}
-	ent := res.entry
+	return s.serveObject(ctx, w, r, b, key, res.entry)
+}
+
+// serveObject answers a read of ent.
+func (s *Server) serveObject(ctx context.Context, w http.ResponseWriter, r *http.Request, b *bucket, key string, ent *storerec.Entry) *s3Error {
 	if e := conditional(r, ent); e != nil {
 		if e.Status == http.StatusNotModified {
 			w.Header().Set("ETag", etagOf(ent))
@@ -155,6 +160,16 @@ func (s *Server) getObject(ctx context.Context, w http.ResponseWriter, r *http.R
 		return rerr
 	}
 	h := w.Header()
+	// A read that fails from here on answers as an error, without the
+	// object's headers: a client holds a checksum header to the body it came
+	// with, and the AWS CLI dies on an error body that carries one where it
+	// should retry.
+	before := h.Clone()
+	fail := func(e *s3Error) *s3Error {
+		clear(h)
+		maps.Copy(h, before)
+		return e
+	}
 	s.objectHeaders(h, ent)
 	for _, o := range []struct{ q, h string }{{"response-content-type", "Content-Type"}, {"response-content-language", "Content-Language"},
 		{"response-expires", "Expires"}, {"response-cache-control", "Cache-Control"},
@@ -181,12 +196,12 @@ func (s *Server) getObject(ctx context.Context, w http.ResponseWriter, r *http.R
 	}
 	release, e := acquire(s.reads)
 	if e != nil {
-		return e
+		return fail(e)
 	}
 	defer release()
 	obj, err := s.reader.Open(ctx, ent, s.store)
 	if err != nil {
-		return readError(err)
+		return fail(readError(err))
 	}
 	if n == 0 {
 		w.WriteHeader(status)
@@ -196,7 +211,7 @@ func (s *Server) getObject(ctx context.Context, w http.ResponseWriter, r *http.R
 		before: func() { w.WriteHeader(status) }}
 	if err := obj.WriteRange(ctx, iw, off, n); err != nil {
 		if !iw.started {
-			return readError(err)
+			return fail(readError(err))
 		}
 		s.opts.Logf("s3d: %s/%s: the answer was cut short: %v", b.name, key, err)
 		panic(http.ErrAbortHandler)
