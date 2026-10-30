@@ -62,6 +62,7 @@ type Server struct {
 	metrics *metrics
 
 	writes, parts, reads, stages, lookups chan struct{}
+	flights                               writeFlights
 
 	srv    *http.Server
 	msrv   *http.Server

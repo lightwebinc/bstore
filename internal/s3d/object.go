@@ -555,31 +555,34 @@ func (s *Server) putObject(ctx context.Context, w http.ResponseWriter, r *http.R
 	if e := bd.check(); e != nil {
 		return e
 	}
-	release, e := acquire(s.writes)
-	if e != nil {
-		return e
-	}
-	defer release()
-	s.metrics.add("bstore_s3d_bytes_in_total", int64(staged.Size))
 	etag := bd.hashes.md5Hex()
-	if prev := s.retryOf(a, b, key, ct, meta, etag, staged.Root, staged.Size); prev != nil {
-		// The same write sent again (a retry after a 503): the entry made
-		// for it stands, and is still being delivered; no second entry.
-		s.metrics.add("bstore_s3d_put_retries_total", 1)
-		bd.hashes.responseHeaders(w.Header())
-		w.Header().Set("ETag", `"`+etag+`"`)
-		w.Header()["x-amz-meta-bstore-root"] = []string{hex.EncodeToString(prev.Root[:])}
-		w.WriteHeader(http.StatusOK)
-		return nil
-	}
-	rec, e := s.publishPut(ctx, a, b, key, ct, meta, &etag, publish.Object{Root: staged.Root, Size: staged.Size,
-		ContentHash: staged.ContentHash, ProofRoot: staged.ProofRoot, Closure: publish.StoreClosure{Store: s.store, Manifest: staged.Manifest, Staged: true}})
+	k := writeKey(b.name, a.Key.Identity, key, ct, meta, etag, staged.Root, staged.Size)
+	entry, e := s.oneWrite(ctx, k, func() (*storerec.Entry, *s3Error) {
+		release, e := acquire(s.writes)
+		if e != nil {
+			return nil, e
+		}
+		defer release()
+		s.metrics.add("bstore_s3d_bytes_in_total", int64(staged.Size))
+		if prev := s.retryOf(a, b, key, ct, meta, etag, staged.Root, staged.Size); prev != nil {
+			// The same write sent again (a retry after a 503): the entry made
+			// for it stands, and is still being delivered; no second entry.
+			s.metrics.add("bstore_s3d_put_retries_total", 1)
+			return prev, nil
+		}
+		rec, e := s.publishPut(ctx, a, b, key, ct, meta, &etag, publish.Object{Root: staged.Root, Size: staged.Size,
+			ContentHash: staged.ContentHash, ProofRoot: staged.ProofRoot, Closure: publish.StoreClosure{Store: s.store, Manifest: staged.Manifest, Staged: true}})
+		if e != nil {
+			return nil, e
+		}
+		return rec.Entry, nil
+	})
 	if e != nil {
 		return e
 	}
 	bd.hashes.responseHeaders(w.Header())
 	w.Header().Set("ETag", `"`+etag+`"`)
-	w.Header()["x-amz-meta-bstore-root"] = []string{hex.EncodeToString(rec.Entry.Root[:])}
+	w.Header()["x-amz-meta-bstore-root"] = []string{hex.EncodeToString(entry.Root[:])}
 	w.WriteHeader(http.StatusOK)
 	return nil
 }
@@ -689,11 +692,6 @@ func (s *Server) copyObject(ctx context.Context, w http.ResponseWriter, r *http.
 	if sb == b && skey == key && dir == "COPY" {
 		return &s3Error{"InvalidRequest", "This copy request is illegal because it is trying to copy an object to itself without changing the object's metadata.", http.StatusBadRequest}
 	}
-	release, e := acquire(s.writes)
-	if e != nil {
-		return e
-	}
-	defer release()
 	res, e := s.resolve(ctx, sb, skey)
 	if e != nil {
 		return e
@@ -705,20 +703,35 @@ func (s *Server) copyObject(ctx context.Context, w http.ResponseWriter, r *http.
 			return e
 		}
 	}
-	obj := publish.Object{Root: src.Root, Size: src.Size, ContentHash: src.ContentHash, ProofRoot: src.ProofRoot}
-	if sb != b {
-		c, e := s.closureOf(ctx, src)
-		if e != nil {
-			return e
-		}
-		obj.Closure = c
+	etag, et := src.ETag, ""
+	if etag != nil {
+		et = *etag
 	}
-	etag := src.ETag
-	rec, e := s.publishPut(ctx, a, b, key, ct, meta, etag, obj)
+	k := writeKey(b.name, a.Key.Identity, key, ct, meta, et, src.Root, src.Size)
+	entry, e := s.oneWrite(ctx, k, func() (*storerec.Entry, *s3Error) {
+		release, e := acquire(s.writes)
+		if e != nil {
+			return nil, e
+		}
+		defer release()
+		obj := publish.Object{Root: src.Root, Size: src.Size, ContentHash: src.ContentHash, ProofRoot: src.ProofRoot}
+		if sb != b {
+			c, e := s.closureOf(ctx, src)
+			if e != nil {
+				return nil, e
+			}
+			obj.Closure = c
+		}
+		rec, e := s.publishPut(ctx, a, b, key, ct, meta, etag, obj)
+		if e != nil {
+			return nil, e
+		}
+		return rec.Entry, nil
+	})
 	if e != nil {
 		return e
 	}
-	writeXML(w, http.StatusOK, copyResult{NS: s3NS, LastModified: isoTime(rec.Entry.Created), ETag: etagOf(rec.Entry),
+	writeXML(w, http.StatusOK, copyResult{NS: s3NS, LastModified: isoTime(entry.Created), ETag: etagOf(entry),
 		ChecksumSHA256: base64.StdEncoding.EncodeToString(src.ContentHash[:]), ChecksumType: "FULL_OBJECT"})
 	return nil
 }
