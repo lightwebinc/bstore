@@ -43,6 +43,7 @@ spending one mined funding output.
 | --- | --- | --- |
 | A funding output | a 64-output piece funding tree is 3,328 bytes, 52 bytes an output, so about 5.2 satoshis at the network's rate, 100 per 1000 bytes (measured at 1 satoshi a byte, bcommon `mint.LegacyFees`: about 52); the contract's arithmetic says about 57 bytes | measured |
 | A 100 MiB put's funding | 26 piece outputs and one entry output: about 1.4 KB mined, about 140 satoshis of fee, plus each output's 1 satoshi of value (a carrier spends it and is never mined) | measured |
+| A 1 GiB put's funding | 257 piece outputs and one entry output: about 12.9 KB mined, 1,269 satoshis of fee and 258 of value | measured |
 | An entry carrier | 1,915 to 2,176 bytes of BEEF on a 16-output entry tree | measured (8 entries) |
 | A piece carrier | the blob plus about 1.2 KB and 49 bytes per output of its funding tree: about 4.3 KB over the blob on the default 64-output piece tree, so a 100 MiB put delivers about 0.1 % above its content to each provider | contract arithmetic |
 | The hold output's transaction | 240 and 241 bytes, 100 satoshis of fee (the floor; 495 when measured at the older 1 satoshi a byte, floor 250), for one hold output (up to 16 a transaction when minted ahead) | measured |
