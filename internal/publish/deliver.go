@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -32,7 +33,7 @@ import (
 // go to each provider's submit route on the blob topic, and every record to
 // each host and, for an entry, each provider. Either way an entry also goes
 // to each provider named, so a provider that unicast pieces reached hears
-// of the entry.
+// of the entry, and to the origin of each of Uploads.
 type Delivery struct {
 	Facade    string
 	Hosts     []string
@@ -89,8 +90,28 @@ func (d *Delivery) recordTargets(bucket string, entry bool) []Target {
 		for _, p := range d.Providers {
 			out = append(out, Target{Base: trim(p), Topic: topic})
 		}
+		if d.uploading() {
+			// A closure sent by upload session waits at its provider for the
+			// entry, and an unclaimed closure is dropped.
+			for _, u := range d.Uploads {
+				b := origin(u)
+				if !slices.ContainsFunc(out, func(t Target) bool { return t.Base == b }) {
+					out = append(out, Target{Base: b, Topic: topic})
+				}
+			}
+		}
 	}
 	return out
+}
+
+// origin is the scheme and host of a provider's public URL: its submit
+// route hangs from the origin, whatever path the public URL has.
+func origin(public string) string {
+	u, err := url.Parse(public)
+	if err != nil || u.Host == "" {
+		return trim(public)
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 // sent reports whether an entry delivered to ok counts as sent: the facade

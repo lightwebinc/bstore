@@ -128,7 +128,7 @@ serves all three).
 | `hosts` | required | the overlay hosts asked and written to |
 | `facade` | none | the plane: pieces and records are submitted to it once |
 | `providers` | none | providers' submit routes: without a facade, entries (and piece carriers) go to each |
-| `uploads` | none | providers' public URLs: without a facade, a closure goes to each by BRC-167 upload session instead of as piece carriers |
+| `uploads` | none | providers' public URLs: without a facade, a closure goes to each by BRC-167 upload session instead of as piece carriers, and the entry to the submit route at each URL's origin |
 | `quorum` | 1 | hosts that must take an entry when there is no facade |
 | `ca`, `fetch_private` | none, false | certificates trusted besides the system's; whether advertised URLs at loopback, private or link-local addresses are reached |
 | `bounty` | none | what a put asks for unless told otherwise: `satoshis`, `t`, `k`, `retention_seconds`, `deadline_blocks`, `check_c` |
