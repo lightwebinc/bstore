@@ -94,8 +94,9 @@ func (p *Provider) policy(ctx context.Context, e *EntryRec) (until uint64, why s
 // provider's own headers and spend evidence: the hold output exists, is
 // mined, is locked to derive(writer, "hold") and holds exactly satoshis,
 // is unspent by positive evidence (an empty or failed answer is not
-// evidence), is worth at least the provider's minimum, and, for racing,
-// its deadline is far enough ahead.
+// evidence), is worth at least the provider's minimum and pays its price for
+// the object's size and retention, and, for racing, its deadline is far
+// enough ahead.
 func (p *Provider) checkBounty(ctx context.Context, e *EntryRec, racing bool) error {
 	hr := e.Hold
 	if hr == nil {
@@ -103,6 +104,9 @@ func (p *Provider) checkBounty(ctx context.Context, e *EntryRec, racing bool) er
 	}
 	if hr.Sats < p.cfg.Terms.MinBounty {
 		return fmt.Errorf("%d satoshis is below this provider's minimum of %d", hr.Sats, p.cfg.Terms.MinBounty)
+	}
+	if price, short := bountyShort(e.Size, hr, p.cfg.Terms.RenewPerGiBDay); short {
+		return fmt.Errorf("%d satoshis among %d ranks is below this provider's price of %d for %d bytes and %d seconds", hr.Sats, hr.K, price, e.Size, hr.Retention)
 	}
 	tip, err := p.tip(ctx)
 	if err != nil {
@@ -124,6 +128,15 @@ func (p *Provider) checkBounty(ctx context.Context, e *EntryRec, racing bool) er
 	}
 	p.mu.Unlock()
 	return nil
+}
+
+// bountyShort says whether a hold pays less than the provider's price, the
+// one its terms publish for a renewal: perGiBDay for the object's size and the
+// hold's retention. A provider cannot know its rank, so an even share of the
+// bounty among the K paid ranks has to cover it.
+func bountyShort(size uint64, hr *HoldRec, perGiBDay uint64) (uint64, bool) {
+	price := renewPrice(size, 0, hr.Retention, perGiBDay, 0)
+	return price, hr.Sats/hr.K < price
 }
 
 // holdOutput checks the hold output on the node and returns its height.
