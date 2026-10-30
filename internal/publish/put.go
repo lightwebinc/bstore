@@ -144,15 +144,17 @@ func (p *Publisher) Put(ctx context.Context, f Fields, obj Object, b *Bounty) (*
 		}
 		ups = p.uploadClosure(ctx, obj.Root, obj.Closure, retention)
 		taken := 0
+		var why error
 		for _, u := range ups {
 			if u.Err == nil {
 				taken++
 			} else {
+				why = u.Err
 				p.cfg.Logf("closure %s: not taken by %s (%v); it is sent again later", short(hex.EncodeToString(obj.Root[:])), u.Provider, u.Err)
 			}
 		}
 		if taken == 0 {
-			return nil, fmt.Errorf("pieces: no provider took the closure by upload session")
+			return nil, fmt.Errorf("pieces: no provider took the closure by upload session: %w", why)
 		}
 	} else if obj.Closure != nil {
 		if n, err = p.publishPieces(ctx, f.Bucket, obj.Root, obj.Closure); err != nil {
