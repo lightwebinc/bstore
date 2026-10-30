@@ -253,7 +253,7 @@ func (p *Provider) room(n uint64, writer string) string {
 	case strings.HasPrefix(writer, uploaderKey) && uploaded+n > p.cfg.UnclaimedBytes/2:
 		p.metrics.inc("bstore_provider_refused_total", "reason=upload-share")
 		return "room: the space for uploads no entry has claimed is full"
-	case mine+n > max(p.cfg.UnclaimedBytes/4, storerec.BlobSize+1<<16):
+	case mine+n > p.writerShare():
 		p.metrics.inc("bstore_provider_refused_total", "reason=writer-share")
 		return "room: this writer's share of the space for unclaimed pieces is full"
 	case p.usageLocked()+n > p.cfg.QuotaBytes:
@@ -264,6 +264,15 @@ func (p *Provider) room(n uint64, writer string) string {
 		}
 	}
 	return ""
+}
+
+// writerShare is what one writer's unclaimed pieces may fill: a quarter of
+// their space, and always a whole object of policy.max_object with its nodes
+// (about 43 bytes a blob, well inside the 0.1 % here), because a piece refused
+// on the plane is never sent again.
+func (p *Provider) writerShare() uint64 {
+	m := p.cfg.Policy.MaxObject
+	return max(p.cfg.UnclaimedBytes/4, storerec.BlobSize+1<<16, m+m/1024+1<<16)
 }
 
 // usageLocked is the store's bytes: held closures and unclaimed pieces.

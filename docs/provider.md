@@ -419,7 +419,7 @@ how readers reach the bytes.
 | What | Bound |
 | --- | --- |
 | The store | `quota_bytes` across held closures and unclaimed pieces |
-| Unclaimed pieces | `unclaimed_bytes` in all, a quarter of that from one writer (which must hold `policy.max_object`) and half of it from uploads, each piece counted at least 4 KiB and at most 200,000 pieces, each kept `unclaimed_seconds`; past a share a piece is refused, never makes room by pushing out another's |
+| Unclaimed pieces | `unclaimed_bytes` in all, a quarter of that from one writer, and always one whole object of `policy.max_object` with its nodes and half of it from uploads, each piece counted at least 4 KiB and at most 200,000 pieces, each kept `unclaimed_seconds`; past a share a piece is refused, never makes room by pushing out another's |
 | Entries waiting for their closures | 256 from one writer, 10,000 in all |
 | Eviction | a holding goes only when no advertisement of it is pending, its advertisement has expired and its lease has run out, or when it was never advertised and no entry for it is undecided; an object another held closure names stays |
 | An object | `policy.max_object` |

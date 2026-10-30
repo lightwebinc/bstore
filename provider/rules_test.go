@@ -549,6 +549,25 @@ func TestUploadSessions(t *testing.T) {
 	}
 }
 
+// One writer's share of the space for unclaimed pieces holds a whole object
+// of policy.max_object, which is its content and its nodes: a piece refused on
+// the plane is never sent again, so the object would never be held.
+func TestWriterShareHoldsAWholeObject(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	cfg := r.config(filepath.Join(t.TempDir(), "p"))
+	cfg.QuotaBytes, cfg.UnclaimedBytes, cfg.Policy.MaxObject = 256<<20, 32<<20, 8<<20
+	p := r.start(cfg, true)
+	base := "https://" + p.Addr()
+	o, _ := r.writer.Build(ctx, content(int(cfg.Policy.MaxObject), 7))
+	for i, piece := range o.Pieces {
+		ans, _ := r.writer.Submit(ctx, base, storerec.BlobTopic(testBucket), piece)
+		if ok, why := testwriter.Admitted(ans, storerec.BlobTopic(testBucket)); !ok {
+			t.Fatalf("piece %d of %d: %s", i+1, len(o.Pieces), why)
+		}
+	}
+}
+
 // Storage is bounded: pieces no entry claimed have their own share and
 // their own time, and a holding goes only once its lease and advertisement
 // run out.

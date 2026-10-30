@@ -162,14 +162,16 @@ to each provider itself, as piece carriers to `/submit` or by a BRC-167
 upload session, and each record to each host: an object costs the writer
 one upload a provider. Records are the same either way.
 
-As built, pieces travel by unicast. The plane's facade publishes only what
-its own engine admits, and a host's blob topic manager refuses every piece
-(a host holds no bytes), so a piece offered to the facade is refused and
-never published; providers would have to be plane consumers themselves to
-receive the blob topic. The gateways and the command line therefore name
-the providers' submit routes (`providers`) and send records to the hosts
-directly. A 100 MiB put is about 104.9 MB to each provider either way; the
-difference is who sends it and who pays for the delivery.
+A piece reaches the plane through a facade that routes its bucket's blob
+topic to a provider on that host, because a host holds no bytes: the provider
+holds the piece to its rules first, so the facade publishes only valid pieces
+(provider.md). Pieces are larger than a plane's open object bound, so the
+facade's site must publish as an authenticated source. A provider on the
+plane is fed by its own bridge; a provider that refuses a piece gets no second
+copy, so its quota has to hold what it serves. A 100 MiB put is about 104.9 MB to
+each provider either way; the difference is who sends it and who pays for the
+delivery: one publish and each receiver's delivery on the plane, one upload a
+provider in unicast.
 
 ## Known limits
 
