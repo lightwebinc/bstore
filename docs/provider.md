@@ -357,7 +357,7 @@ broadcasts each and takes it into the wallet's pool once it mines.
 ```json
 {"service": "bstore", "terms": 1,
  "challenge": {"base": 10, "perSample": 1, "freeC": 30, "minBounty": 1000, "minAge": 2},
- "renew": {"perGiBDay": 100, "minimum": 50}}
+ "renew": {"perGiBDay": 250, "minimum": 500}}
 ```
 
 The `402` is authoritative.
@@ -511,7 +511,7 @@ GorillaPool's public arcade.
 | `terms.free_c` | 30 | 30 to 1024 |
 | `terms.min_bounty` | 1000 | the least bounty raced for and owed a free challenge; at least the fee floor |
 | `terms.min_age` | 0 | 0 to 1008 blocks |
-| `terms.renew_per_gib_day`, `terms.renew_minimum` | 100, 500 | this provider's price, for a renewal and for what an even share of a bounty must cover; a renewal's minimum, at least the fee floor |
+| `terms.renew_per_gib_day`, `terms.renew_minimum` | 250, 500 | this provider's price, for a renewal and for what an even share of a bounty must cover; a renewal's minimum, at least the fee floor |
 | `terms.max_renew_seconds` | 366 days | the furthest a renewal runs |
 | `limits.*` | as the table above | `handshakes_per_sec` 32, `handshake_burst` 64, `handshakes_per_addr_per_sec` 1, `handshake_addr_burst` 4, `responses_per_sec` 5, `response_burst` 20, `sessions` 10000, `session_ttl_seconds` 600, `challenges_per_buyer_per_min` 6, `challenge_burst` 6, `free_per_writer_per_min` 12, `challenge_workers` 4, `renewals_per_root_per_hour` 4, `submits_per_addr_per_sec` 64, `submit_burst` 256, `object_readers` 32, `object_reads_per_addr_per_sec` 50, `object_read_burst` 200, `upload_sessions` 64, `upload_session_seconds` 3600 |
 | `tree_count`, `tree_sats` | 16, 1000 | the funding trees; `tree_sats` at least twice the fee floor |

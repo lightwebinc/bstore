@@ -549,6 +549,19 @@ func TestUploadSessions(t *testing.T) {
 	}
 }
 
+// The default price is a number people compare by the GB: docs/limits.md and
+// the published comparisons are arithmetic on it.
+func TestDefaultPrice(t *testing.T) {
+	c := &Config{}
+	c.defaults()
+	if got := c.Terms.RenewPerGiBDay; got != 250 {
+		t.Fatalf("default price %d satoshis per GiB-day", got)
+	}
+	if got := 3 * renewPrice(1<<30, 0, 30*86400, c.Terms.RenewPerGiBDay, 0); got != 22500 {
+		t.Fatalf("three copies of 1 GiB for 30 days at the default price: %d satoshis", got)
+	}
+}
+
 // A bounty pays the provider's price for the object's size and retention,
 // from an even share among the paid ranks.
 func TestBountyShort(t *testing.T) {

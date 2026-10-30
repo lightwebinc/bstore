@@ -184,7 +184,7 @@ configs:
         "hosts": ["http://host-a:8080", "http://host-b:8080"],
         "buckets": [{"bucket": "${BSTORE_BUCKETS:-none}"}],
         "tree_count": 8,
-        "terms": {"challenge_base": 10, "challenge_per_sample": 1, "free_c": 30, "min_bounty": 1000, "renew_per_gib_day": 100, "renew_minimum": 300},
+        "terms": {"challenge_base": 10, "challenge_per_sample": 1, "free_c": 30, "min_bounty": 1000, "renew_per_gib_day": 250, "renew_minimum": 300},
         "limits": {"handshakes_per_addr_per_sec": 50, "handshake_addr_burst": 100, "challenge_burst": 20,
                    "object_reads_per_addr_per_sec": 1000, "object_read_burst": 1000, "submits_per_addr_per_sec": 1000, "submit_burst": 2000}
       }
@@ -203,7 +203,7 @@ configs:
         "hosts": ["http://host-a:8080", "http://host-b:8080"],
         "buckets": [{"bucket": "${BSTORE_BUCKETS:-none}"}],
         "tree_count": 8,
-        "terms": {"challenge_base": 12, "challenge_per_sample": 1, "free_c": 30, "min_bounty": 1000, "renew_per_gib_day": 120, "renew_minimum": 300},
+        "terms": {"challenge_base": 12, "challenge_per_sample": 1, "free_c": 30, "min_bounty": 1000, "renew_per_gib_day": 300, "renew_minimum": 300},
         "limits": {"handshakes_per_addr_per_sec": 50, "handshake_addr_burst": 100, "challenge_burst": 20,
                    "object_reads_per_addr_per_sec": 1000, "object_read_burst": 1000, "submits_per_addr_per_sec": 1000, "submit_burst": 2000}
       }
