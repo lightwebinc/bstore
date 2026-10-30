@@ -599,6 +599,54 @@ func TestProviderDeclinesAnUnderpricedHold(t *testing.T) {
 	})
 }
 
+// The pieces of an object the provider declined give way at once: on the plane
+// they arrive whether it wants them or not, and they would otherwise keep the
+// writer's next object out for their whole time.
+func TestDeclinedPiecesGiveWay(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	cfg := r.config(filepath.Join(t.TempDir(), "p"))
+	cfg.QuotaBytes, cfg.UnclaimedBytes, cfg.Policy.MaxObject = 256<<20, 32<<20, 8<<20
+	// 8 MiB for a day at this price is 10,000 satoshis.
+	cfg.Terms.RenewPerGiBDay = 1280000
+	p := r.start(cfg, true)
+	terms := func(sats uint64) testwriter.Terms {
+		return testwriter.Terms{Sats: sats, T: 1, K: 1, Retention: 86400, DeadlineAhead: 200, CheckC: 30}
+	}
+	base := "https://" + p.Addr()
+	// As the plane delivers it: the pieces, then the entry.
+	o, err := r.writer.Build(ctx, content(8<<20, 3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, pc := range o.Pieces {
+		ans, _ := r.writer.Submit(ctx, base, storerec.BlobTopic(testBucket), pc)
+		if ok, why := testwriter.Admitted(ans, storerec.BlobTopic(testBucket)); !ok {
+			t.Fatalf("piece %d: %s", i+1, why)
+		}
+	}
+	low, err := r.writer.Entry(ctx, o, "low", terms(9999))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.writer.Submit(ctx, base, storerec.RecordsTopic(testBucket), low.BEEF); err != nil {
+		t.Fatal(err)
+	}
+	r.eventually("declined", 10*time.Second, func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		e := p.st.Entries[low.C]
+		return e != nil && strings.Contains(e.Decision, "price of 10000")
+	})
+	at := r.put(ctx, []*Provider{p}, content(8<<20, 4), "at", terms(10000))
+	r.eventually("held", 10*time.Second, func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		e := p.st.Entries[at.C]
+		return e != nil && e.Decision == decisionHeld
+	})
+}
+
 // One writer's share of the space for unclaimed pieces holds a whole object
 // of policy.max_object, which is its content and its nodes: a piece refused on
 // the plane is never sent again, so the object would never be held.
