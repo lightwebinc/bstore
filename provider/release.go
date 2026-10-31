@@ -25,6 +25,11 @@ const decisionDeleted = "deleted by its writer"
 func (p *Provider) noteDelete(e *storerec.Entry) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	k := e.Bucket + "/" + e.Key
+	if d := p.st.Deletes[k]; d == nil || d.Created < e.Created {
+		p.st.Deletes[k] = &DeleteRec{Created: e.Created, At: p.now().Unix()}
+		p.pruneDeletesLocked()
+	}
 	roots := map[string]bool{}
 	for _, x := range p.st.Entries {
 		if x.Bucket != e.Bucket || x.Key == "" || x.Key != e.Key || x.Created > e.Created {
@@ -37,13 +42,33 @@ func (p *Provider) noteDelete(e *storerec.Entry) {
 		roots[x.Root] = true
 		p.metrics.inc("bstore_provider_deletes_total")
 	}
-	if len(roots) == 0 {
-		return
-	}
 	for rootHex := range roots {
 		p.releaseRootLocked(rootHex)
 	}
 	_ = p.save()
+}
+
+// The deletes remembered: the newest per key, and past this many the
+// oldest go. A put that old and still travelling is not expected.
+const maxDeletes = 100000
+
+func (p *Provider) pruneDeletesLocked() {
+	for len(p.st.Deletes) > maxDeletes {
+		oldest, at := "", int64(0)
+		for k, d := range p.st.Deletes {
+			if oldest == "" || d.At < at {
+				oldest, at = k, d.At
+			}
+		}
+		delete(p.st.Deletes, oldest)
+	}
+}
+
+// deletedOnArrival reports whether a put entry meets a delete that ended
+// it before it arrived. Must be called with p.mu held.
+func (p *Provider) deletedOnArrival(e *storerec.Entry) bool {
+	d := p.st.Deletes[e.Bucket+"/"+e.Key]
+	return d != nil && d.Created >= e.Created
 }
 
 // releaseRootLocked drops a root nothing holds any more: no held or

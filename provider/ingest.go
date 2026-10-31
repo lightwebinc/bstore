@@ -293,6 +293,18 @@ func (p *Provider) noteEntry(c string, e *storerec.Entry, listed bool) string {
 		rec := &EntryRec{C: c, Bucket: e.Bucket, Key: e.Key, Writer: hex.EncodeToString(e.Writer), Root: rootHex, Size: e.Size,
 			ContentHash: hex.EncodeToString(e.ContentHash[:]), ProofRoot: hex.EncodeToString(e.ProofRoot[:]), Created: e.Created,
 			At: p.now().UnixNano()}
+		if p.deletedOnArrival(e) {
+			// Its delete came first: ended on arrival, its pieces released,
+			// never queued for a closure that nobody will ever claim.
+			rec.Decision = decisionDeleted
+			p.st.Entries[c] = rec
+			p.metrics.inc("bstore_provider_deletes_total")
+			p.releasePiecesLocked(rootHex)
+			_ = p.save()
+			p.mu.Unlock()
+			p.logf("entry %s: %s %s: deleted before it arrived", short(c), e.Bucket, e.Key)
+			return ""
+		}
 		if e.Hold != nil {
 			rec.Hold = &HoldRec{Txid: chainhash.Hash(e.Hold.Txid).String(), Vout: uint32(e.Hold.Vout), Sats: e.Hold.Satoshis, T: e.Hold.T,
 				K: e.Hold.K, Retention: e.Hold.Retention, Deadline: e.Hold.Deadline, CheckC: e.Hold.CheckC}

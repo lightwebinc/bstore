@@ -101,3 +101,52 @@ func TestDeclinedEntryReleasesItsPieces(t *testing.T) {
 		t.Fatal("the declined entry's piece stayed")
 	}
 }
+
+// A delete that arrives before the put it ends (the plane does not order
+// entries) ends the put on arrival: its pieces leave, no closure is waited for.
+func TestDeleteArrivingFirstEndsThePutOnArrival(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	cfg := r.config(filepath.Join(t.TempDir(), "p"))
+	p := r.start(cfg, true)
+
+	data := content(2*storerec.BlobSize+99, 5)
+	o, err := r.writer.Build(ctx, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	put, err := r.writer.Entry(ctx, o, "photos/late.jpg", testwriter.Terms{Sats: 5000, T: 1, K: 2, Retention: 86400, DeadlineAhead: 200, CheckC: 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	del, err := r.writer.Delete(ctx, "photos/late.jpg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := "https://" + p.Addr()
+	for _, pc := range o.Pieces {
+		if _, err := r.writer.Submit(ctx, base, storerec.BlobTopic(testBucket), pc); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := r.writer.Submit(ctx, base, storerec.RecordsTopic(testBucket), del.BEEF); err != nil {
+		t.Fatal(err)
+	}
+	ans, err := r.writer.Submit(ctx, base, storerec.RecordsTopic(testBucket), put.BEEF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, why := testwriter.Admitted(ans, storerec.RecordsTopic(testBucket)); !ok {
+		t.Fatalf("put not taken: %s", why)
+	}
+	p.mu.Lock()
+	e := p.st.Entries[put.C]
+	unclaimed := len(p.st.Unclaimed)
+	p.mu.Unlock()
+	if e == nil || e.Decision != decisionDeleted {
+		t.Fatalf("entry decision = %v, want deleted on arrival", e)
+	}
+	if unclaimed != 0 {
+		t.Fatalf("%d pieces still wait for a put its delete ended", unclaimed)
+	}
+}
