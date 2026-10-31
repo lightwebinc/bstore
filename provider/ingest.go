@@ -87,7 +87,7 @@ func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(bodyDeadline))
-	beef, err := io.ReadAll(http.MaxBytesReader(w, r.Body, bound))
+	beef, err := readBody(w, r, bound)
 	if err == nil {
 		select {
 		case p.limits.ingest <- struct{}{}:
@@ -729,4 +729,27 @@ func writeEngineError(w http.ResponseWriter, code int, msg string, hdr ...string
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// readBody reads a submit body of at most bound bytes. With a Content-Length
+// it reads into one buffer of that size: io.ReadAll grows by doubling, so a
+// 4 MiB piece cost about 16 MB of allocation, zeroing and copying before it
+// was even parsed (memmove and memclr were a third of the provider's CPU on
+// the lab edge). A body longer than its declared length is refused by the
+// extra read; a shorter one is an error from ReadFull.
+func readBody(w http.ResponseWriter, r *http.Request, bound int64) ([]byte, error) {
+	lr := http.MaxBytesReader(w, r.Body, bound)
+	n := r.ContentLength
+	if n <= 0 || n > bound {
+		return io.ReadAll(lr)
+	}
+	buf := make([]byte, n)
+	if _, err := io.ReadFull(lr, buf); err != nil {
+		return nil, err
+	}
+	var extra [1]byte
+	if m, _ := lr.Read(extra[:]); m > 0 {
+		return nil, errors.New("body longer than its Content-Length")
+	}
+	return buf, nil
 }
