@@ -213,7 +213,7 @@ func (p *Provider) take(ctx context.Context, topic string, beef []byte, pc *stor
 		return []int{}, "" // the topic's other objects are a host's, not a provider's
 	}
 	e := a.Carrier.Entry
-	if e.Kind != storerec.KindPut {
+	if e.Kind != storerec.KindPut && e.Kind != storerec.KindDelete {
 		return []int{}, ""
 	}
 	if !writerAllowed(b, e.Writer) {
@@ -222,7 +222,9 @@ func (p *Provider) take(ctx context.Context, topic string, beef []byte, pc *stor
 	if !p.fundingFree(a.Carrier.Funding, a.Carrier.Commitment) {
 		return []int{}, "funding: a second carrier on one funding output"
 	}
-	if why := p.noteEntry(chainhash.Hash(a.Txid).String(), e, writerAllowList(b)); why != "" {
+	if e.Kind == storerec.KindDelete {
+		p.noteDelete(e)
+	} else if why := p.noteEntry(chainhash.Hash(a.Txid).String(), e, writerAllowList(b)); why != "" {
 		return []int{}, why
 	}
 	p.claimFunding(a.Carrier.Funding, a.Carrier.Commitment)
@@ -288,7 +290,7 @@ func (p *Provider) noteEntry(c string, e *storerec.Entry, listed bool) string {
 			p.mu.Unlock()
 			return "room: too many entries waiting for their closures"
 		}
-		rec := &EntryRec{C: c, Bucket: e.Bucket, Writer: hex.EncodeToString(e.Writer), Root: rootHex, Size: e.Size,
+		rec := &EntryRec{C: c, Bucket: e.Bucket, Key: e.Key, Writer: hex.EncodeToString(e.Writer), Root: rootHex, Size: e.Size,
 			ContentHash: hex.EncodeToString(e.ContentHash[:]), ProofRoot: hex.EncodeToString(e.ProofRoot[:]), Created: e.Created,
 			At: p.now().UnixNano()}
 		if e.Hold != nil {

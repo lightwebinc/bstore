@@ -179,6 +179,9 @@ func (p *Provider) decide(c, decision string) {
 	defer p.mu.Unlock()
 	if e := p.st.Entries[c]; e != nil {
 		e.Decision = decision
+		if decision != decisionHeld {
+			p.releasePiecesLocked(e.Root)
+		}
 		_ = p.save()
 	}
 }

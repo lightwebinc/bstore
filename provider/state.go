@@ -146,8 +146,11 @@ type Outgoing struct {
 
 // EntryRec is an object entry the provider received, and what it decided.
 type EntryRec struct {
-	C           string   `json:"c"`
-	Bucket      string   `json:"bucket"`
+	C      string `json:"c"`
+	Bucket string `json:"bucket"`
+	// Key is the entry's key in the bucket: what a later delete names.
+	// Entries noted before it was kept have none and no delete reaches them.
+	Key         string   `json:"key,omitempty"`
 	Writer      string   `json:"writer"`
 	Root        string   `json:"root"`
 	Size        uint64   `json:"size"`

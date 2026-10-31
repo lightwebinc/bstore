@@ -425,6 +425,8 @@ how readers reach the bytes.
 | Unclaimed pieces | `unclaimed_bytes` in all, a quarter of that from one writer, and always one whole object of `policy.max_object` with its nodes and half of it from uploads, each piece counted at least 4 KiB and at most 200,000 pieces, each kept `unclaimed_seconds`; past a share a piece is refused, never makes room by pushing out another's |
 | Entries waiting for their closures | 256 from one writer, 10,000 in all |
 | Eviction | a holding goes only when no advertisement of it is pending, its advertisement has expired and its lease has run out, or when it was never advertised and no entry for it is undecided; an object another held closure names stays |
+| A delete | a delete entry from one of the bucket's writers ends every put of that key made no later than it; a holding no held or undecided entry names any more is dropped at once (its objects leave the store unless another held closure names them, with its export and the renewals owed for it), whatever its lease: the advertisement on chain runs out on its own and nothing answers for it meanwhile |
+| A declined entry | the pieces that waited for its root leave with the decision (not after `unclaimed_seconds`), unless another undecided entry wants the root or a held closure names them |
 | An object | `policy.max_object` |
 | A submission | 262,144 bytes on a records topic, 4,259,840 on a blob topic |
 | Request bodies | a handshake 16 KiB, a challenge 2 KiB, a renewal 1 KiB, a remittance 1 MiB, an uploaded object 4 MiB, a commit 1 KiB; headers 256 KiB (a payment rides in one) |
