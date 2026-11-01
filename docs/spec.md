@@ -1147,7 +1147,7 @@ as latest.
 
 - every **advertisement** output and every **hold-shaped** output it holds
   is admitted, refused in the order `beef`, `unmined` (its proof does not
-  verify against the host's headers), `too-many` (more than 16 of them);
+  verify against the host's headers), `too-many` (more than 1,024 of them: the count bound; the BEEF ceiling binds first for advertisements);
 - otherwise, if it has at most two outputs and output 0 is funding-shaped
   under any key, it is a **sweep**: output 0 alone is admitted, refused in
   the order `beef`, `unmined`, `too-large` (more inputs than the host's

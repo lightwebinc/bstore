@@ -39,7 +39,10 @@ import (
 var ErrNoHold = errors.New("publish: no mined hold output is ready for the bounty yet")
 
 const (
-	maxHoldsPerTx = 16
+	// defaultHoldTree is the hold outputs one transaction carries unless
+	// Config.HoldTree says otherwise: the bound hosts admitted before
+	// 2026-11-01, so a gateway ahead of its hosts still mints what they take.
+	defaultHoldTree = 16
 	// maxHoldChange is how many change coins one hold transaction leaves
 	// at most, for the transactions still owed.
 	maxHoldChange = 8
@@ -151,8 +154,8 @@ func (p *Publisher) FillHolds(ctx context.Context, sats uint64) {
 				// coin for its funding trees and fees meanwhile.
 				break
 			}
-			n := min(owed, maxHoldsPerTx)
-			more := (owed - n + maxHoldsPerTx - 1) / maxHoldsPerTx
+			n := min(owed, p.cfg.HoldTree)
+			more := (owed - n + p.cfg.HoldTree - 1) / p.cfg.HoldTree
 			if err := p.mintHolds(ctx, sats, n, more, tip, &wg); err != nil {
 				if minted == 0 && ctx.Err() == nil {
 					p.cfg.Logf("hold outputs: %v", feeError(err))
@@ -222,7 +225,7 @@ func (p *Publisher) mintHolds(ctx context.Context, sats uint64, n, more int, tip
 		}
 		// Each coin able to fund a whole transaction; fewer, down to one,
 		// when the change is not that much.
-		full := uint64(maxHoldsPerTx)*sats + p.feeAt(uint64(200+45*maxHoldsPerTx+34)) + p.dust()
+		full := uint64(p.cfg.HoldTree)*sats + p.feeAt(uint64(200+45*p.cfg.HoldTree+34)) + p.dust()
 		if k := int(change / full); k < parts {
 			parts = max(k, 1)
 		}

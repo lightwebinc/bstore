@@ -88,7 +88,7 @@ func TestFillHoldsMintsMoreThanOneTransactionABlock(t *testing.T) {
 	}()
 	// The first cycle: one coin, so one transaction of 16, with a change
 	// coin for each of the two transactions still owed.
-	until("the first transaction", func() bool { n, _ := holdTxids(); return n == maxHoldsPerTx })
+	until("the first transaction", func() bool { n, _ := holdTxids(); return n == defaultHoldTree })
 	raw, _ := hex.DecodeString(p.Holds()[0].RawHex)
 	tx, err := transaction.NewTransactionFromBytes(raw)
 	if err != nil {
@@ -105,7 +105,7 @@ func TestFillHoldsMintsMoreThanOneTransactionABlock(t *testing.T) {
 	}
 	until("the first transaction at the chain", func() bool { return chain.Waiting() == 1 })
 	time.Sleep(100 * time.Millisecond)
-	if n, _ := holdTxids(); n != maxHoldsPerTx {
+	if n, _ := holdTxids(); n != defaultHoldTree {
 		t.Fatalf("%d hold outputs before the block: the cycle minted beyond its coins", n)
 	}
 	if chain.Mine() != 1 {
