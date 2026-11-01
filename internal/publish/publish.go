@@ -196,6 +196,10 @@ type state struct {
 	Outcome  treeSet       `json:"outcome"`
 	Pending  []pendingTree `json:"pendingTrees,omitempty"`
 	Holds    []HoldRecord  `json:"holds,omitempty"`
+	// HoldTxs is each hold transaction once, by txid, as the state is
+	// saved (compact); in memory it is empty and every record carries its
+	// transaction (expand).
+	HoldTxs map[string]holdTx `json:"holdTxs,omitempty"`
 	// Buckets are the buckets this identity published carriers in: where
 	// a sweep of its trees is published (spec section 13.5).
 	Buckets []string `json:"buckets,omitempty"`
@@ -230,7 +234,7 @@ type HoldRecord struct {
 	Txid    string `json:"txid"`
 	Vout    uint32 `json:"vout"`
 	Sats    uint64 `json:"sats"`
-	RawHex  string `json:"rawHex"`
+	RawHex  string `json:"rawHex,omitempty"`
 	BumpHex string `json:"bumpHex,omitempty"`
 	Height  uint32 `json:"height,omitempty"`
 	// Used marks a hold output a put has taken, saved before its entry is
@@ -244,6 +248,14 @@ type HoldRecord struct {
 	// Reclaim is its spend back to the fund key when no entry names it,
 	// recorded before it is sent.
 	Reclaim *ReclaimRecord `json:"reclaim,omitempty"`
+}
+
+// holdTx is a hold transaction as the state keeps it once, for the records
+// of its outputs: its bytes, its proof once mined, and the height.
+type holdTx struct {
+	Raw    string `json:"raw"`
+	Bump   string `json:"bump,omitempty"`
+	Height uint32 `json:"height,omitempty"`
 }
 
 const (
@@ -834,7 +846,7 @@ func (p *Publisher) save() error {
 }
 
 func (p *Publisher) saveLocked() error {
-	raw, err := json.MarshalIndent(p.st, "", " ")
+	raw, err := json.Marshal(p.st.compact())
 	if err != nil {
 		return err
 	}
@@ -843,6 +855,42 @@ func (p *Publisher) saveLocked() error {
 		return err
 	}
 	return writeFileSync(tmp, filepath.Join(p.cfg.Dir, "publisher.json"), raw)
+}
+
+// compact is the state as it is saved: each hold transaction once, in
+// HoldTxs, and the records of its outputs without their copies of it. The
+// state is saved on every take, so its size is what a put pays for; a hold
+// transaction of 16 outputs kept 16 times over was most of it.
+func (s *state) compact() *state {
+	c := *s
+	c.HoldTxs = make(map[string]holdTx, len(s.Holds)/8+1)
+	c.Holds = make([]HoldRecord, len(s.Holds))
+	for i, h := range s.Holds {
+		if h.RawHex != "" {
+			if t, ok := c.HoldTxs[h.Txid]; !ok || (t.Bump == "" && h.BumpHex != "") {
+				c.HoldTxs[h.Txid] = holdTx{Raw: h.RawHex, Bump: h.BumpHex, Height: h.Height}
+			}
+			h.RawHex, h.BumpHex, h.Height = "", "", 0
+		}
+		c.Holds[i] = h
+	}
+	return &c
+}
+
+// expand gives each hold record its transaction back from HoldTxs, so that
+// in memory every record carries it, as records saved by earlier builds
+// do. Called once the state is loaded.
+func (s *state) expand() {
+	for i := range s.Holds {
+		h := &s.Holds[i]
+		if h.RawHex != "" {
+			continue
+		}
+		if t, ok := s.HoldTxs[h.Txid]; ok {
+			h.RawHex, h.BumpHex, h.Height = t.Raw, t.Bump, t.Height
+		}
+	}
+	s.HoldTxs = nil
 }
 
 func loadState(dir string) (*state, error) {
@@ -857,6 +905,7 @@ func loadState(dir string) (*state, error) {
 	if err := json.Unmarshal(raw, &st); err != nil {
 		return nil, fmt.Errorf("publisher.json: %w", err)
 	}
+	st.expand()
 	return &st, nil
 }
 
