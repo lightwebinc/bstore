@@ -132,7 +132,7 @@ serves all three).
 | `quorum` | 1 | hosts that must take an entry when there is no facade |
 | `ca`, `fetch_private` | none, false | certificates trusted besides the system's; whether advertised URLs at loopback, private or link-local addresses are reached |
 | `bounty` | none | what a put asks for unless told otherwise: `satoshis`, `t`, `k`, `retention_seconds`, `deadline_blocks`, `check_c` |
-| `hold_ahead` | 8 | mined hold outputs of a bounty kept ready |
+| `hold_ahead` | 8 | mined hold outputs of a bounty kept ready: the puts one block interval absorbs |
 | `race_window_seconds` | 3600 | the writer's race window |
 | `publish_outcomes` | true | publish failed settlement challenges and every challenge's outcome as outcome records |
 | `piece_tree`, `entry_tree` | 256, 16 | outputs of a new funding tree (outcome trees take `entry_tree`); the next tree of each kind is minted ahead, in the background, so a put of up to `piece_tree` pieces never waits for a block |

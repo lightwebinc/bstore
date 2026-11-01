@@ -22,14 +22,23 @@ import (
 // hold output well before it publishes the entry (spec section 9.4), and a
 // put should not wait for a block. Each is recorded before its transaction
 // reaches the settlement leg; one that was handed to the leg and not seen
-// mined is asked about again (Holds), and sent again when the node does
-// not know it.
+// mined is asked about again (CheckHolds), and sent again when the node does
+// not know it. A fill mints as many transactions as HoldAhead asks for and
+// the pool has coins for, and waits for each to mine on a goroutine of its
+// own, so that the pool refills by more than sixteen a block; a transaction
+// minted while more are owed leaves its change in a coin for each of them,
+// so that the next block funds them side by side.
 
 // ErrNoHold is a put that asked for a bounty when no mined hold output of
 // that value was ready within HoldWait; minting more is under way.
 var ErrNoHold = errors.New("publish: no mined hold output is ready for the bounty yet")
 
-const maxHoldsPerTx = 16
+const (
+	maxHoldsPerTx = 16
+	// maxHoldChange is how many change coins one hold transaction leaves
+	// at most, for the transactions still owed.
+	maxHoldChange = 8
+)
 
 // ready is the hold outputs of sats that are mined and not taken; the
 // caller holds p.mu.
@@ -91,32 +100,52 @@ func (p *Publisher) takeHold(ctx context.Context, bucket string, sats uint64) (*
 	}
 }
 
-// FillHolds mints hold outputs of sats until HoldAhead are ready (mined or
-// on their way), at most 16 to a transaction, and waits for them to mine.
-// One fill runs at a time; a call while one runs returns at once.
+// FillHolds mints hold outputs of sats until HoldAhead are ready or on
+// their way, at most 16 to a transaction and as many transactions as the
+// pool has spendable coins for; each is waited for in the background. One
+// fill runs at a time; a call while one runs returns at once.
 func (p *Publisher) FillHolds(ctx context.Context, sats uint64) {
 	if !p.holdMu.TryLock() {
 		return
 	}
 	defer p.holdMu.Unlock()
-	p.mu.Lock()
-	have := 0
-	for _, h := range p.st.Holds {
-		if !h.Used && h.Sats == sats {
-			have++
+	minted := 0
+	for {
+		p.mu.Lock()
+		have := 0
+		for _, h := range p.st.Holds {
+			if !h.Used && h.Sats == sats {
+				have++
+			}
 		}
-	}
-	p.mu.Unlock()
-	need := min(p.cfg.HoldAhead-have, maxHoldsPerTx)
-	if need <= 0 {
-		return
-	}
-	if err := p.mintHolds(ctx, sats, need); err != nil {
-		p.cfg.Logf("hold outputs: %v", feeError(err))
+		p.mu.Unlock()
+		owed := p.cfg.HoldAhead - have
+		if owed <= 0 {
+			return
+		}
+		n := min(owed, maxHoldsPerTx)
+		more := (owed - n + maxHoldsPerTx - 1) / maxHoldsPerTx
+		if err := p.mintHolds(ctx, sats, n, more); err != nil {
+			// Coins on their way (the change of a transaction not mined
+			// yet) fund the rest at the next block: not worth a line on
+			// every put while holds are ready or coming.
+			var nc *producer.NoCoinError
+			if minted > 0 || (errors.As(err, &nc) && (nc.Held > 0 || nc.Minting > 0) && have > 0) {
+				return
+			}
+			p.cfg.Logf("hold outputs: %v", feeError(err))
+			return
+		}
+		minted++
 	}
 }
 
-func (p *Publisher) mintHolds(ctx context.Context, sats uint64, n int) error {
+// mintHolds mints one transaction of n hold outputs of sats, hands it to
+// the leg and waits for its proof in the background. more is how many
+// transactions are still owed after it: its change is left in a coin for
+// each (at most maxHoldChange), when it funds that many whole ones, so that
+// the next block mints them side by side.
+func (p *Publisher) mintHolds(ctx context.Context, sats uint64, n, more int) error {
 	key, err := storerec.LockingKey(storerec.HoldDerivation, p.Identity())
 	if err != nil {
 		return err
@@ -129,7 +158,8 @@ func (p *Publisher) mintHolds(ctx context.Context, sats uint64, n int) error {
 	if h, err := p.bestHeader(ctx); err == nil {
 		pay.Tip = h.Height
 	}
-	fee := p.feeAt(uint64(200 + 45*n))
+	parts := max(min(more, maxHoldChange), 1)
+	fee := p.feeAt(uint64(200 + 45*n + 34*parts))
 	coin, err := pay.TakeAtLeast(ctx, uint64(n)*sats+fee+p.dust())
 	if err != nil {
 		return err
@@ -146,7 +176,20 @@ func (p *Publisher) mintHolds(ctx context.Context, sats uint64, n int) error {
 			pay.GiveBack()
 			return err
 		}
-		tx.AddOutput(&transaction.TransactionOutput{Satoshis: change, LockingScript: cs})
+		// A coin for each transaction still owed, each able to fund a
+		// whole one; one coin when the change is not that much.
+		full := uint64(maxHoldsPerTx)*sats + p.feeAt(uint64(200+45*maxHoldsPerTx+34)) + p.dust()
+		if k := int(change / full); k < parts {
+			parts = max(k, 1)
+		}
+		each := change / uint64(parts)
+		for i := 0; i < parts; i++ {
+			v := each
+			if i == parts-1 {
+				v = change - each*uint64(parts-1)
+			}
+			tx.AddOutput(&transaction.TransactionOutput{Satoshis: v, LockingScript: cs})
+		}
 	}
 	if err := tx.Sign(); err != nil {
 		pay.GiveBack()
@@ -169,8 +212,8 @@ func (p *Publisher) mintHolds(ctx context.Context, sats uint64, n int) error {
 		pay.GiveBack()
 		return err
 	}
-	mp, height, err := pay.SettleAndWait(ctx, "hold outputs", tx)
-	if err != nil {
+	pay.Async = true
+	if _, _, err := pay.Settle(ctx, "hold outputs", tx); err != nil {
 		if errors.Is(err, producer.ErrRefused) {
 			// Never on the chain: the record goes and the coin comes back
 			// (unless the refusal showed it spent elsewhere).
@@ -179,13 +222,33 @@ func (p *Publisher) mintHolds(ctx context.Context, sats uint64, n int) error {
 			return err
 		}
 		// It may be on its way: the record stays, the coin stays out, and
-		// Holds asks again.
+		// CheckHolds asks again.
 		return fmt.Errorf("hold transaction %s: %w (asked about again later)", short(txid), err)
+	}
+	go p.awaitHolds(pay, tx)
+	return nil
+}
+
+// awaitHolds waits for a hold transaction the leg accepted to mine, then
+// records its proof and returns its change to the pool. One the node shows
+// refused is dropped and its coin given back; one not mined within the
+// Payer's wait is left to CheckHolds.
+func (p *Publisher) awaitHolds(pay *producer.Payer, tx *transaction.Transaction) {
+	txid := tx.TxID().String()
+	mp, height, err := pay.Await(p.run, "hold outputs", tx)
+	if err != nil {
+		if errors.Is(err, producer.ErrRefused) {
+			p.dropHolds(txid)
+			pay.GiveBack()
+		}
+		if p.run.Err() == nil {
+			p.cfg.Logf("hold transaction %s: %v", short(txid), feeError(err))
+		}
+		return
 	}
 	tx.MerklePath = mp
 	pay.Change(tx, height, mp)
 	p.markMined(txid, mp, height)
-	return nil
 }
 
 func (p *Publisher) dropHolds(txid string) {
