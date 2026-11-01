@@ -189,7 +189,17 @@ func (p *Publisher) mintHolds(ctx context.Context, sats uint64, n, more int, tip
 		parts = min(more+1, maxHoldChange)
 	}
 	fee := p.feeAt(uint64(200 + 45*n + 34*parts))
-	coin, err := pay.TakeAtLeast(ctx, uint64(n)*sats+fee+p.dust())
+	// A take that finds no coin would collect a funding tree minted ahead
+	// (producer.takeAfterMints) from this goroutine, and the put waiting
+	// on that mint under mintMu would miss its result and hang: with no
+	// coin spendable the fill stops here, and the next cycle finds the
+	// change. The take's own wait is kept short for the same reason.
+	if p.spendableCoins(tip) == 0 {
+		return &producer.NoCoinError{Err: bwallet.ErrNoSpendable, Held: len(p.wallet.Pool.UnprovenTxids())}
+	}
+	tctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	coin, err := pay.TakeAtLeast(tctx, uint64(n)*sats+fee+p.dust())
+	cancel()
 	if err != nil {
 		return err
 	}

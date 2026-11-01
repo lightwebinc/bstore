@@ -103,6 +103,7 @@ func TestFillHoldsMintsMoreThanOneTransactionABlock(t *testing.T) {
 	if change != 3 {
 		t.Fatalf("the first transaction leaves %d change coins, want one for each of the 2 transactions still owed and one to spare", change)
 	}
+	until("the first transaction at the chain", func() bool { return chain.Waiting() == 1 })
 	time.Sleep(100 * time.Millisecond)
 	if n, _ := holdTxids(); n != maxHoldsPerTx {
 		t.Fatalf("%d hold outputs before the block: the cycle minted beyond its coins", n)
@@ -112,6 +113,7 @@ func TestFillHoldsMintsMoreThanOneTransactionABlock(t *testing.T) {
 	}
 	// The second cycle: two coins, two transactions at once, 40 in all.
 	until("the second cycle", func() bool { n, ids := holdTxids(); return n == 40 && len(ids) == 3 })
+	until("the two transactions at the chain", func() bool { return chain.Waiting() == 2 })
 	select {
 	case <-done:
 		t.Fatal("the fill returned before its last cycle mined")
