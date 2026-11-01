@@ -84,7 +84,8 @@ func TestDocumentedVersionsMatchThePins(t *testing.T) {
 	goMinor := regexp.MustCompile(`^\d+\.\d+`).FindString(goVer)
 	pins := []pin{
 		{name: "go-sdk", re: regexp.MustCompile(`go-sdk\x60? (v\d+\.\d+\.\d+)`), want: req["github.com/bsv-blockchain/go-sdk"]},
-		{name: "bcommon", re: regexp.MustCompile(`bcommon\x60? (v\d+\.\d+\.\d+)`), want: req["github.com/lightwebinc/bcommon"]},
+		// A pin may be a pseudo-version between tags; the document names it whole.
+		{name: "bcommon", re: regexp.MustCompile(`bcommon\x60? (v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)`), want: req["github.com/lightwebinc/bcommon"]},
 		{name: "@bsv/sdk", re: regexp.MustCompile(`@bsv/sdk\x60? (\d+\.\d+\.\d+)`), want: pkg.Dependencies["@bsv/sdk"],
 			// The advertisement check was ported from ts-stack's release,
 			// a fixed point of history, not the SDK this repository pins.

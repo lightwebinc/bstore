@@ -99,12 +99,15 @@ type Config struct {
 	// keys, docs/s3.md).
 	acceptcfg.Config
 	// PieceWorkers is how many piece carriers a put mints and sends at once
-	// (default 4); PieceAhead how few outputs left on a piece tree start the
-	// next one in the background (default piece_tree: one always ready);
-	// EntryAhead the same for the entry tree (default half of entry_tree).
-	// A writer is held to entry_tree entries a block interval when the
-	// next tree is not mined before the current one runs out: size
-	// entry_tree, and entry_ahead, to the puts one block interval absorbs.
+	// (default 4); PieceAhead how many piece outputs are kept ready ahead
+	// of the puts, across the current tree, the trees held for a switch
+	// and the trees being minted, with more trees minted in the background
+	// when fewer are left (default piece_tree: one tree always ready);
+	// EntryAhead the same for entry trees (default half of entry_tree). A
+	// writer is held to the entry outputs ready per block interval: set
+	// entry_ahead to the puts one block interval must absorb, and the
+	// gateway keeps that many ready across as many trees of entry_tree
+	// outputs as it takes, each entry carrier carrying only its own tree.
 	PieceWorkers int `json:"piece_workers,omitempty"`
 	PieceAhead   int `json:"piece_ahead,omitempty"`
 	EntryAhead   int `json:"entry_ahead,omitempty"`
@@ -417,11 +420,8 @@ func (c *Config) Check() error {
 	if c.EntryTree == 0 {
 		c.EntryTree = 16
 	}
-	if c.PieceAhead == 0 || c.PieceAhead > c.PieceTree {
+	if c.PieceAhead == 0 {
 		c.PieceAhead = c.PieceTree
-	}
-	if c.EntryAhead > c.EntryTree {
-		c.EntryAhead = c.EntryTree
 	}
 	if c.PieceWorkers == 0 {
 		c.PieceWorkers = 4

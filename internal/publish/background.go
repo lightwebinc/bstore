@@ -109,6 +109,7 @@ func (p *Publisher) Background(ctx context.Context, o RaceOptions, tick time.Dur
 		if time.Since(last) >= time.Minute {
 			p.CollectChange(ctx)
 			p.ReconcilePayments(ctx)
+			p.Prune()
 			last = time.Now()
 		}
 		select {

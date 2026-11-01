@@ -103,8 +103,6 @@ func (p *Publisher) Put(ctx context.Context, f Fields, obj Object, b *Bounty) (*
 			return nil, err
 		}
 	}
-	p.mintMu.Lock()
-	defer p.mintMu.Unlock()
 	var hold *HoldRecord
 	minted := false
 	defer func() {
@@ -196,8 +194,6 @@ func (p *Publisher) Delete(ctx context.Context, bucket string, id [32]byte, key 
 	if p.Killed() {
 		return nil, ErrKilled
 	}
-	p.mintMu.Lock()
-	defer p.mintMu.Unlock()
 	if err := p.noteBucket(bucket); err != nil {
 		return nil, err
 	}
@@ -211,8 +207,9 @@ func (p *Publisher) Delete(ctx context.Context, bucket string, id [32]byte, key 
 // each carrier is written to the outbox, synced, before it is sent. A put
 // spends what the current tree has left before it switches to the next,
 // minted ahead. A piece that reaches no target stops the put: the next one
-// would only add to the backlog; what was minted stays in the outbox and
-// is sent again.
+// would only add to the backlog, and the carriers the put minted are
+// dropped from the outbox, since no entry names them and the client's
+// retry mints its own.
 func (p *Publisher) publishPieces(ctx context.Context, bucket string, root [32]byte, c Closure) (int, error) {
 	objs := c.Objects()
 	targets := p.cfg.Delivery.pieceTargets(bucket)
@@ -240,9 +237,11 @@ func (p *Publisher) publishPieces(ctx context.Context, bucket string, root [32]b
 		}
 		tree, vout, err := p.spend(ctx, kindPiece, uint32(batch))
 		if err != nil {
+			b.abandon()
 			return int(minted.Load()), err
 		}
 		if err := p.sendPieces(ctx, bucket, root, c, objs[done:done+batch], tree, vout, targets, b, byRef, &minted); err != nil {
+			b.abandon()
 			return int(minted.Load()), err
 		}
 		done += batch
@@ -332,6 +331,7 @@ func (p *Publisher) sendPiece(ctx context.Context, bucket string, root [32]byte,
 	if err != nil {
 		return err
 	}
+	b.track(it.ID)
 	data, rec = nil, nil
 	if ok, refused := p.outbox.sendAll(ctx, it, beef); len(ok)+len(refused) == 0 {
 		return fmt.Errorf("piece %s reached no target", short(it.ID))

@@ -578,6 +578,16 @@ type outBatch struct {
 	syncMu          sync.Mutex
 	// live is the file's name while the put that writes it runs.
 	live string
+	// ids is every item the put wrote, in the batch or in a file of its
+	// own, for abandon.
+	ids []string
+}
+
+// track records an item of the put, wherever it is kept.
+func (b *outBatch) track(id string) {
+	b.mu.Lock()
+	b.ids = append(b.ids, id)
+	b.mu.Unlock()
 }
 
 // newBatch starts a batch file.
@@ -695,6 +705,19 @@ func (b *outBatch) markDone(id string) {
 	if b.f != nil {
 		raw, _ := json.Marshal(outItem{Done: id})
 		_, _ = b.f.Write(append(raw, '\n'))
+	}
+}
+
+// abandon drops every item the put wrote and did not deliver, in the batch
+// or moved to a file of its own: the put failed, so no entry names their
+// carriers, and a retry of the put mints its own. Called once the put's
+// senders have stopped.
+func (b *outBatch) abandon() {
+	b.mu.Lock()
+	ids := slices.Clone(b.ids)
+	b.mu.Unlock()
+	for _, id := range ids {
+		b.o.remove(&outItem{ID: id, batch: b})
 	}
 }
 

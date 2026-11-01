@@ -35,6 +35,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bsv-blockchain/go-sdk/script"
@@ -158,12 +159,18 @@ type Publisher struct {
 	mu sync.Mutex // st and every save
 	st *state
 
-	mintMu sync.Mutex // one put mints at a time: the trees are not shared
+	// spendMu, one a tree kind, holds a spend from the library's answer to
+	// the state's record of it, so that two puts never take the same
+	// outputs; puts otherwise run side by side.
+	spendMu [3]sync.Mutex
+	// tip is the chain height the payer judges coinbase maturity at,
+	// learned by whichever put or settlement asks last.
+	tip atomic.Uint32
 	// run is the Publisher's own lifetime: what a put starts in the
 	// background (a funding tree minted ahead) outlives the request.
 	run    context.Context
 	stop   context.CancelFunc
-	holdMu sync.Mutex // one hold transaction minted at a time
+	holdMu sync.Mutex // one hold fill runs at a time
 	kept   *producer.Kept
 	payer  *producer.Payer
 	pieces *producer.Trees
@@ -314,9 +321,12 @@ func Open(ctx context.Context, cfg Config) (*Publisher, error) {
 	} else if p.st.Identity != p.signer.IdentityHex() {
 		return nil, fmt.Errorf("publish: the state in %s belongs to %s, not this wallet's %s", cfg.Dir, p.st.Identity, p.signer.IdentityHex())
 	}
+	if n := p.repairProofs(); n > 0 {
+		cfg.Logf("publisher state: %d proof(s) recorded by an earlier run cut to the minimal path", n)
+	}
 	p.kept = &producer.Kept{Load: p.loadKept}
 	p.payer = &producer.Payer{Pool: w.Pool, Keys: map[string]*bwallet.Signer{p.signer.IdentityHex(): p.signer},
-		Kept: p.kept, Settler: cfg.Settler, Chain: cfg.Chain, Fees: p.fees(), Note: p.note, Poll: cfg.Poll}
+		Kept: p.kept, Settler: cfg.Settler, Chain: cfg.Chain, Fees: p.fees(), Note: p.note, Poll: cfg.Poll, TipFunc: p.tip.Load}
 	p.pieces = p.newTrees(kindPiece, storerec.PieceDerivation, cfg.PieceTree, cfg.PieceAhead)
 	p.ents = p.newTrees(kindEntry, storerec.EntryDerivation, cfg.EntryTree, cfg.EntryAhead)
 	p.outs = p.newTrees(kindOutcome, storerec.OutcomeDerivation, cfg.EntryTree, cfg.EntryAhead)
@@ -337,8 +347,29 @@ func Open(ctx context.Context, cfg Config) (*Publisher, error) {
 	if err := p.recoverTrees(ctx); err != nil {
 		return nil, err
 	}
+	p.holdAhead()
 	ok = true
 	return p, nil
+}
+
+// holdAhead gives the library every tree an earlier run minted ahead and
+// did not use (the state's trees ahead), so that the spends switch to them
+// before more are minted.
+func (p *Publisher) holdAhead() {
+	for _, kind := range []string{kindPiece, kindEntry, kindOutcome} {
+		p.mu.Lock()
+		ahead := slices.Clone(p.set(kind).Ahead)
+		p.mu.Unlock()
+		trees := p.treesOf(kind)
+		for _, t := range ahead {
+			if t.IdentityKeyHex != p.signer.IdentityHex() || t.Remaining() == 0 {
+				continue
+			}
+			if err := trees.Hold(t); err != nil {
+				p.cfg.Logf("funding tree %s, minted ahead by an earlier run: %v", short(t.Txid), err)
+			}
+		}
+	}
 }
 
 // Close stops what the identity runs in the background (a funding tree
@@ -651,8 +682,14 @@ func (p *Publisher) recoverTrees(ctx context.Context) error {
 func (p *Publisher) spend(ctx context.Context, kind string, need uint32) (*transaction.Transaction, uint32, error) {
 	trees := p.treesOf(kind)
 	if h, err := p.bestHeader(ctx); err == nil {
-		p.payer.Tip = h.Height
+		p.tip.Store(h.Height)
 	}
+	// The library answers the state's next outputs and the state records
+	// them spent here: one spend of a kind at a time between the two, or
+	// two puts would be answered the same outputs.
+	mu := p.spendLock(kind)
+	mu.Lock()
+	defer mu.Unlock()
 	if err := p.promoteAhead(kind); err != nil {
 		return nil, 0, err
 	}
@@ -683,6 +720,17 @@ func (p *Publisher) spend(ctx context.Context, kind string, need uint32) (*trans
 		return nil, 0, err
 	}
 	return tree, vout, nil
+}
+
+// spendLock is the lock a spend of kind holds.
+func (p *Publisher) spendLock(kind string) *sync.Mutex {
+	switch kind {
+	case kindPiece:
+		return &p.spendMu[0]
+	case kindOutcome:
+		return &p.spendMu[2]
+	}
+	return &p.spendMu[1]
 }
 
 // keepHeld records every tree the library holds for a switch (a tree
