@@ -26,13 +26,13 @@ import (
 // put should not wait for a block. Each is recorded before its transaction
 // reaches the settlement leg; one that was handed to the leg and not seen
 // mined is asked about again (CheckHolds), and sent again when the node does
-// not know it. A fill runs in cycles: a cycle mints the whole deficit, as
-// many transactions as it takes and the pool has coins for, waits for them
-// all to mine, and goes again while the pool is below HoldAhead. A
-// transaction minted while more are owed leaves its change in a coin for
-// each of them, so that the next cycle funds them side by side; a cycle
-// always leaves the pool one spendable coin, for the funding trees and
-// fees a put needs meanwhile.
+// not know it. A fill runs in batches: a batch mints the whole deficit, as
+// many transactions as it takes and the pool has coins for, and the next
+// batch follows once it has mined or a few seconds have passed, while the
+// pool is below HoldAhead. A transaction minted while more are owed
+// leaves its change in a coin for each of them, so that the next batch
+// funds them side by side; a batch always leaves the pool one spendable
+// coin, for the funding trees and fees a put needs meanwhile.
 
 // ErrNoHold is a put that asked for a bounty when no mined hold output of
 // that value was ready within HoldWait; minting more is under way.
@@ -43,6 +43,10 @@ const (
 	// maxHoldChange is how many change coins one hold transaction leaves
 	// at most, for the transactions still owed.
 	maxHoldChange = 8
+	// holdBatch is how long a fill lets takes accumulate before it mints
+	// the next batch, when the pool has a coin for it besides the change
+	// of the batch still mining: the refill is not held to the block.
+	holdBatch = 10 * time.Second
 )
 
 // takeHold takes a mined, unused hold output of sats, marks it used and
@@ -117,11 +121,13 @@ func (p *Publisher) spendableCoins(tip uint32) int {
 }
 
 // FillHolds mints hold outputs of sats until HoldAhead are ready, in
-// cycles: each cycle mints the deficit, at most 16 to a transaction and as
-// many transactions as the pool has spendable coins for (one is always
-// left), then waits for them to mine before it looks again. One fill runs
-// at a time; a call while one runs returns at once, and the running fill
-// sees the take that called it on its next cycle.
+// batches: each batch mints the deficit, at most 16 to a transaction and
+// as many transactions as the pool has spendable coins for (one is always
+// left), then the fill looks again once the batch has mined or holdBatch
+// has passed, whichever is first, so that the pool refills as fast as its
+// coins allow and not one batch a block. One fill runs at a time; a call
+// while one runs returns at once, and the running fill sees the take that
+// called it on its next batch.
 func (p *Publisher) FillHolds(ctx context.Context, sats uint64) {
 	if !p.holdMu.TryLock() {
 		return
@@ -159,8 +165,15 @@ func (p *Publisher) FillHolds(ctx context.Context, sats uint64) {
 		if minted == 0 {
 			return
 		}
-		wg.Wait()
-		if ctx.Err() != nil {
+		mined := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(mined)
+		}()
+		select {
+		case <-mined:
+		case <-time.After(holdBatch):
+		case <-ctx.Done():
 			return
 		}
 	}
