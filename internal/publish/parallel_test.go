@@ -582,15 +582,27 @@ func TestRaceTickSettlesAndReclaims(t *testing.T) {
 		t.Fatal(err)
 	}
 	o := RaceOptions{Window: time.Hour}
+	// A pass sends the settlement and does not wait for its block: the
+	// next pass, once a block holds it, sees it mined.
 	r.p.RaceTick(r.ctx, o)
 	got, _ := r.p.Race(won.Entry)
-	if got.State != RaceSettled || got.Settlement == nil {
-		t.Fatalf("the won race: %s %s", got.State, got.Note)
+	if got.State != RaceSettling || got.Settlement == nil {
+		t.Fatalf("the won race after one pass: %s %s", got.State, got.Note)
+	}
+	r.blocks(1)
+	r.p.RaceTick(r.ctx, o)
+	if got, _ = r.p.Race(won.Entry); got.State != RaceSettled || got.Settlement == nil {
+		t.Fatalf("the won race after its block: %s %s", got.State, got.Note)
 	}
 	if l, _ := r.p.Race(lost.Entry); l.State != RaceOpen {
 		t.Fatalf("the race nobody won before its deadline: %s", l.State)
 	}
 	r.blocks(25)
+	r.p.RaceTick(r.ctx, o)
+	if l, _ := r.p.Race(lost.Entry); l.State != RaceReclaim || l.Reclaim == nil {
+		t.Fatalf("the race nobody won after its deadline, after one pass: %s %s", l.State, l.Note)
+	}
+	r.blocks(1)
 	r.p.RaceTick(r.ctx, o)
 	if l, _ := r.p.Race(lost.Entry); l.State != RaceReclaimd || l.Reclaim == nil {
 		t.Fatalf("the race nobody won after its deadline: %s %s", l.State, l.Note)

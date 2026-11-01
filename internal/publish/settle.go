@@ -224,8 +224,15 @@ func (p *Publisher) adChain(ctx context.Context, txid string, vout uint32, adv [
 // run recorded and did not see through. It returns the record of what it
 // did (nil when nothing is paid).
 func (p *Publisher) Settle(ctx context.Context, r *Race, force bool) (*SettleRecord, error) {
+	return p.settle(ctx, r, force, true)
+}
+
+// settle is Settle; with wait it waits for the settlement's block, as the
+// by-hand command does, and without it sends the settlement and leaves
+// its block to a later pass (RaceTick).
+func (p *Publisher) settle(ctx context.Context, r *Race, force, wait bool) (*SettleRecord, error) {
 	if r.Settlement != nil && r.Settlement.Abandoned == "" {
-		return r.Settlement, p.resumeSettlement(ctx, r)
+		return r.Settlement, p.resumeSettlement(ctx, r, wait)
 	}
 	switch r.State {
 	case RaceSettled, RaceReclaimd, RaceReclaim, RaceSpent:
@@ -309,7 +316,7 @@ func (p *Publisher) Settle(ctx context.Context, r *Race, force bool) (*SettleRec
 		r.Settlement, r.State = nil, RaceOpen
 		return nil, err
 	}
-	return rec, p.resumeSettlement(ctx, r)
+	return rec, p.resumeSettlement(ctx, r, wait)
 }
 
 // buildSettlement signs the settlement transaction: the hold output and a
@@ -398,7 +405,7 @@ func (p *Publisher) buildSettlement(ctx context.Context, r *Race, hold *HoldReco
 
 // resumeSettlement sees a recorded settlement through: sent (again, the
 // same bytes) until it mines, then each payee's remittance.
-func (p *Publisher) resumeSettlement(ctx context.Context, r *Race) error {
+func (p *Publisher) resumeSettlement(ctx context.Context, r *Race, wait bool) error {
 	s := r.Settlement
 	raw, err := hex.DecodeString(s.Raw)
 	if err != nil {
@@ -470,6 +477,12 @@ func (p *Publisher) resumeSettlement(ctx context.Context, r *Race) error {
 				if done, err := p.remitUnmined(ctx, r, tx); done {
 					return err
 				}
+			}
+			if !wait {
+				// Followed to its block on a later pass: a pass that waited
+				// a block for each settlement would make the writer's whole
+				// race work one settlement a block.
+				return fmt.Errorf("%w: settlement %s is sent; its block is seen on a later pass", ErrNotYet, short(s.Txid))
 			}
 			pay := p.newPayer(ctx)
 			mp, height, err = pay.Await(ctx, "settlement", tx)
@@ -608,8 +621,15 @@ func displayOf(h [32]byte) string {
 // deadline (spec section 9.6), unless a settlement of it is recorded and
 // not proven abandoned: a hold output settles or is reclaimed, never both.
 func (p *Publisher) Reclaim(ctx context.Context, r *Race) (*ReclaimRecord, error) {
+	return p.reclaim(ctx, r, true)
+}
+
+// reclaim is Reclaim; with wait it waits for the reclaim's block, as the
+// by-hand command does, and without it sends the reclaim and leaves its
+// block to a later pass (RaceTick).
+func (p *Publisher) reclaim(ctx context.Context, r *Race, wait bool) (*ReclaimRecord, error) {
 	if r.Reclaim != nil {
-		return r.Reclaim, p.resumeReclaim(ctx, r)
+		return r.Reclaim, p.resumeReclaim(ctx, r, wait)
 	}
 	if r.Settlement != nil && r.Settlement.Abandoned == "" {
 		return nil, fmt.Errorf("publish: race %s has a settlement (%s); it is not reclaimed", short(r.Entry), short(r.Settlement.Txid))
@@ -642,7 +662,7 @@ func (p *Publisher) Reclaim(ctx context.Context, r *Race) (*ReclaimRecord, error
 		_ = p.wallet.Pool.Return(rec.Fee)
 		return nil, err
 	}
-	return rec, p.resumeReclaim(ctx, r)
+	return rec, p.resumeReclaim(ctx, r, wait)
 }
 
 // reclaimHold signs a spend of a hold output back to the fund key, with a
@@ -691,12 +711,17 @@ func (p *Publisher) reclaimHold(ctx context.Context, hold *HoldRecord) (*Reclaim
 	return &ReclaimRecord{Txid: tx.TxID().String(), Raw: hex.EncodeToString(tx.Bytes()), Fee: coinOf(fee)}, nil
 }
 
-func (p *Publisher) resumeReclaim(ctx context.Context, r *Race) error {
+func (p *Publisher) resumeReclaim(ctx context.Context, r *Race, wait bool) error {
 	rc := r.Reclaim
 	if rc.Height > 0 {
 		return nil
 	}
-	_, height, adopted, err := p.sendSpend(ctx, "reclaim", rc.Raw, rc.Txid)
+	_, height, adopted, err := p.sendSpend(ctx, "reclaim", rc.Raw, rc.Txid, wait)
+	if adopted != nil && err != nil {
+		// The node knows it re-encoded: the record follows that one.
+		rc.Txid, rc.Raw = adopted.TxID().String(), hex.EncodeToString(adopted.Bytes())
+		_ = p.saveRace(r)
+	}
 	switch {
 	case errors.Is(err, errSpentElsewhere):
 		r.State, r.Note = RaceSpent, err.Error()
@@ -726,11 +751,17 @@ var (
 )
 
 // sendSpend sends a recorded spend of a hold output (its first input; the
-// same bytes again on a later run) and waits for it to mine; its change
-// goes to the pool. The hold output spent by another transaction is
+// same bytes again on a later run) and answers its proof once it has one,
+// with its change taken into the pool. With wait it waits for the block,
+// as the by-hand commands do; without it one sent and not yet mined is
+// ErrNotYet, and a later call finds its proof, since a pass that waited a
+// block for each spend would make the writer's whole race work one spend
+// a block. The hold output spent by another transaction is
 // errSpentElsewhere, unless that transaction is this one re-encoded, which
-// is adopted and returned; the fee input spent elsewhere is errStranded.
-func (p *Publisher) sendSpend(ctx context.Context, what, rawHex, txid string) (*transaction.MerklePath, uint32, *transaction.Transaction, error) {
+// is adopted and returned, with ErrNotYet while it is unmined and not
+// waited for, so the caller records it; the fee input spent elsewhere is
+// errStranded.
+func (p *Publisher) sendSpend(ctx context.Context, what, rawHex, txid string, wait bool) (*transaction.MerklePath, uint32, *transaction.Transaction, error) {
 	raw, err := hex.DecodeString(rawHex)
 	if err != nil {
 		return nil, 0, nil, err
@@ -760,13 +791,23 @@ func (p *Publisher) sendSpend(ctx context.Context, what, rawHex, txid string) (*
 			p.cfg.Logf("%s %s: sent: %v", what, short(txid), err)
 		}
 	}
-	mp, height, err := p.newPayer(ctx).Await(ctx, what, tx)
-	if err != nil {
-		return nil, 0, nil, fmt.Errorf("%w: %s %s: %v", ErrNotYet, what, short(txid), err)
+	if wait {
+		mp, height, err := p.newPayer(ctx).Await(ctx, what, tx)
+		if err != nil {
+			return nil, 0, nil, fmt.Errorf("%w: %s %s: %v", ErrNotYet, what, short(txid), err)
+		}
+		tx.MerklePath = mp
+		p.newPayer(ctx).Change(tx, height, mp)
+		return mp, height, adopted, nil
 	}
-	tx.MerklePath = mp
-	p.newPayer(ctx).Change(tx, height, mp)
-	return mp, height, adopted, nil
+	if adopted != nil {
+		if mp, height, err := p.cfg.Chain.Proof(ctx, adopted.TxID().String()); err == nil {
+			adopted.MerklePath = mp
+			p.newPayer(ctx).Change(adopted, height, mp)
+			return mp, height, adopted, nil
+		}
+	}
+	return nil, 0, adopted, fmt.Errorf("%w: %s %s is sent; its block is seen on a later pass", ErrNotYet, what, short(txid))
 }
 
 // ReclaimUnused spends back to the fund key every mined hold output no
@@ -811,7 +852,11 @@ func (p *Publisher) ReclaimUnused(ctx context.Context) ([]string, error) {
 			h.Reclaim = rec
 		}
 		rc := h.Reclaim
-		_, height, adopted, err := p.sendSpend(ctx, "reclaim", rc.Raw, rc.Txid)
+		_, height, adopted, err := p.sendSpend(ctx, "reclaim", rc.Raw, rc.Txid, true)
+		if adopted != nil && err != nil {
+			rc.Txid, rc.Raw = adopted.TxID().String(), hex.EncodeToString(adopted.Bytes())
+			_ = p.updateHold(h, func(x *HoldRecord) { x.Reclaim = rc })
+		}
 		switch {
 		case errors.Is(err, errSpentElsewhere):
 			p.ReturnCoin(ctx, rc.Fee)
