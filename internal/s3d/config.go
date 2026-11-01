@@ -100,9 +100,14 @@ type Config struct {
 	acceptcfg.Config
 	// PieceWorkers is how many piece carriers a put mints and sends at once
 	// (default 4); PieceAhead how few outputs left on a piece tree start the
-	// next one in the background (default piece_tree: one always ready).
+	// next one in the background (default piece_tree: one always ready);
+	// EntryAhead the same for the entry tree (default half of entry_tree).
+	// A writer is held to entry_tree entries a block interval when the
+	// next tree is not mined before the current one runs out: size
+	// entry_tree, and entry_ahead, to the puts one block interval absorbs.
 	PieceWorkers int `json:"piece_workers,omitempty"`
 	PieceAhead   int `json:"piece_ahead,omitempty"`
+	EntryAhead   int `json:"entry_ahead,omitempty"`
 	// Race is the hold race, settlement and reclaim the gateway runs in the
 	// background for its own puts.
 	Race RaceConfig `json:"race"`
@@ -381,8 +386,8 @@ func (c *Config) Check() error {
 	if c.HoldAhead <= 0 {
 		c.HoldAhead = 8
 	}
-	if c.PieceTree < 0 || c.EntryTree < 0 || c.PieceAhead < 0 || c.PieceWorkers < 0 {
-		return errors.New("piece_tree, entry_tree, piece_ahead and piece_workers are not negative")
+	if c.PieceTree < 0 || c.EntryTree < 0 || c.PieceAhead < 0 || c.EntryAhead < 0 || c.PieceWorkers < 0 {
+		return errors.New("piece_tree, entry_tree, piece_ahead, entry_ahead and piece_workers are not negative")
 	}
 	if c.PieceTree > 1023 || c.EntryTree > 1023 {
 		return errors.New("piece_tree and entry_tree are at most 1023")
@@ -414,6 +419,9 @@ func (c *Config) Check() error {
 	}
 	if c.PieceAhead == 0 || c.PieceAhead > c.PieceTree {
 		c.PieceAhead = c.PieceTree
+	}
+	if c.EntryAhead > c.EntryTree {
+		c.EntryAhead = c.EntryTree
 	}
 	if c.PieceWorkers == 0 {
 		c.PieceWorkers = 4

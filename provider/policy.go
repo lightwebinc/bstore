@@ -145,7 +145,10 @@ func (p *Provider) holdOutput(ctx context.Context, e *EntryRec) (uint32, error) 
 	raw, err := p.chain.TxRaw(ctx, hr.Txid)
 	if err != nil {
 		if nodeapi.IsHTTP(err, http.StatusNotFound) {
-			return 0, errors.New("the hold transaction is not known to the node")
+			// A writer's hold transaction reaches this provider's node on
+			// its own time, and the plane delivers the entry first: looked
+			// at again, for as long as an unclaimed piece is kept.
+			return 0, retry(errors.New("the hold transaction is not known to the node yet"))
 		}
 		return 0, retry(fmt.Errorf("the node did not answer for the hold transaction: %v", err))
 	}

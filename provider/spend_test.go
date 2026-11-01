@@ -35,7 +35,14 @@ func TestHoldOutputUnknownSpendStatus(t *testing.T) {
 	target, _ := url.Parse(r.srv.URL)
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	node := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if s := status.Load().(string); s != "" && strings.Contains(req.URL.Path, "/utxos/") {
+		if s := status.Load().(string); s == "tx404" {
+			if strings.Contains(req.URL.Path, "/api/v1/tx/") {
+				http.Error(w, `{"message":"not found"}`, http.StatusNotFound)
+				return
+			}
+			proxy.ServeHTTP(w, req)
+			return
+		} else if s != "" && strings.Contains(req.URL.Path, "/utxos/") {
 			w.Header().Set("Content-Type", "application/json")
 			if s == "404" {
 				http.Error(w, `{"message":"NOT_FOUND (3): not found"}`, http.StatusNotFound)
@@ -66,5 +73,14 @@ func TestHoldOutputUnknownSpendStatus(t *testing.T) {
 		if !errors.As(err, &re) {
 			t.Fatalf("status %s: want a retry (no evidence), got %v", s, err)
 		}
+	}
+	// A hold transaction the node does not know yet (the writer's broadcast
+	// has not reached it; the plane delivered the entry first) decides
+	// nothing either: it is looked at again, not declined.
+	status.Store("tx404")
+	_, err = p.holdOutput(ctx, e)
+	var re *retryError
+	if !errors.As(err, &re) {
+		t.Fatalf("a hold transaction the node does not know: want a retry, got %v", err)
 	}
 }
