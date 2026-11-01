@@ -127,7 +127,8 @@ hold output settles one entry (spec section 9.2): a second entry naming a
 hold output that backs an entry the provider took is declined. An entry
 whose bounty fails is declined, or held without racing when
 `hold_unbountied` is on; a check the chain view or the header source could not
-answer decides nothing, and the entry is looked at again for
+answer decides nothing (a hold transaction the node does not know or has
+not mined yet included), and the entry is looked at again for
 `unclaimed_seconds`, then declined. An entry the
 provider took is checked against the closure it holds: another size,
 content hash or proof root is declined. A closure is checked once for all
