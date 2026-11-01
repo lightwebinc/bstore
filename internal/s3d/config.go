@@ -123,6 +123,10 @@ type Config struct {
 	OutboxBytes int64 `json:"outbox_bytes,omitempty"`
 	// MetricsListen, when set, serves /metrics there, and only there.
 	MetricsListen string `json:"metrics_listen,omitempty"`
+	// PprofListen, when set, serves Go's net/http/pprof there (a loopback
+	// address: the profiles are the process's internals), with mutex and
+	// block profiling on.
+	PprofListen string `json:"pprof_listen,omitempty"`
 }
 
 // RaceConfig is the gateway's background race (spec section 9.4): for each

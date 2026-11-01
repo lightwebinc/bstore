@@ -46,6 +46,30 @@ type Delivery struct {
 	// Quorum is how many hosts must take an entry for a put without a
 	// facade to count as sent; zero is one.
 	Quorum int
+	// Observe, when set, is told how long each step took, in seconds, as a
+	// histogram name with labels: `bstore_publish_submit_seconds{target}`
+	// for each send (plane, host or provider), and
+	// `bstore_publish_piece_seconds{stage}` for each piece carrier's read,
+	// mint, outbox and send.
+	Observe func(name string, seconds float64)
+}
+
+// observe reports a step that began at since.
+func (d *Delivery) observe(name string, since time.Time) {
+	if d != nil && d.Observe != nil {
+		d.Observe(name, time.Since(since).Seconds())
+	}
+}
+
+// kind is the target's label: the plane, a host or a provider.
+func (t Target) kind() string {
+	switch {
+	case t.Plane:
+		return "plane"
+	case t.Host:
+		return "host"
+	}
+	return "provider"
 }
 
 // Target is one place one object goes: a submit route and a topic.
@@ -142,6 +166,7 @@ var errRefused = errors.New("publish: refused")
 // an engine answers an object it already holds with nothing admitted, and a
 // provider names why it took nothing.
 func (d *Delivery) submit(ctx context.Context, t Target, beef []byte) error {
+	defer d.observe(`bstore_publish_submit_seconds{target="`+t.kind()+`"}`, time.Now())
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.Base+"/submit", bytes.NewReader(beef))

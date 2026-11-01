@@ -302,10 +302,13 @@ func (p *Publisher) sendPieces(ctx context.Context, bucket string, root [32]byte
 // BEEF and the outbox key hash the 4 MiB carrier no second time.
 func (p *Publisher) sendPiece(ctx context.Context, bucket string, root [32]byte, c Closure, h [32]byte,
 	tree *transaction.Transaction, out uint32, targets []Target, b *outBatch, byRef bool, minted *atomic.Int64) error {
+	d, t0 := p.cfg.Delivery, time.Now()
 	data, err := c.Object(ctx, h)
 	if err != nil {
 		return fmt.Errorf("object %x: %w", h[:6], err)
 	}
+	d.observe(pieceStage("read"), t0)
+	t0 = time.Now()
 	pc := &storerec.Piece{Bucket: bucket, Writer: p.Identity(), Root: root, Piece: data}
 	rec, err := pc.Encode()
 	if err != nil {
@@ -322,6 +325,8 @@ func (p *Publisher) sendPiece(ctx context.Context, bucket string, root [32]byte,
 	if err != nil {
 		return err
 	}
+	d.observe(pieceStage("mint"), t0)
+	t0 = time.Now()
 	var it *outItem
 	if byRef {
 		it, err = p.outbox.addRef(b, txid.String(), "piece", beef, h, data, targets)
@@ -333,11 +338,18 @@ func (p *Publisher) sendPiece(ctx context.Context, bucket string, root [32]byte,
 	}
 	b.track(it.ID)
 	data, rec = nil, nil
-	if ok, refused := p.outbox.sendAll(ctx, it, beef); len(ok)+len(refused) == 0 {
+	d.observe(pieceStage("outbox"), t0)
+	t0 = time.Now()
+	ok, refused := p.outbox.sendAll(ctx, it, beef)
+	d.observe(pieceStage("send"), t0)
+	if len(ok)+len(refused) == 0 {
 		return fmt.Errorf("piece %s reached no target", short(it.ID))
 	}
 	return nil
 }
+
+// pieceStage names the histogram of one step of a piece carrier.
+func pieceStage(stage string) string { return `bstore_publish_piece_seconds{stage="` + stage + `"}` }
 
 // publishEntry mints the entry carrier on an entry tree output recorded
 // used first, writes it to the outbox, and sends it.
