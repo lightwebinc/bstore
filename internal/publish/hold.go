@@ -40,18 +40,6 @@ const (
 	maxHoldChange = 8
 )
 
-// ready is the hold outputs of sats that are mined and not taken; the
-// caller holds p.mu.
-func (p *Publisher) readyLocked(sats uint64) int {
-	n := 0
-	for _, h := range p.st.Holds {
-		if !h.Used && h.Sats == sats && h.BumpHex != "" {
-			n++
-		}
-	}
-	return n
-}
-
 // takeHold takes a mined, unused hold output of sats, marks it used and
 // saves before returning, and delivers its transaction to the bucket's
 // records topic. With none ready it starts minting and waits up to
