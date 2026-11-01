@@ -61,7 +61,12 @@ func (p *Publisher) takeHold(ctx context.Context, bucket string, sats uint64) (*
 			h.Used = true
 			rec := *h
 			if err := p.saveLocked(); err != nil {
-				h.Used = false
+				// The save released p.mu: the hold is found again by id.
+				for j := range p.st.Holds {
+					if p.st.Holds[j].Txid == rec.Txid {
+						p.st.Holds[j].Used = false
+					}
+				}
 				p.mu.Unlock()
 				return nil, err
 			}

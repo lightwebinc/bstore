@@ -158,6 +158,7 @@ type Publisher struct {
 
 	mu sync.Mutex // st and every save
 	st *state
+	sv saver // writes st: see save.go
 
 	// spendMu, one a tree kind, holds a spend from the library's answer to
 	// the state's record of it, so that two puts never take the same
@@ -394,6 +395,7 @@ func (p *Publisher) Close() {
 	if p.stop != nil {
 		p.stop()
 	}
+	p.flushSaves()
 	if p.lock != nil {
 		p.lock.release()
 		p.lock = nil
@@ -699,36 +701,45 @@ func (p *Publisher) spend(ctx context.Context, kind string, need uint32) (*trans
 	// The library answers the state's next outputs and the state records
 	// them spent here: one spend of a kind at a time between the two, or
 	// two puts would be answered the same outputs.
-	mu := p.spendLock(kind)
-	mu.Lock()
-	defer mu.Unlock()
-	if err := p.promoteAhead(kind); err != nil {
+	tree, vout, gen, err := func() (*transaction.Transaction, uint32, uint64, error) {
+		mu := p.spendLock(kind)
+		mu.Lock()
+		defer mu.Unlock()
+		if err := p.promoteAhead(kind); err != nil {
+			return nil, 0, 0, err
+		}
+		// The run's context, not the request's: a spend that leaves the tree
+		// low starts the next one in the background, and that mint must
+		// outlive this put. A spend that has to wait for a tree is bounded by
+		// the payer's own timeout.
+		tree, vout, err := trees.Spend(p.run, need)
+		if errors.Is(err, producer.ErrPublish) {
+			tree, vout, err = trees.Spend(p.run, need)
+		}
+		p.keepHeld(kind)
+		if err != nil {
+			return nil, 0, 0, feeError(fmt.Errorf("%s funding tree: %w", kind, err))
+		}
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		s := p.set(kind)
+		id := tree.TxID().String()
+		if s.Tree == nil || s.Tree.Txid != id {
+			return nil, 0, 0, fmt.Errorf("publish: the %s tree spent is not the current one", kind)
+		}
+		if s.Tree.Next < vout+need {
+			s.Tree.Next = vout + need
+			s.Trees = producer.Index(s.Trees, s.Tree)
+		}
+		return tree, vout, p.markDirtyLocked(), nil
+	}()
+	if err != nil {
 		return nil, 0, err
 	}
-	// The run's context, not the request's: a spend that leaves the tree
-	// low starts the next one in the background, and that mint must
-	// outlive this put. A spend that has to wait for a tree is bounded by
-	// the payer's own timeout.
-	tree, vout, err := trees.Spend(p.run, need)
-	if errors.Is(err, producer.ErrPublish) {
-		tree, vout, err = trees.Spend(p.run, need)
-	}
-	p.keepHeld(kind)
-	if err != nil {
-		return nil, 0, feeError(fmt.Errorf("%s funding tree: %w", kind, err))
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	s := p.set(kind)
-	id := tree.TxID().String()
-	if s.Tree == nil || s.Tree.Txid != id {
-		return nil, 0, fmt.Errorf("publish: the %s tree spent is not the current one", kind)
-	}
-	if s.Tree.Next < vout+need {
-		s.Tree.Next = vout + need
-		s.Trees = producer.Index(s.Trees, s.Tree)
-	}
-	if err := p.saveLocked(); err != nil {
+	// The outputs are this put's once recorded; the record is durable
+	// before a carrier is signed on them, and the spends of other puts do
+	// not wait for this put's write (the saver batches them).
+	if err := p.awaitSave(gen); err != nil {
 		return nil, 0, err
 	}
 	return tree, vout, nil
@@ -843,18 +854,6 @@ func (p *Publisher) save() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.saveLocked()
-}
-
-func (p *Publisher) saveLocked() error {
-	raw, err := json.Marshal(p.st.compact())
-	if err != nil {
-		return err
-	}
-	tmp := filepath.Join(p.cfg.Dir, "tmp")
-	if err := os.MkdirAll(tmp, 0o700); err != nil {
-		return err
-	}
-	return writeFileSync(tmp, filepath.Join(p.cfg.Dir, "publisher.json"), raw)
 }
 
 // compact is the state as it is saved: each hold transaction once, in
