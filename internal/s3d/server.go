@@ -135,7 +135,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Server, error) {
 		p, err := publish.Open(ctx, publish.Config{Dir: cfg.IdentityDir(name), OutboxMax: cfg.OutboxBytes,
 			Chain: v.Chain, Known: v.Known, Tip: v.Tip, Settler: v.Settler, Accept: cfg.AcceptPolicy(), Status: status,
 			FeeSource: v.FeeSource, Mainnet: cfg.Mainnet,
-			PieceTree: cfg.PieceTree, EntryTree: cfg.EntryTree, PieceAhead: cfg.PieceAhead, PieceWorkers: cfg.PieceWorkers,
+			PieceTree: cfg.PieceTree, EntryTree: cfg.EntryTree, PieceAhead: cfg.PieceAhead, EntryAhead: cfg.EntryAhead, PieceWorkers: cfg.PieceWorkers,
 			HoldAhead: cfg.HoldAhead, Store: s.store, Delivery: d, Reader: s.reader, FrontHTTP: fetchHTTP,
 			LockWait: opts.LockWait, Logf: opts.Logf, Now: opts.Now})
 		if err != nil {
