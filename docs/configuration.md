@@ -198,7 +198,7 @@ The configuration's keys: `data`, `listen`, `tls_cert`, `tls_key`,
 `arcade_key`, `headers`, `headers_token`, `woc_key`, `woc_rate`, `hosts`,
 `facade`, `providers`, `quorum`, `ca`, `fetch_private`, `identities`,
 `access_keys`, `buckets`, `bounty`, `hold_ahead`, `limits.*`,
-`piece_tree`, `entry_tree`, `piece_ahead`, `piece_workers`, `fee`,
+`piece_tree`, `entry_tree`, `piece_ahead`, `entry_ahead`, `piece_workers`, `fee`,
 `fee_sat_per_byte`, `fee_floor`, `mainnet`, `refuse_unmined`, the
 `accept_` keys, `race.*`, `store_bytes`, `outbox_bytes` and
 `metrics_listen`. `chain`, `settle` and `headers` default to the
