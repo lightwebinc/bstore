@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"fmt"
+	"unicode/utf8"
 
 	"github.com/lightwebinc/bcommon/cbor"
+	"github.com/lightwebinc/bcommon/record"
 )
 
 // Piece is one CHIRP object of one closure (magic stp 0x01).
@@ -52,7 +54,13 @@ func appendHead(b []byte, mt byte, n uint64) []byte {
 }
 
 // Encode writes the piece canonically; it refuses what DecodePiece refuses.
+// A piece without Extra is written directly, its 4 MiB appended once, and
+// held to DecodePiece's rules without decoding it; one with Extra goes
+// through the record codec and is read back.
 func (p *Piece) Encode() ([]byte, error) {
+	if len(p.Extra) == 0 {
+		return p.encode()
+	}
 	out, err := encodeRecord(cbor.Map{
 		{Key: PKMagic, Val: MagicPiece},
 		{Key: PKBucket, Val: p.Bucket},
@@ -65,6 +73,45 @@ func (p *Piece) Encode() ([]byte, error) {
 	}
 	if _, err := DecodePiece(out); err != nil {
 		return nil, err
+	}
+	return out, nil
+}
+
+// encode is Encode for a piece without Extra: the canonical map of the five
+// defined keys, in key order, as the record codec writes it, with the
+// refusals in DecodePiece's order (the record's bound, then the bucket, the
+// writer and the piece's length; the magic and the root cannot be wrong).
+func (p *Piece) encode() ([]byte, error) {
+	if !utf8.ValidString(p.Bucket) {
+		return nil, fmt.Errorf("%w: %v", record.ErrCBOR, cbor.ErrUTF8)
+	}
+	var head [7]byte
+	size := 1 + 1 + len(appendHead(head[:0], 2, uint64(len(MagicPiece)))) + len(MagicPiece) +
+		1 + len(appendHead(head[:0], 3, uint64(len(p.Bucket)))) + len(p.Bucket) +
+		1 + len(appendHead(head[:0], 2, uint64(len(p.Writer)))) + len(p.Writer) +
+		1 + len(appendHead(head[:0], 2, 32)) + 32 +
+		1 + len(appendHead(head[:0], 2, uint64(len(p.Piece)))) + len(p.Piece)
+	if size > MaxPieceRecord {
+		return nil, record.ErrTooLarge
+	}
+	if err := CheckBucket(p.Bucket); err != nil {
+		return nil, err
+	}
+	if _, err := CheckKey(p.Writer); err != nil {
+		return nil, fmt.Errorf("key %d: %w", PKWriter, err)
+	}
+	if len(p.Piece) < 1 || len(p.Piece) > MaxPiece {
+		return nil, fmt.Errorf("%w: %d bytes", ErrPiece, len(p.Piece))
+	}
+	out := make([]byte, 0, size)
+	out = appendHead(out, 5, 5)
+	out = append(appendHead(appendHead(out, 0, PKMagic), 2, uint64(len(MagicPiece))), MagicPiece...)
+	out = append(appendHead(appendHead(out, 0, PKBucket), 3, uint64(len(p.Bucket))), p.Bucket...)
+	out = append(appendHead(appendHead(out, 0, PKWriter), 2, uint64(len(p.Writer))), p.Writer...)
+	out = append(appendHead(appendHead(out, 0, PKRoot), 2, 32), p.Root[:]...)
+	out = append(appendHead(appendHead(out, 0, PKPiece), 2, uint64(len(p.Piece))), p.Piece...)
+	if len(out) != size {
+		return nil, fmt.Errorf("storerec: a piece record of %d bytes was sized at %d", len(out), size)
 	}
 	return out, nil
 }
