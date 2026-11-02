@@ -1,6 +1,7 @@
 package publish
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -8,14 +9,17 @@ import (
 	"sync"
 )
 
-// saver writes publisher.json: one encode and one fsync for the caller's
-// change and every other change made while the write before it ran (a
-// group commit). At eight puts a second the state (2.6 MB of holds, trees
-// and races) was encoded and synced once a put, under the lock every put
-// takes: a third of the gateway's CPU went to the encoding and the puts
-// queued on the lock (2026-11-01, the lab's ceiling of seven puts a
-// second). The encode still runs under p.mu, once a batch; the write and
-// the sync run with it released.
+// saver writes the state: one encode and one fsync of the hot part for the
+// caller's change and every other change made while the write before it
+// ran (a group commit), and a cold file for each transaction that is new
+// or has mined since the last save. At eight puts a second the state (2.6
+// MB of holds, trees and races) was encoded and synced once a put, under
+// the lock every put takes: a third of the gateway's CPU went to the
+// encoding and the puts queued on the lock (2026-11-01, the lab's ceiling
+// of seven puts a second); at 25 puts a second, with 4,096 holds ahead in
+// 1,024-output transactions, two thirds, most of it the hex strings and
+// the garbage they made. The encode still runs under p.mu, once a batch,
+// into buffers reused; the writes and the syncs run with it released.
 type saver struct {
 	once sync.Once
 	mu   sync.Mutex
@@ -28,6 +32,19 @@ type saver struct {
 	kick             chan struct{}
 	done             chan struct{}
 	closed           bool
+	// hot and rows are the encode buffers, refs the transactions the state
+	// named at the last encode: the saver's own, reused, since it writes
+	// what it encoded before it encodes again.
+	hot  bytes.Buffer
+	rows []byte
+	refs map[string]txRecord
+	// cold is each transaction kept under txs/, by txid, as last written or
+	// read: what a save compares the state against. The loader fills it
+	// before the saver starts; the saver's own after.
+	cold map[string]coldKey
+	// hotBytes and coldBytes are what the last write that succeeded wrote,
+	// under mu, for tests.
+	hotBytes, coldBytes int
 }
 
 // errSaverClosed is a save asked for after Close.
@@ -97,23 +114,98 @@ func (p *Publisher) saveLoop() {
 		p.sv.mu.Lock()
 		gen := p.sv.dirty
 		p.sv.mu.Unlock()
-		raw, err := json.Marshal(p.st.compact())
+		hot, err := p.sv.encode(p.st)
 		p.mu.Unlock()
+		var cold int
 		if err == nil {
-			tmp := filepath.Join(p.cfg.Dir, "tmp")
-			if err = os.MkdirAll(tmp, 0o700); err == nil {
-				err = writeFileSync(tmp, filepath.Join(p.cfg.Dir, "publisher.json"), raw)
-			}
+			cold, err = p.sv.write(p.cfg.Dir, hot)
 		}
 		p.sv.mu.Lock()
 		p.sv.saved = gen
 		if err == nil {
 			p.sv.ok = gen
+			p.sv.hotBytes, p.sv.coldBytes = len(hot), cold
 		}
 		p.sv.err = err
 		p.sv.cond.Broadcast()
 		p.sv.mu.Unlock()
 	}
+}
+
+// encode is the hot part's bytes for st, valid until the next encode, and
+// notes in s.refs every transaction st keeps. The caller holds p.mu.
+func (s *saver) encode(st *state) ([]byte, error) {
+	if s.refs == nil {
+		s.refs = map[string]txRecord{}
+	}
+	clear(s.refs)
+	rows, err := st.refs(s.rows[:0], s.refs)
+	if err != nil {
+		return nil, err
+	}
+	s.rows = rows
+	s.hot.Reset()
+	if err := json.NewEncoder(&s.hot).Encode(st.hot(rows)); err != nil {
+		return nil, err
+	}
+	return s.hot.Bytes(), nil
+}
+
+// write makes the encode durable: first a cold file for each transaction
+// in s.refs that is new or changed since it was last written or read, then
+// the hot part, each synced under a temp-file rename, then the cold files
+// of the transactions the state no longer names are removed. It returns
+// the cold bytes written. p.mu is not held.
+func (s *saver) write(dir string, hot []byte) (int, error) {
+	tmp := filepath.Join(dir, "tmp")
+	if err := os.MkdirAll(tmp, 0o700); err != nil {
+		return 0, err
+	}
+	if s.cold == nil {
+		s.cold = map[string]coldKey{}
+	}
+	n, made := 0, false
+	for txid, r := range s.refs {
+		k := r.key()
+		if have, ok := s.cold[txid]; ok && have == k {
+			continue
+		}
+		path, err := coldPath(dir, txid)
+		if err != nil {
+			return n, err
+		}
+		b, err := json.Marshal(r)
+		if err != nil {
+			return n, err
+		}
+		if !made {
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				return n, err
+			}
+			made = true
+		}
+		if err := writeFileSync(tmp, path, b); err != nil {
+			return n, err
+		}
+		s.cold[txid] = k
+		n += len(b)
+	}
+	if err := writeFileSync(tmp, filepath.Join(dir, "publisher.json"), hot); err != nil {
+		return n, err
+	}
+	for txid := range s.cold {
+		if _, named := s.refs[txid]; named {
+			continue
+		}
+		path, err := coldPath(dir, txid)
+		if err == nil {
+			err = os.Remove(path)
+		}
+		if err == nil || errors.Is(err, os.ErrNotExist) {
+			delete(s.cold, txid)
+		}
+	}
+	return n, nil
 }
 
 // flushSaves writes any change not yet written and stops the saver; for

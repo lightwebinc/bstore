@@ -84,7 +84,8 @@ func Init(dir string) (string, error) {
 
 // Config is one publisher identity.
 type Config struct {
-	// Dir is the identity's directory: wallet/, publisher.json, outbox/.
+	// Dir is the identity's directory: wallet/, publisher.json and txs/
+	// (the state, state.go), outbox/, races/.
 	Dir string
 	// Chain is the chain view transactions, proofs and spends are asked
 	// of (a node, or WhatsOnChain: chaincfg); Known says whether a
@@ -196,11 +197,13 @@ type state struct {
 	Entry    treeSet       `json:"entry"`
 	Outcome  treeSet       `json:"outcome"`
 	Pending  []pendingTree `json:"pendingTrees,omitempty"`
-	Holds    []HoldRecord  `json:"holds,omitempty"`
-	// HoldTxs is each hold transaction once, by txid, as the state is
-	// saved (compact); in memory it is empty and every record carries its
-	// transaction (expand).
-	HoldTxs map[string]holdTx `json:"holdTxs,omitempty"`
+	// Holds is every hold record, in memory, each carrying its transaction.
+	// On disk the records are rows in HoldOutputs and the transactions are
+	// cold files (state.go); Holds and HoldTxs on disk are an earlier
+	// build's layout, the transaction on each record or once by txid.
+	Holds       []HoldRecord        `json:"holds,omitempty"`
+	HoldTxs     map[string]txRecord `json:"holdTxs,omitempty"`
+	HoldOutputs json.RawMessage     `json:"holdOutputs,omitempty"`
 	// Buckets are the buckets this identity published carriers in: where
 	// a sweep of its trees is published (spec section 13.5).
 	Buckets []string `json:"buckets,omitempty"`
@@ -249,14 +252,6 @@ type HoldRecord struct {
 	// Reclaim is its spend back to the fund key when no entry names it,
 	// recorded before it is sent.
 	Reclaim *ReclaimRecord `json:"reclaim,omitempty"`
-}
-
-// holdTx is a hold transaction as the state keeps it once, for the records
-// of its outputs: its bytes, its proof once mined, and the height.
-type holdTx struct {
-	Raw    string `json:"raw"`
-	Bump   string `json:"bump,omitempty"`
-	Height uint32 `json:"height,omitempty"`
 }
 
 const (
@@ -326,7 +321,7 @@ func Open(ctx context.Context, cfg Config) (*Publisher, error) {
 			lk.release()
 		}
 	}()
-	if p.st, err = loadState(cfg.Dir); err != nil {
+	if p.st, p.sv.cold, err = readState(cfg.Dir); err != nil {
 		return nil, err
 	}
 	if p.st.Identity == "" {
@@ -854,58 +849,6 @@ func (p *Publisher) save() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.saveLocked()
-}
-
-// compact is the state as it is saved: each hold transaction once, in
-// HoldTxs, and the records of its outputs without their copies of it. The
-// state is saved on every take, so its size is what a put pays for; a hold
-// transaction of 16 outputs kept 16 times over was most of it.
-func (s *state) compact() *state {
-	c := *s
-	c.HoldTxs = make(map[string]holdTx, len(s.Holds)/8+1)
-	c.Holds = make([]HoldRecord, len(s.Holds))
-	for i, h := range s.Holds {
-		if h.RawHex != "" {
-			if t, ok := c.HoldTxs[h.Txid]; !ok || (t.Bump == "" && h.BumpHex != "") {
-				c.HoldTxs[h.Txid] = holdTx{Raw: h.RawHex, Bump: h.BumpHex, Height: h.Height}
-			}
-			h.RawHex, h.BumpHex, h.Height = "", "", 0
-		}
-		c.Holds[i] = h
-	}
-	return &c
-}
-
-// expand gives each hold record its transaction back from HoldTxs, so that
-// in memory every record carries it, as records saved by earlier builds
-// do. Called once the state is loaded.
-func (s *state) expand() {
-	for i := range s.Holds {
-		h := &s.Holds[i]
-		if h.RawHex != "" {
-			continue
-		}
-		if t, ok := s.HoldTxs[h.Txid]; ok {
-			h.RawHex, h.BumpHex, h.Height = t.Raw, t.Bump, t.Height
-		}
-	}
-	s.HoldTxs = nil
-}
-
-func loadState(dir string) (*state, error) {
-	raw, err := os.ReadFile(filepath.Join(dir, "publisher.json"))
-	if errors.Is(err, os.ErrNotExist) {
-		return &state{}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var st state
-	if err := json.Unmarshal(raw, &st); err != nil {
-		return nil, fmt.Errorf("publisher.json: %w", err)
-	}
-	st.expand()
-	return &st, nil
 }
 
 // feeError words the library's refusals to find a fee input.
