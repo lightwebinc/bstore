@@ -166,6 +166,52 @@ func TestMintPiecePlacesTheObject(t *testing.T) {
 // PKAfter is a key above the piece's last defined one.
 const PKAfter = storerec.PKLast + 1
 
+// BenchmarkMintPiece mints one 4 MiB piece carrier as a put does, stage by
+// stage: read (the staged object) and mint (the record, the carrier, its
+// BEEF and the object's place in it) together, then outbox (the carrier
+// kept by reference, its line synced). The send is not here.
+func BenchmarkMintPiece(b *testing.B) {
+	r := newMintRig(b)
+	targets := r.p.cfg.Delivery.pieceTargets(testBucket)
+	b.Run("read+mint", func(b *testing.B) {
+		b.ReportAllocs()
+		b.SetBytes(storerec.BlobSize)
+		for b.Loop() {
+			data, err := r.c.Object(r.ctx, r.blob)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if _, _, at, err := r.p.mintPiece(r.ctx, testBucket, r.root, data, r.tree, r.vout); err != nil || at < 0 {
+				b.Fatalf("minted: %v, the object at %d", err, at)
+			}
+		}
+	})
+	b.Run("outbox", func(b *testing.B) {
+		data, err := r.c.Object(r.ctx, r.blob)
+		if err != nil {
+			b.Fatal(err)
+		}
+		tx, beef, at, err := r.p.mintPiece(r.ctx, testBucket, r.root, data, r.tree, r.vout)
+		if err != nil {
+			b.Fatal(err)
+		}
+		batch, err := r.p.outbox.newBatch()
+		if err != nil {
+			b.Fatal(err)
+		}
+		defer batch.close()
+		b.ReportAllocs()
+		b.SetBytes(storerec.BlobSize)
+		for b.Loop() {
+			it, err := r.p.outbox.addRef(batch, tx.TxID().String(), "piece", beef, r.blob, at, len(data), targets)
+			if err != nil || it.Ref == "" {
+				b.Fatalf("kept by reference: %v %q", err, it.Ref)
+			}
+			r.p.outbox.done(it.ID)
+		}
+	})
+}
+
 // A kept tree's txid is cached when it is loaded: the one object the trees
 // share with every carrier spending it answers TxID without serializing
 // its outputs again. The SDK keeps the cache private, so it shows as TxID
