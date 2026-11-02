@@ -183,6 +183,11 @@ func (p *Provider) scanPayouts(ctx context.Context) {
 		todo = append(todo, *e)
 	}
 	p.mu.Unlock()
+	// One hold transaction at a time. A read names every output of its
+	// transaction, up to 1,024, and is kept for a moment (SpendCache): in the
+	// table's random order nearly every entry read its transaction afresh,
+	// and a provider's rescan after a start held the node at five cores.
+	slices.SortFunc(todo, func(a, b EntryRec) int { return strings.Compare(a.Hold.Txid, b.Hold.Txid) })
 	for _, e := range todo {
 		if ctx.Err() != nil {
 			return
