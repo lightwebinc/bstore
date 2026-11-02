@@ -129,8 +129,14 @@ type Config struct {
 	LockWait time.Duration
 	// HoldAhead is how many mined hold outputs of each bounty value are kept
 	// ready, so a put never waits for a block; HoldWait is how long a put
-	// waits for one when none is ready.
+	// waits for one when none is ready. HoldTree is how many hold outputs
+	// one transaction carries (a hold tree): 16 by default, at most
+	// storerec.MaxAdsPerTx, what a host admits of a mined transaction. A
+	// hold output is named by the entry and never carried in a BEEF, so the
+	// tree costs no carrier anything; a bigger tree means fewer
+	// transactions, coins and records a block for the same holds ahead.
 	HoldAhead int
+	HoldTree  int
 	HoldWait  time.Duration
 	// Store is the local closure store, shared by every identity.
 	Store *Store
@@ -297,6 +303,10 @@ func Open(ctx context.Context, cfg Config) (*Publisher, error) {
 	if cfg.HoldAhead <= 0 {
 		cfg.HoldAhead = 8
 	}
+	if cfg.HoldTree <= 0 {
+		cfg.HoldTree = defaultHoldTree
+	}
+	cfg.HoldTree = min(cfg.HoldTree, storerec.MaxAdsPerTx)
 	if cfg.HoldWait <= 0 {
 		cfg.HoldWait = 30 * time.Second
 	}

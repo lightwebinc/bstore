@@ -159,19 +159,27 @@ func (e *txEnv) cases() ([]txCase, error) {
 	}
 	mixed := e.ch.mine(e.adTx(e.b, adOut(Bob, 1900000001), holdOut(500)))
 	add(txCase{name: "advertisement-and-hold", note: "an advertisement and a hold output in one mined transaction: both admitted", tx: mixed})
-	var sixteen, seventeen []*transaction.TransactionOutput
-	for i := range 17 {
+	var sixteen []*transaction.TransactionOutput
+	for i := range 16 {
 		o := holdOut(uint64(100 + i))
 		if i%2 == 0 {
 			o = adOut(Bob, uint64(1900000100+i))
 		}
-		if i < 16 {
-			sixteen = append(sixteen, o)
-		}
-		seventeen = append(seventeen, o)
+		sixteen = append(sixteen, o)
 	}
 	add(txCase{name: "mined-16", note: "sixteen advertisements and hold outputs in one mined transaction", tx: e.ch.mine(e.adTx(e.b, sixteen...))})
-	add(txCase{name: "mined-17", note: "seventeen", tx: e.ch.mine(e.adTx(e.b, seventeen...)), reason: "too-many"})
+	// The count bound alone: hold outputs are 49 bytes each, so 1,025 of
+	// them stay under the mined BEEF ceiling and reach the count.
+	var atCap, overCap []*transaction.TransactionOutput
+	for i := range storerec.MaxAdsPerTx + 1 {
+		o := holdOut(uint64(100 + i))
+		if i < storerec.MaxAdsPerTx {
+			atCap = append(atCap, o)
+		}
+		overCap = append(overCap, o)
+	}
+	add(txCase{name: "mined-1024", note: "1,024 hold outputs in one mined transaction: the count bound, admitted", tx: e.ch.mine(e.adTx(e.b, atCap...))})
+	add(txCase{name: "mined-1025", note: "1,025: one over the count bound", tx: e.ch.mine(e.adTx(e.b, overCap...)), reason: "too-many"})
 	anyoneAd := e.ch.mine(e.adTx(e.b, out(1, scr(adScript(Party{Name: "anyone", Priv: anyonePriv()}, root, adURL(root), 1900000000, 100)))))
 	add(txCase{name: "advertisement-anyone-key", note: "an advertisement by the anyone key: the SDK admits it, so the host does; bstore never counts it", tx: anyoneAd})
 	badAd := adScript(Bob, root, adURL(root), 1900000000, 100)

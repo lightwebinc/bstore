@@ -82,7 +82,10 @@ type Config struct {
 	// how many mined hold outputs of it each identity keeps ready.
 	Bounty    *BountyConfig `json:"bounty,omitempty"`
 	HoldAhead int           `json:"hold_ahead,omitempty"`
-	Limits    Limits        `json:"limits"`
+	// HoldTree is how many hold outputs one transaction carries: 16 by
+	// default, at most what hosts admit of a mined transaction (1,024).
+	HoldTree int    `json:"hold_tree,omitempty"`
+	Limits   Limits `json:"limits"`
 	// PieceTree and EntryTree size funding trees. Fee is the miner fee
 	// policy (feepolicy.Config; default 100 satoshis per 1000 bytes, floor
 	// 100, capped at 100/1000); FeeRate and FeeFloor are its older keys,

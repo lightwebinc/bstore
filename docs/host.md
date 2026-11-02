@@ -84,7 +84,7 @@ needs `BSTORE_PAYEE_KEY`. Any mistake stops the host before its port opens.
 on the submission's bytes and the host's headers, and on nothing else:
 never another topic, another record, or anything the topic holds. It
 admits entry, outcome and front carriers, bucket tokens, advertisements and
-hold outputs (mined, at most 16 a transaction) and output 0 of sweeps. A
+hold outputs (mined, at most 1,024 a transaction) and output 0 of sweeps. A
 piece is refused (`piece`), and so is a transaction that only spends held
 outputs (`not-bstore`). Every refusal is raised, so the engine stores
 nothing for it and the same txid offered again is decided again: a copy in
