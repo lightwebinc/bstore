@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -59,9 +60,9 @@ type State struct {
 	// Held are challenge payments taken and held for confirmation, by
 	// txid, with their class: sent again once mined, each buys its answer.
 	Held map[string]HeldRec `json:"held,omitempty"`
-	// Fundings are the funding outpoints carriers were taken on, and the
-	// carrier each paid for (its commitment, hex).
-	Fundings map[string]*Funding `json:"fundings"`
+	// Fundings is the table an earlier version kept here: read once, into
+	// the funding log (fundingBook), and not written again.
+	Fundings map[string]*Funding `json:"fundings,omitempty"`
 	// Book is the payee's record of the ledger's payments settled.
 	payee.Book
 }
@@ -219,7 +220,8 @@ type HeldRec struct {
 	At    int64  `json:"at"`
 }
 
-// Funding is the carrier a funding outpoint paid for.
+// Funding is the carrier a funding outpoint paid for, as an earlier version
+// kept it.
 type Funding struct {
 	C  string `json:"c"`
 	At int64  `json:"at"`
@@ -264,13 +266,74 @@ func loadState(dir string) (*State, error) {
 	if st.Free == nil {
 		st.Free = map[string]int{}
 	}
-	if st.Fundings == nil {
-		st.Fundings = map[string]*Funding{}
-	}
 	if st.Payouts == nil {
 		st.Payouts = map[string]*Payout{}
 	}
 	return st, nil
+}
+
+// snapshot is a copy of the state that shares nothing a later change
+// touches, for a save to encode outside the provider's lock.
+func (st *State) snapshot() *State {
+	c := *st
+	if st.Tree != nil {
+		t := *st.Tree
+		c.Tree = &t
+	}
+	c.Trees = slices.Clone(st.Trees)
+	c.Ahead = slices.Clone(st.Ahead)
+	c.PendingTrees = slices.Clone(st.PendingTrees)
+	for i := range c.PendingTrees {
+		c.PendingTrees[i].Coin.Derivation = copyOf(c.PendingTrees[i].Coin.Derivation)
+	}
+	c.Holdings = copyRows(st.Holdings, func(h *Holding) {
+		h.Buckets = slices.Clone(h.Buckets)
+		h.Entries = slices.Clone(h.Entries)
+		h.Ad = copyOf(h.Ad)
+	})
+	c.Entries = copyRows(st.Entries, func(e *EntryRec) { e.Hold = copyOf(e.Hold) })
+	c.Unclaimed = copyRows(st.Unclaimed, nil)
+	c.Deletes = copyRows(st.Deletes, nil)
+	c.PendingAds = slices.Clone(st.PendingAds)
+	for i := range c.PendingAds {
+		c.PendingAds[i].Prev = copyOf(c.PendingAds[i].Prev)
+	}
+	c.Outbox = slices.Clone(st.Outbox)
+	c.Free = maps.Clone(st.Free)
+	c.Payouts = copyRows(st.Payouts, nil)
+	c.MadeGood = maps.Clone(st.MadeGood)
+	c.Owed = slices.Clone(st.Owed)
+	c.Held = maps.Clone(st.Held)
+	c.Settled = slices.Clone(st.Settled)
+	c.Unsettleable = slices.Clone(st.Unsettleable)
+	return &c
+}
+
+// copyRows copies a table of rows, each through deep when it holds
+// references of its own. The rows lie in one allocation.
+func copyRows[T any](m map[string]*T, deep func(*T)) map[string]*T {
+	if m == nil {
+		return nil
+	}
+	rows := make([]T, 0, len(m))
+	out := make(map[string]*T, len(m))
+	for k, v := range m {
+		rows = append(rows, *v)
+		r := &rows[len(rows)-1]
+		if deep != nil {
+			deep(r)
+		}
+		out[k] = r
+	}
+	return out
+}
+
+func copyOf[T any](v *T) *T {
+	if v == nil {
+		return nil
+	}
+	c := *v
+	return &c
 }
 
 // save writes the state whole.

@@ -659,15 +659,19 @@ func (p *Publisher) reclaim(ctx context.Context, r *Race, wait bool) (*ReclaimRe
 	}
 	r.Reclaim, r.State = rec, RaceReclaim
 	if err := p.saveRace(r); err != nil {
-		_ = p.wallet.Pool.Return(rec.Fee)
+		p.ReturnCoin(ctx, rec.Fee)
 		return nil, err
 	}
 	return rec, p.resumeReclaim(ctx, r, wait)
 }
 
-// reclaimHold signs a spend of a hold output back to the fund key, with a
-// fee coin; nil when the output is already spent. The caller records it
-// before it is sent.
+// reclaimHold signs a spend of a hold output back to the fund key; nil when
+// the output is already spent. The caller records it before it is sent.
+//
+// The hold pays its own fee when it can. A fee coin is out of the pool until
+// the reclaim mines, one coin to a reclaim, so a day's lapsed holds would
+// keep every coin the puts need for a block at a time. Only a hold too small
+// for its fee takes a coin.
 func (p *Publisher) reclaimHold(ctx context.Context, hold *HoldRecord) (*ReclaimRecord, error) {
 	free, _, err := p.unspent(ctx, hold.Txid, hold.Vout)
 	if err != nil {
@@ -680,21 +684,25 @@ func (p *Publisher) reclaimHold(ctx context.Context, hold *HoldRecord) (*Reclaim
 	if err != nil {
 		return nil, err
 	}
-	pay := p.newPayer(ctx)
-	fee, err := pay.TakeAtLeast(ctx, p.floor()*4)
-	if err != nil {
-		return nil, feeError(err)
-	}
 	change, err := p.signer.FundScript()
 	if err != nil {
-		pay.GiveBack()
 		return nil, err
 	}
 	tx := transaction.NewTransaction()
 	tx.AddInputFromTx(holdTx, hold.Vout, storerec.HoldDerivation.Unlocker(ctx, p.wallet, p.wallet.Originator))
-	tx.AddInputFromTx(fee.Tx, fee.Vout, fee.Unlocker)
-	in := hold.Sats + fee.Tx.Outputs[fee.Vout].Satoshis
-	cost := p.feeAt(uint64(10 + 2*150 + 34))
+	in, cost := hold.Sats, p.feeAt(uint64(10+150+34))
+	pay := p.newPayer(ctx)
+	var coin bwallet.Output
+	if in < cost+p.dust() {
+		fee, err := pay.TakeAtLeast(ctx, p.floor()*4)
+		if err != nil {
+			return nil, feeError(err)
+		}
+		tx.AddInputFromTx(fee.Tx, fee.Vout, fee.Unlocker)
+		in += fee.Tx.Outputs[fee.Vout].Satoshis
+		cost = p.feeAt(uint64(10 + 2*150 + 34))
+		coin = coinOf(fee)
+	}
 	tx.AddOutput(&transaction.TransactionOutput{Satoshis: in - cost, LockingScript: change})
 	if err := refuseMixed(tx); err != nil {
 		pay.GiveBack()
@@ -708,7 +716,7 @@ func (p *Publisher) reclaimHold(ctx context.Context, hold *HoldRecord) (*Reclaim
 		pay.GiveBack()
 		return nil, err
 	}
-	return &ReclaimRecord{Txid: tx.TxID().String(), Raw: hex.EncodeToString(tx.Bytes()), Fee: coinOf(fee)}, nil
+	return &ReclaimRecord{Txid: tx.TxID().String(), Raw: hex.EncodeToString(tx.Bytes()), Fee: coin}, nil
 }
 
 func (p *Publisher) resumeReclaim(ctx context.Context, r *Race, wait bool) error {
@@ -845,7 +853,7 @@ func (p *Publisher) ReclaimUnused(ctx context.Context) ([]string, error) {
 				continue
 			}
 			if err := p.updateHold(h, func(x *HoldRecord) { x.Reclaim = rec }); err != nil {
-				_ = p.wallet.Pool.Return(rec.Fee)
+				p.ReturnCoin(ctx, rec.Fee)
 				errs = append(errs, err)
 				continue
 			}

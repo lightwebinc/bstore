@@ -150,6 +150,7 @@ func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := map[string]any{}
+	entries := false
 	for _, t := range topics {
 		admitted, why := p.take(r.Context(), t, beef, pieces[t])
 		res := map[string]any{"outputsToAdmit": admitted, "coinsToRetain": []int{}}
@@ -160,6 +161,18 @@ func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 			p.metrics.inc("bstore_provider_submits_total", "result=taken")
 		}
 		out[t] = res
+		entries = entries || pieces[t] == nil
+	}
+	if entries {
+		// A writer reads this answer as the entry taken, so it is on disk
+		// first; one the plane delivered goes with the next pass.
+		p.mu.Lock()
+		err := p.save()
+		p.mu.Unlock()
+		if err != nil {
+			auth104.Write(w, auth104.Error(http.StatusInternalServerError, "ERR_INTERNAL", "the entry could not be recorded"))
+			return
+		}
 	}
 	auth104.Write(w, auth104.JSON(http.StatusOK, out))
 }
@@ -293,35 +306,25 @@ func (p *Provider) take(ctx context.Context, topic string, beef []byte, pc *stor
 // second, different one on the same outpoint is refused, and one mined
 // output buys one piece or one entry, never a stream of them.
 // It is checked before the carrier is taken and recorded only once it is,
-// so a refused carrier leaves no record; at most maxFundings are kept.
+// so a refused carrier leaves no record.
 func (p *Provider) claimFunding(op transaction.Outpoint, c [32]byte) {
-	k := op.Txid.String() + "." + itoa(uint64(op.Index))
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if _, ok := p.st.Fundings[k]; ok || len(p.st.Fundings) >= maxFundings {
-		return
-	}
-	p.st.Fundings[k] = &Funding{C: hex.EncodeToString(c[:]), At: p.now().Unix()}
-	p.dirty = true
+	p.fundings.claim(fundingKey{txid: op.Txid, index: op.Index}, c, p.now().Unix())
 }
 
 // fundingFree reports whether a funding outpoint paid for no other carrier.
 func (p *Provider) fundingFree(op transaction.Outpoint, c [32]byte) bool {
-	k := op.Txid.String() + "." + itoa(uint64(op.Index))
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	f, ok := p.st.Fundings[k]
-	return !ok || f.C == hex.EncodeToString(c[:])
+	return p.fundings.free(fundingKey{txid: op.Txid, index: op.Index}, c)
 }
-
-// maxFundings bounds the funding outpoints remembered.
-const maxFundings = 200000
 
 func writerAllowList(b *BucketConfig) bool { return len(b.Writers) > 0 }
 
 // The most undecided entries kept, from one writer and in all.
 const (
-	maxUndecidedPerWriter = 256
+	maxUndecidedPerWriter = 4096
 	maxUndecided          = 10000
 )
 
@@ -332,15 +335,7 @@ func (p *Provider) noteEntry(c string, e *storerec.Entry, listed bool) string {
 	p.mu.Lock()
 	if _, ok := p.st.Entries[c]; !ok {
 		w := hex.EncodeToString(e.Writer)
-		mine, all := 0, 0
-		for _, x := range p.st.Entries {
-			if x.Decision == "" {
-				all++
-				if x.Writer == w {
-					mine++
-				}
-			}
-		}
+		mine, all := p.index.writers[w], p.index.total
 		// A writer a bucket's allow-list names is never shut out by the
 		// total that strangers fill.
 		if mine >= maxUndecidedPerWriter || (!listed && all >= maxUndecided) {
@@ -355,6 +350,7 @@ func (p *Provider) noteEntry(c string, e *storerec.Entry, listed bool) string {
 			// never queued for a closure that nobody will ever claim.
 			rec.Decision = decisionDeleted
 			p.st.Entries[c] = rec
+			p.index.add(rec)
 			p.metrics.inc("bstore_provider_deletes_total")
 			p.releasePiecesLocked(rootHex)
 			_ = p.save()
@@ -367,8 +363,9 @@ func (p *Provider) noteEntry(c string, e *storerec.Entry, listed bool) string {
 				K: e.Hold.K, Retention: e.Hold.Retention, Deadline: e.Hold.Deadline, CheckC: e.Hold.CheckC}
 		}
 		p.st.Entries[c] = rec
+		p.index.add(rec)
 		p.pruneEntries()
-		_ = p.save()
+		p.dirty = true
 		p.logf("entry %s: %s %s, %d bytes, root %s", short(c), e.Bucket, e.Key, e.Size, short(rootHex))
 	}
 	p.mu.Unlock()
@@ -434,13 +431,7 @@ func (p *Provider) keepPiece(data []byte, rootHex, bucket, writer string) string
 	}
 	p.arrived(h, data, mustHash(rootHex), stored)
 	p.mu.Lock()
-	wanted := false
-	for _, e := range p.st.Entries {
-		if e.Root == rootHex && e.Decision == "" {
-			wanted = true
-			break
-		}
-	}
+	wanted := len(p.index.undecided[rootHex]) > 0
 	p.mu.Unlock()
 	if wanted && p.complete(mustHash(rootHex)) {
 		p.enqueue(rootHex)

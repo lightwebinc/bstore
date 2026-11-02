@@ -19,6 +19,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"path/filepath"
 	"strings"
@@ -134,11 +135,28 @@ type Provider struct {
 	cfg  *Config
 	opts Options
 
-	st     *State
-	mu     sync.Mutex // the state, and every save
-	wallet *bwallet.Embedded
-	signer *bwallet.Signer
-	pool   *bwallet.Pool
+	st *State
+	mu sync.Mutex // the state
+	// A save's write, one at a time (save). asked counts the saves called
+	// for, written the ones a finished write covers; saveEnd wakes those
+	// waiting on one.
+	saving  bool
+	asked   uint64
+	written uint64
+	saveEnd *sync.Cond
+	// index answers what the hot paths ask of the entries (index.go);
+	// heldObjects counts the verified closures that name each object; room
+	// keeps the store's bytes in used, walked once a second from roomAt.
+	index       *entryIndex
+	heldObjects map[[32]byte]int32
+	roomAt      time.Time
+	used        uint64
+	// fundings is the funding log; fundMu keeps its writes one at a time.
+	fundings *fundingBook
+	fundMu   sync.Mutex
+	wallet   *bwallet.Embedded
+	signer   *bwallet.Signer
+	pool     *bwallet.Pool
 
 	// view is the chain view, header source, settlement leg and fee
 	// policy the configuration names (chaincfg); chain is its chain view.
@@ -174,6 +192,17 @@ type Provider struct {
 	payer  *producer.Payer
 	trees  *producer.Trees
 	mintMu sync.Mutex // one advertisement or renewal minted at a time
+	// adSends bounds the advertisements being sent behind the worker;
+	// adSweep is the tip resumeAds last looked at every pending one for;
+	// adFiles are the journal rows the next save covers (journal.go).
+	adSends chan struct{}
+	adSweep uint32
+	adDir   string
+	adFiles []string
+	// outboxRun keeps publishOutbox one run at a time, and outboxAgain
+	// asks that run for another pass.
+	outboxRun   atomic.Bool
+	outboxAgain atomic.Bool
 
 	queue   chan string
 	queued  map[string]bool
@@ -205,6 +234,7 @@ type Provider struct {
 	server  *http.Server
 	ln      net.Listener
 	msrv    *http.Server
+	psrv    *http.Server
 	fsrv    *http.Server
 	proxies []*net.IPNet
 	feeders []*net.IPNet
@@ -252,8 +282,30 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 	} else if st.Identity != signer.IdentityHex() {
 		return nil, fmt.Errorf("the state belongs to identity %s, not this wallet's %s", st.Identity, signer.IdentityHex())
 	}
-	p := &Provider{cfg: cfg, inc: newIncremental(), opts: opts, st: st, wallet: w, signer: signer, pool: w.Pool,
-		queue: make(chan string, 4096), queued: map[string]bool{}, metrics: newMetrics()}
+	fundings, err := loadFundings(cfg.Data, st.Fundings, opts.Now())
+	if err != nil {
+		return nil, fmt.Errorf("funding log: %w", err)
+	}
+	st.Fundings = nil
+	adDir := filepath.Join(cfg.Data, "ads")
+	adFiles, err := st.replayAds(adDir, opts.Logf)
+	if err != nil {
+		return nil, fmt.Errorf("advertisement journal: %w", err)
+	}
+	p := &Provider{cfg: cfg, inc: newIncremental(), opts: opts, st: st, index: newEntryIndex(st.Entries), fundings: fundings, wallet: w, signer: signer, pool: w.Pool,
+		queue: make(chan string, 4096), queued: map[string]bool{}, metrics: newMetrics(),
+		adSends: make(chan struct{}, maxAdSends), adDir: adDir, adFiles: adFiles, heldObjects: map[[32]byte]int32{}}
+	p.saveEnd = sync.NewCond(&p.mu)
+	for r, h := range st.Holdings {
+		if !h.Verified {
+			continue
+		}
+		objs, err := p.rootObjects(r)
+		if err != nil {
+			p.logf("root %s: its object list cannot be read: %v", short(r), err)
+		}
+		p.noteHeld(objs, 1)
+	}
 	for _, r := range []string{"taken", "refused", "error"} {
 		p.metrics.preset("bstore_provider_async_takes_total", "result="+r)
 	}
@@ -432,6 +484,20 @@ func (p *Provider) Start(ctx context.Context) error {
 		p.msrv = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 		go func() { _ = p.msrv.Serve(mln) }()
 	}
+	if p.cfg.PprofListen != "" {
+		pln, err := net.Listen("tcp", p.cfg.PprofListen)
+		if err != nil {
+			return fmt.Errorf("pprof_listen: %w", err)
+		}
+		mux := http.NewServeMux()
+		mux.HandleFunc("/debug/pprof/", pprof.Index)
+		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		p.psrv = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+		go func() { _ = p.psrv.Serve(pln) }()
+	}
 	if p.cfg.FeedListen != "" {
 		fln, err := net.Listen("tcp", p.cfg.FeedListen)
 		if err != nil {
@@ -496,6 +562,9 @@ func (p *Provider) Close() error {
 	if p.msrv != nil {
 		_ = p.msrv.Close()
 	}
+	if p.psrv != nil {
+		_ = p.psrv.Close()
+	}
 	if p.fsrv != nil {
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = p.fsrv.Shutdown(sctx)
@@ -503,12 +572,15 @@ func (p *Provider) Close() error {
 	}
 	p.wg.Wait()
 	_ = p.trees.Wait(context.Background())
+	err := p.flushFundings()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, h := range p.trees.Held() {
 		p.st.Ahead = producer.Index(p.st.Ahead, &h)
 	}
-	err := p.st.save()
+	if serr := p.save(); err == nil {
+		err = serr
+	}
 	if lerr := p.ledger.close(); err == nil {
 		err = lerr
 	}
@@ -519,13 +591,44 @@ func (p *Provider) logf(format string, args ...any) { p.opts.Logf("bstore-provid
 
 func (p *Provider) now() time.Time { return p.opts.Now() }
 
-// save writes the state; the caller holds p.mu.
+// save returns once the state as it stands is durable. The caller holds
+// p.mu, and save lets it go while the write runs: what is around a save may
+// have changed after it, so a caller reads the state again or is done with
+// it.
+//
+// One write runs at a time: the copy is taken under the lock, and encoded
+// and synced outside it, so a save blocks no take behind p.mu, whatever the
+// state's size. A save that arrives during a write shares the next one,
+// which is a group commit: a write's cost grows with the state, and a burst
+// of saves pays for one. A change a crash may lose, which the next start
+// rebuilds or the writer is told nothing of, sets p.dirty instead and goes
+// with the next background pass.
 func (p *Provider) save() error {
-	p.dirty = false
-	if err := p.st.save(); err != nil {
-		p.dirty = true
-		p.logf("saving the state: %v", err)
-		return err
+	p.asked++
+	want := p.asked
+	for p.written < want {
+		if p.saving {
+			p.saveEnd.Wait()
+			continue
+		}
+		p.saving = true
+		p.dirty = false
+		asked := p.asked
+		at := time.Now()
+		snap := p.st.snapshot()
+		p.mu.Unlock()
+		err := snap.save()
+		p.mu.Lock()
+		p.saving = false
+		p.saveEnd.Broadcast()
+		if err != nil {
+			p.dirty = true
+			p.logf("saving the state: %v", err)
+			return err
+		}
+		p.written = asked
+		p.metrics.inc("bstore_provider_state_saves_total")
+		p.metrics.set("bstore_provider_state_save_seconds", time.Since(at).Seconds())
 	}
 	return nil
 }

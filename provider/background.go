@@ -55,6 +55,7 @@ func (p *Provider) background(ctx context.Context) {
 	t := time.NewTicker(p.opts.Tick)
 	defer t.Stop()
 	settling := make(chan struct{}, 1)
+	scanning := make(chan struct{}, 1)
 	for {
 		select {
 		case <-ctx.Done():
@@ -93,24 +94,39 @@ func (p *Provider) background(ctx context.Context) {
 				delete(p.scanned, c)
 			}
 		}
-		cutoff := p.now().Add(-fundingMemory).Unix()
-		for k, f := range p.st.Fundings {
-			if f.At < cutoff {
-				delete(p.st.Fundings, k)
-				p.dirty = true
+		p.fundings.expire(p.now().Add(-fundingMemory).Unix())
+		// The rows journaled so far are in the state this save writes.
+		journaled := p.adFiles
+		p.adFiles = nil
+		if p.dirty || len(journaled) > 0 {
+			if err := p.save(); err != nil {
+				p.adFiles = append(p.adFiles, journaled...)
+				journaled = nil
 			}
-		}
-		if p.dirty {
-			_ = p.save()
 		}
 		p.metrics.set("bstore_provider_holdings", float64(len(p.st.Holdings)))
 		p.metrics.set("bstore_provider_store_bytes", float64(p.usageLocked()))
 		p.metrics.set("bstore_provider_sessions", float64(p.auth.Sessions()))
 		p.mu.Unlock()
+		dropJournal(journaled)
+		if err := p.flushFundings(); err != nil {
+			p.logf("the funding log: %v", err)
+		}
 		for _, r := range roots {
 			p.enqueue(r)
 		}
-		p.scanPayouts(ctx)
+		// Reads of the node, a few to an entry: thousands of entries after a
+		// start, and the pass does not wait for them.
+		select {
+		case scanning <- struct{}{}:
+			p.wg.Add(1)
+			go func() {
+				defer p.wg.Done()
+				defer func() { <-scanning }()
+				p.scanPayouts(ctx)
+			}()
+		default:
+		}
 		select {
 		case settling <- struct{}{}:
 			go func() {
@@ -131,13 +147,5 @@ func (p *Provider) waitPending(ctx context.Context) {
 	if n == 0 {
 		return
 	}
-	if !p.mintMu.TryLock() {
-		return // an advertisement is being minted; next tick
-	}
-	defer p.mintMu.Unlock()
 	p.resumeAds(ctx)
 }
-
-// fundingMemory is how long a funding outpoint's carrier is remembered:
-// longer than an unclaimed piece or an undecided entry is kept.
-const fundingMemory = 7 * 24 * time.Hour

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bsv-blockchain/go-sdk/chainhash"
@@ -42,102 +43,33 @@ const advertMinLife = 3600
 // advertise is the native backend's Advertise: lease the closure through
 // until and mint an advertisement saying so, or a renewal of the live one.
 // It returns once the transaction is on the settlement leg, with the proof
-// when it mined within a few seconds.
+// when it mined within a few seconds. The one worker (noAdWait) goes on as
+// soon as the transaction is journaled, and at most maxAdSends are sent at
+// once behind it.
 func (p *Provider) advertise(ctx context.Context, root [32]byte, until uint64) (*backend.Advert, error) {
-	p.mintMu.Lock()
-	defer p.mintMu.Unlock()
-	rootHex := hex.EncodeToString(root[:])
-	p.mu.Lock()
-	h := p.st.Holdings[rootHex]
-	if h == nil || !h.Verified || h.Damaged {
-		p.mu.Unlock()
-		return nil, errors.New("the closure is not held verified")
+	pa, tx, known, err := p.mintAd(ctx, root, until)
+	if tx == nil {
+		return known, err
 	}
-	for _, pa := range p.st.PendingAds {
-		if pa.Root == rootHex {
-			p.mu.Unlock()
-			if pa.Expiry >= until {
-				return p.pendingAdvert(pa)
+	if ctx.Value(noAdWait{}) != nil {
+		select {
+		case p.adSends <- struct{}{}:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			defer func() { <-p.adSends }()
+			if err := p.sendAd(ctx, pa, tx); err != nil {
+				p.logf("advertisement %s: %v", short(pa.Txid), err)
 			}
-			return nil, errAdPending
-		}
+		}()
+		return p.pendingAdvert(pa)
 	}
-	var prev *AdRec
-	if h.Ad != nil {
-		c := *h.Ad
-		prev = &c
-		if prev.Expiry >= until {
-			p.mu.Unlock()
-			return adAdvert(prev)
-		}
-	}
-	// The lease is durable before anything is broadcast.
-	h.Lease = max(h.Lease, until)
-	rootLen := h.RootLen
-	if err := p.save(); err != nil {
-		p.mu.Unlock()
+	if err := p.sendAd(ctx, pa, tx); err != nil {
 		return nil, err
 	}
-	p.mu.Unlock()
-
-	lock, err := storerec.AdDerivation.Lock(ctx, p.wallet, p.wallet.Originator, adFields(p.signer.Identity.Compressed(), root, p.be.ServeURL(root), until, rootLen), true)
-	if err != nil {
-		return nil, fmt.Errorf("advertisement: %w", err)
-	}
-	if _, err := storerec.DecodeAdvertisement(*lock); err != nil {
-		return nil, fmt.Errorf("the advertisement made is not one the SDK validates: %w", err)
-	}
-	var prevIn *mint.Input
-	if prev != nil {
-		ptx, err := funding.Rebuild(prev.RawHex, prev.Bump, "")
-		if err != nil {
-			return nil, fmt.Errorf("the advertisement to renew: %w", err)
-		}
-		prevIn = &mint.Input{Tx: ptx, Vout: prev.Vout, Unlocker: storerec.AdDerivation.Unlocker(ctx, p.wallet, p.wallet.Originator)}
-	}
-	tree, vout, err := p.spendTree(ctx)
-	if err != nil {
-		return nil, err
-	}
-	change, err := p.signer.FundScript()
-	if err != nil {
-		return nil, err
-	}
-	tx, err := mint.Transition(lock, 1, prevIn, mint.Input{Tx: tree, Vout: vout, Unlocker: p.signer.FundUnlocker()}, change, p.fees())
-	if err != nil {
-		return nil, fmt.Errorf("advertisement transaction: %w", err)
-	}
-	beef, err := funding.BEEF(tx)
-	if err != nil {
-		return nil, err
-	}
-	pa := PendingAd{Root: rootHex, Txid: tx.TxID().String(), BeefHex: hex.EncodeToString(beef), Expiry: until,
-		Tree: tree.TxID().String(), Vout: vout, Prev: prev, At: p.now().Unix()}
-	p.mu.Lock()
-	p.markSpent(pa.Tree, vout)
-	p.st.PendingAds = append(p.st.PendingAds, pa)
-	err = p.save()
-	p.mu.Unlock()
-	if err != nil {
-		return nil, err
-	}
-	what := "advertisement"
-	if prev != nil {
-		what = "renewal"
-	}
-	p.logf("root %s: %s %s minted, expiry %d", short(rootHex), what, short(pa.Txid), until)
-	if err := p.send(ctx, tx); err != nil {
-		return nil, err
-	}
-	p.mu.Lock()
-	for i := range p.st.PendingAds {
-		if p.st.PendingAds[i].Txid == pa.Txid {
-			p.st.PendingAds[i].Sent = true
-		}
-	}
-	_ = p.save()
-	p.mu.Unlock()
-	p.payer.Change(tx, 0, nil)
 	// A block may come at once; the rest is the background's.
 	wctx, cancel := context.WithTimeout(ctx, adWait)
 	defer cancel()
@@ -149,9 +81,127 @@ func (p *Provider) advertise(ctx context.Context, root [32]byte, until uint64) (
 	return p.pendingAdvert(pa)
 }
 
+// sendAd puts a journaled advertisement on the settlement leg. One that
+// fails stays pending, and the background sends it again.
+func (p *Provider) sendAd(ctx context.Context, pa PendingAd, tx *transaction.Transaction) error {
+	if err := p.send(ctx, tx); err != nil {
+		return err
+	}
+	p.mu.Lock()
+	for i := range p.st.PendingAds {
+		if p.st.PendingAds[i].Txid == pa.Txid {
+			p.st.PendingAds[i].Sent = true
+		}
+	}
+	// A start sends a pending advertisement again whichever this says.
+	p.dirty = true
+	p.mu.Unlock()
+	p.payer.Change(tx, 0, nil)
+	return nil
+}
+
+// mintAd signs the root's advertisement and journals it. With no new
+// transaction to send it returns the advertisement that already answers, or
+// why there is none.
+func (p *Provider) mintAd(ctx context.Context, root [32]byte, until uint64) (PendingAd, *transaction.Transaction, *backend.Advert, error) {
+	var none PendingAd
+	p.mintMu.Lock()
+	defer p.mintMu.Unlock()
+	rootHex := hex.EncodeToString(root[:])
+	p.mu.Lock()
+	h := p.st.Holdings[rootHex]
+	if h == nil || !h.Verified || h.Damaged {
+		p.mu.Unlock()
+		return none, nil, nil, errors.New("the closure is not held verified")
+	}
+	for _, pa := range p.st.PendingAds {
+		if pa.Root == rootHex {
+			p.mu.Unlock()
+			if pa.Expiry >= until {
+				known, err := p.pendingAdvert(pa)
+				return none, nil, known, err
+			}
+			return none, nil, nil, errAdPending
+		}
+	}
+	var prev *AdRec
+	if h.Ad != nil {
+		c := *h.Ad
+		prev = &c
+		if prev.Expiry >= until {
+			p.mu.Unlock()
+			known, err := adAdvert(prev)
+			return none, nil, known, err
+		}
+	}
+	// The lease reaches the disk with the journal row, before anything is
+	// broadcast.
+	h.Lease = max(h.Lease, until)
+	p.dirty = true
+	rootLen := h.RootLen
+	p.mu.Unlock()
+
+	lock, err := storerec.AdDerivation.Lock(ctx, p.wallet, p.wallet.Originator, adFields(p.signer.Identity.Compressed(), root, p.be.ServeURL(root), until, rootLen), true)
+	if err != nil {
+		return none, nil, nil, fmt.Errorf("advertisement: %w", err)
+	}
+	if _, err := storerec.DecodeAdvertisement(*lock); err != nil {
+		return none, nil, nil, fmt.Errorf("the advertisement made is not one the SDK validates: %w", err)
+	}
+	var prevIn *mint.Input
+	if prev != nil {
+		ptx, err := funding.Rebuild(prev.RawHex, prev.Bump, "")
+		if err != nil {
+			return none, nil, nil, fmt.Errorf("the advertisement to renew: %w", err)
+		}
+		prevIn = &mint.Input{Tx: ptx, Vout: prev.Vout, Unlocker: storerec.AdDerivation.Unlocker(ctx, p.wallet, p.wallet.Originator)}
+	}
+	tree, vout, err := p.spendTree(ctx)
+	if err != nil {
+		return none, nil, nil, err
+	}
+	change, err := p.signer.FundScript()
+	if err != nil {
+		return none, nil, nil, err
+	}
+	// An advertisement keeps no change: what the funding output holds past
+	// the fee goes to the fee. A coin that small costs more to spend than it
+	// is worth, and each would be another row of the pool, one per root.
+	fees := p.fees()
+	fees.Dust = p.cfg.TreeSats + 1
+	tx, err := mint.Transition(lock, 1, prevIn, mint.Input{Tx: tree, Vout: vout, Unlocker: p.signer.FundUnlocker()}, change, fees)
+	if err != nil {
+		return none, nil, nil, fmt.Errorf("advertisement transaction: %w", err)
+	}
+	beef, err := funding.BEEF(tx)
+	if err != nil {
+		return none, nil, nil, err
+	}
+	pa := PendingAd{Root: rootHex, Txid: tx.TxID().String(), BeefHex: hex.EncodeToString(beef), Expiry: until,
+		Tree: tree.TxID().String(), Vout: vout, Prev: prev, At: p.now().Unix()}
+	if err := p.journalAd(pa); err != nil {
+		return none, nil, nil, err
+	}
+	what := "advertisement"
+	if prev != nil {
+		what = "renewal"
+	}
+	p.logf("root %s: %s %s minted, expiry %d", short(rootHex), what, short(pa.Txid), until)
+	return pa, tx, nil, nil
+}
+
 // adWait is how long advertise waits for a block before it answers with
 // the transaction unmined.
 var adWait = 5 * time.Second
+
+// noAdWait marks a context whose caller goes on without the proof: the one
+// worker, for which a wait for a block or a verdict is a wait for every root
+// behind this one. The background finishes the advertisement once it mines.
+type noAdWait struct{}
+
+// maxAdSends bounds the advertisements on their way to the settlement leg
+// behind the worker.
+const maxAdSends = 16
 
 var errAdPending = errors.New("an advertisement for this root is pending; it is looked at again once it mines")
 
@@ -215,9 +265,8 @@ func (p *Provider) finishAd(pa PendingAd, tx *transaction.Transaction, mp *trans
 		p.queueAd(h, rec.Txid, beef, h.Buckets)
 	}
 	p.st.dropPendingAd(pa.Txid)
-	if err := p.save(); err != nil {
-		return nil, err
-	}
+	// Pending on disk until the next pass: a start finishes it again.
+	p.dirty = true
 	p.metrics.inc("bstore_provider_advertisements_total")
 	p.logf("root %s: advertisement %s mined at %d, expiry %d", short(pa.Root), short(rec.Txid), height, rec.Expiry)
 	go p.publishOutbox(context.Background())
@@ -256,6 +305,27 @@ func (p *Provider) queueAd(h *Holding, txid string, beef []byte, buckets []strin
 // publishOutbox submits every queued advertisement that is due, each to
 // its host on its own; a failure waits longer each time.
 func (p *Provider) publishOutbox(ctx context.Context) {
+	if !p.outboxRun.CompareAndSwap(false, true) {
+		p.outboxAgain.Store(true)
+		return
+	}
+	defer p.outboxRun.Store(false)
+	for {
+		p.outboxAgain.Store(false)
+		p.publishDue(ctx)
+		if !p.outboxAgain.Load() {
+			return
+		}
+	}
+}
+
+// maxOutboxSends bounds the outbox's submissions at once.
+const maxOutboxSends = 8
+
+// publishDue makes one pass over the rows due. Rows are sent side by side,
+// and all answers are applied together; a row sent twice by a crash is one
+// the host has seen.
+func (p *Provider) publishDue(ctx context.Context) {
 	p.mu.Lock()
 	now := p.now().Unix()
 	var due []Outgoing
@@ -265,33 +335,62 @@ func (p *Provider) publishOutbox(ctx context.Context) {
 		}
 	}
 	p.mu.Unlock()
-	for _, o := range due {
-		beef, _ := hex.DecodeString(o.Beef)
-		f := p.facadeFor(o.Host)
-		var err error
-		if f == nil {
-			err = errors.New("no such host configured")
-		} else {
-			_, err = f.Submit(ctx, o.Topic, beef)
-		}
-		p.mu.Lock()
-		i := slices.IndexFunc(p.st.Outbox, func(x Outgoing) bool { return x.Host == o.Host && x.Topic == o.Topic && x.Txid == o.Txid })
-		if i >= 0 {
-			if err == nil || p.st.Outbox[i].Tries >= 20 || f == nil {
-				if err != nil {
-					p.logf("advertisement %s to %s on %s: giving up: %v", short(o.Txid), o.Host, o.Topic, err)
-				}
-				p.st.Outbox = slices.Delete(p.st.Outbox, i, i+1)
-			} else {
-				p.st.Outbox[i].Tries++
-				p.st.Outbox[i].Next = now + int64(min(3600, 5<<min(p.st.Outbox[i].Tries, 10)))
-				p.logf("advertisement %s to %s on %s: %v; tried again later", short(o.Txid), o.Host, o.Topic, err)
-			}
-			_ = p.save()
-		}
-		p.mu.Unlock()
+	if len(due) == 0 {
+		return
 	}
+	type row struct {
+		host, topic, txid string
+	}
+	answers := make(map[row]error, len(due))
+	var amu sync.Mutex
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, maxOutboxSends)
+	for _, o := range due {
+		slots <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-slots }()
+			beef, _ := hex.DecodeString(o.Beef)
+			err := errNoHost
+			if f := p.facadeFor(o.Host); f != nil {
+				_, err = f.Submit(ctx, o.Topic, beef)
+			}
+			amu.Lock()
+			answers[row{o.Host, o.Topic, o.Txid}] = err
+			amu.Unlock()
+		}()
+	}
+	wg.Wait()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.st.Outbox = slices.DeleteFunc(p.st.Outbox, func(o Outgoing) bool {
+		err, asked := answers[row{o.Host, o.Topic, o.Txid}]
+		if !asked {
+			return false
+		}
+		if err == nil {
+			return true
+		}
+		if o.Tries >= 20 || errors.Is(err, errNoHost) {
+			p.logf("advertisement %s to %s on %s: giving up: %v", short(o.Txid), o.Host, o.Topic, err)
+			return true
+		}
+		return false
+	})
+	for i := range p.st.Outbox {
+		o := &p.st.Outbox[i]
+		if err, asked := answers[row{o.Host, o.Topic, o.Txid}]; asked && err != nil {
+			o.Tries++
+			o.Next = now + int64(min(3600, 5<<min(o.Tries, 10)))
+			p.logf("advertisement %s to %s on %s: %v; tried again later", short(o.Txid), o.Host, o.Topic, err)
+		}
+	}
+	// A row a crash brings back is sent again, and the host has seen it.
+	p.dirty = true
 }
+
+var errNoHost = errors.New("no such host configured")
 
 func (p *Provider) facadeFor(host string) *publish.Facade {
 	for _, f := range p.hosts {
@@ -310,11 +409,20 @@ func (p *Provider) facadeFor(host string) *publish.Facade {
 // same bytes; one whose funding output another transaction spent is gone,
 // and the root is advertised afresh. A node that cannot answer decides
 // nothing.
+//
+// One sent is looked at once a block: only a block changes its answer, and
+// each look is several reads of the node.
 func (p *Provider) resumeAds(ctx context.Context) {
+	tip := p.lastTip.Load()
 	p.mu.Lock()
 	pending := slices.Clone(p.st.PendingAds)
+	sweep := tip != p.adSweep || tip == 0
+	p.adSweep = tip
 	p.mu.Unlock()
 	for _, pa := range pending {
+		if pa.Sent && !sweep {
+			continue
+		}
 		raw, err := hex.DecodeString(pa.BeefHex)
 		if err != nil {
 			continue

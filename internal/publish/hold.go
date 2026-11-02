@@ -121,6 +121,15 @@ func (p *Publisher) owedLocked(sats uint64) int {
 	return p.cfg.HoldAhead - have
 }
 
+// holdFloor is the smallest deficit worth a transaction. One of a few outputs
+// holds a coin for a block as a whole one does: with puts taking holds while
+// a fill runs, a deficit of one each would mint hundreds a minute and leave
+// no coin spendable. Half the pool wins over a whole transaction, so that a
+// pool smaller than one transaction is kept up all the same.
+func (p *Publisher) holdFloor() int {
+	return max(min(p.cfg.HoldTree, p.cfg.HoldAhead/2), 1)
+}
+
 // spendableCoins is how many coins of the pool a mint could take now.
 func (p *Publisher) spendableCoins(tip uint32) int {
 	n := 0
@@ -143,20 +152,22 @@ func (p *Publisher) FillHolds(ctx context.Context, sats uint64) {
 		return
 	}
 	defer p.holdMu.Unlock()
-	for {
+	for cycle := 0; ; cycle++ {
 		tip := uint32(0)
 		if h, err := p.bestHeader(ctx); err == nil {
 			tip = h.Height
 		}
+		// The deficit is read once a cycle: what puts take meanwhile waits for
+		// the next, and a fresh fill leaves one under the floor for later.
+		p.mu.Lock()
+		owed := p.owedLocked(sats)
+		p.mu.Unlock()
+		if cycle == 0 && owed < p.holdFloor() {
+			return
+		}
 		var wg sync.WaitGroup
 		minted := 0
-		for {
-			p.mu.Lock()
-			owed := p.owedLocked(sats)
-			p.mu.Unlock()
-			if owed <= 0 {
-				break
-			}
+		for owed > 0 {
 			if minted > 0 && p.spendableCoins(tip) <= 1 {
 				// The rest waits for this cycle's change: a put needs a
 				// coin for its funding trees and fees meanwhile.
@@ -170,6 +181,7 @@ func (p *Publisher) FillHolds(ctx context.Context, sats uint64) {
 				}
 				break
 			}
+			owed -= n
 			minted++
 		}
 		if minted == 0 {

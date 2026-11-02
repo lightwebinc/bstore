@@ -38,7 +38,7 @@ func (p *Provider) noteDelete(e *storerec.Entry) {
 		if x.Decision != "" && x.Decision != decisionHeld {
 			continue
 		}
-		x.Decision = decisionDeleted
+		p.setDecision(x, decisionDeleted)
 		roots[x.Root] = true
 		p.metrics.inc("bstore_provider_deletes_total")
 	}
@@ -91,10 +91,8 @@ func (p *Provider) releaseRootLocked(rootHex string) {
 // releasePiecesLocked drops the unclaimed pieces that waited for a root no
 // undecided entry wants. Must be called with p.mu held.
 func (p *Provider) releasePiecesLocked(rootHex string) {
-	for _, x := range p.st.Entries {
-		if x.Root == rootHex && x.Decision == "" {
-			return
-		}
+	if len(p.index.undecided[rootHex]) > 0 {
+		return
 	}
 	n := 0
 	for h, u := range p.st.Unclaimed {

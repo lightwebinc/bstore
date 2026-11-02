@@ -73,15 +73,12 @@ func (p *Provider) policy(ctx context.Context, e *EntryRec) (until uint64, why s
 	}
 	// One hold output settles one entry (spec section 9.2): a second entry
 	// naming it is counted once, so it is not raced for again.
-	op := e.Hold.Outpoint()
 	p.mu.Lock()
-	for c, x := range p.st.Entries {
-		if c != e.C && x.Hold != nil && x.Hold.Outpoint() == op && x.Decision == decisionHeld {
-			p.mu.Unlock()
-			return 0, "its hold output already backs another entry this provider took"
-		}
-	}
+	other := p.index.holds[e.Hold.Outpoint()]
 	p.mu.Unlock()
+	if other != "" && other != e.C {
+		return 0, "its hold output already backs another entry this provider took"
+	}
 	if err := p.checkBounty(ctx, e, true); err != nil {
 		var re *retryError
 		if errors.As(err, &re) {
@@ -269,10 +266,9 @@ func (p *Provider) holdFor(ctx context.Context, rootHex string, e *EntryRec, unt
 		h.Buckets = append(h.Buckets, e.Bucket)
 	}
 	h.Lease = max(h.Lease, until)
-	if err := p.save(); err != nil {
-		p.mu.Unlock()
-		return err
-	}
+	// A start holds the entry again; advertiseVia makes its lease durable
+	// before it broadcasts anything.
+	p.dirty = true
 	ad := h.Ad
 	p.mu.Unlock()
 	if ad != nil && ad.Expiry >= until {
@@ -287,10 +283,7 @@ func (p *Provider) holdFor(ctx context.Context, rootHex string, e *EntryRec, unt
 		}
 		return nil
 	}
-	_, err := p.advertiseVia(ctx, mustHash(rootHex), until)
-	if errors.Is(err, errAdPending) {
-		return err
-	}
+	_, err := p.advertiseVia(context.WithValue(ctx, noAdWait{}, true), mustHash(rootHex), until)
 	return err
 }
 
@@ -303,7 +296,12 @@ func (p *Provider) holdFor(ctx context.Context, rootHex string, e *EntryRec, unt
 func (p *Provider) room(n uint64, writer string) string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.evictLocked(false)
+	// Once a second: each walks the holdings, and this runs for every piece.
+	if now := p.now(); now.Sub(p.roomAt) >= time.Second {
+		p.roomAt = now
+		p.evictLocked(false)
+		p.used = p.usageLocked()
+	}
 	var unclaimed, mine, uploaded uint64
 	for _, u := range p.st.Unclaimed {
 		sz := max(u.Size, minPieceCharge)
@@ -329,13 +327,15 @@ func (p *Provider) room(n uint64, writer string) string {
 	case mine+n > p.writerShare():
 		p.metrics.inc("bstore_provider_refused_total", "reason=writer-share")
 		return "room: this writer's share of the space for unclaimed pieces is full"
-	case p.usageLocked()+n > p.cfg.QuotaBytes:
+	case p.used+n > p.cfg.QuotaBytes:
 		p.evictLocked(true)
-		if p.usageLocked()+n > p.cfg.QuotaBytes {
+		p.used = p.usageLocked()
+		if p.used+n > p.cfg.QuotaBytes {
 			p.metrics.inc("bstore_provider_refused_total", "reason=quota")
 			return "room: the store is full"
 		}
 	}
+	p.used += n
 	return ""
 }
 
@@ -374,14 +374,8 @@ func (p *Provider) evictLocked(all bool) {
 			changed = true
 		}
 	}
-	waiting := map[string]bool{}
-	for _, e := range p.st.Entries {
-		if e.Decision == "" {
-			waiting[e.Root] = true
-		}
-	}
 	for rootHex, h := range p.st.Holdings {
-		if waiting[rootHex] || !p.evictable(h, uint64(now)) {
+		if len(p.index.undecided[rootHex]) > 0 || !p.evictable(h, uint64(now)) {
 			continue
 		}
 		if !all && h.Lease != 0 {
@@ -391,7 +385,7 @@ func (p *Provider) evictLocked(all bool) {
 		changed = true
 	}
 	if changed {
-		_ = p.save()
+		p.dirty = true
 	}
 }
 
@@ -417,8 +411,11 @@ func (p *Provider) dropHoldingLocked(rootHex string) {
 	if h := p.st.Holdings[rootHex]; h != nil {
 		for _, c := range h.Entries {
 			if e := p.st.Entries[c]; e != nil {
-				e.Decision = "evicted: its advertisement and lease ran out"
+				p.setDecision(e, "evicted: its advertisement and lease ran out")
 			}
+		}
+		if h.Verified {
+			p.noteHeld(objs, -1)
 		}
 	}
 	delete(p.st.Holdings, rootHex)
@@ -438,13 +435,17 @@ func (p *Provider) dropHoldingLocked(rootHex string) {
 
 // heldObjectLocked reports whether a held root's closure names an object.
 func (p *Provider) heldObjectLocked(objHex string) bool {
-	obj := mustHash(objHex)
-	for r, h := range p.st.Holdings {
-		if h.Verified && p.inClosure(r, obj) {
-			return true
+	return p.heldObjects[mustHash(objHex)] > 0
+}
+
+// noteHeld counts a verified closure's objects in, or out with -1; the
+// caller holds p.mu.
+func (p *Provider) noteHeld(objs [][32]byte, by int32) {
+	for _, o := range objs {
+		if p.heldObjects[o] += by; p.heldObjects[o] <= 0 {
+			delete(p.heldObjects, o)
 		}
 	}
-	return false
 }
 
 // collect deletes every object in the store that no held closure names and

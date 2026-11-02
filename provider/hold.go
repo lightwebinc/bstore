@@ -81,10 +81,8 @@ func (p *Provider) worker(ctx context.Context) {
 func (p *Provider) evaluate(ctx context.Context, rootHex string) error {
 	p.mu.Lock()
 	var undecided []*EntryRec
-	for _, e := range p.st.Entries {
-		if e.Root == rootHex && e.Decision == "" {
-			undecided = append(undecided, e)
-		}
+	for _, e := range p.index.undecided[rootHex] {
+		undecided = append(undecided, e)
 	}
 	h := p.st.Holdings[rootHex]
 	p.mu.Unlock()
@@ -178,11 +176,12 @@ func (p *Provider) decide(c, decision string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if e := p.st.Entries[c]; e != nil {
-		e.Decision = decision
+		p.setDecision(e, decision)
 		if decision != decisionHeld {
 			p.releasePiecesLocked(e.Root)
 		}
-		_ = p.save()
+		// A start looks at every entry undecided or held again.
+		p.dirty = true
 	}
 }
 
@@ -195,13 +194,11 @@ func (p *Provider) dropUnheld(rootHex string) {
 	if h == nil || len(h.Entries) > 0 || h.Ad != nil || h.Lease > 0 {
 		return
 	}
-	for _, e := range p.st.Entries {
-		if e.Root == rootHex && e.Decision == "" {
-			return
-		}
+	if len(p.index.undecided[rootHex]) > 0 {
+		return
 	}
 	p.dropHoldingLocked(rootHex)
-	_ = p.save()
+	p.dirty = true
 }
 
 // fetch is the store as a CHIRP fetch: an object's whole bytes.
@@ -303,6 +300,9 @@ func (p *Provider) verifyRoot(ctx context.Context, rootHex string, entries []*En
 		p.st.Holdings[rootHex] = h
 	}
 	h.Size, h.ContentHash, h.ProofRoot, h.RootLen = e.Size, e.ContentHash, hex.EncodeToString(pr[:]), uint64(len(rootBytes))
+	if !h.Verified {
+		p.noteHeld(c.Objects, 1)
+	}
 	h.Objects, h.Blobs, h.Bytes, h.Verified, h.Damaged = len(c.Objects), len(c.Blobs), bytesHeld, true, false
 	// The closure's pieces are held now; a piece another closure still
 	// waiting for its entry sent keeps its record.
@@ -312,9 +312,8 @@ func (p *Provider) verifyRoot(ctx context.Context, rootHex string, entries []*En
 			delete(p.st.Unclaimed, k)
 		}
 	}
-	if err := p.save(); err != nil {
-		return false, err
-	}
+	// Checked again on a start, if a crash loses this.
+	p.dirty = true
 	p.inc.forget(root, c.Blobs)
 	p.logf("root %s: closure verified (%d objects, %d bytes, proof root %s)", short(rootHex), len(c.Objects), e.Size, short(h.ProofRoot))
 	if p.export != nil {
