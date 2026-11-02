@@ -181,13 +181,13 @@ type Publisher struct {
 	holdMu sync.Mutex // one hold fill runs at a time
 	// holdMark is where the next takeHold starts looking; under mu.
 	holdMark int
-	kept   *producer.Kept
-	payer  *producer.Payer
-	pieces *producer.Trees
-	ents   *producer.Trees
-	outs   *producer.Trees
-	outbox *Outbox
-	lock   *dirLock
+	kept     *producer.Kept
+	payer    *producer.Payer
+	pieces   *producer.Trees
+	ents     *producer.Trees
+	outs     *producer.Trees
+	outbox   *Outbox
+	lock     *dirLock
 	// auth reaches the providers configured (upload sessions); frontAuth
 	// reaches the fronts advertisements and statements name, through
 	// FrontHTTP, a client a front.
