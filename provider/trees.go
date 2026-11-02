@@ -187,9 +187,8 @@ func (p *Provider) spendTree(ctx context.Context) (*transaction.Transaction, uin
 	return tree, vout, nil
 }
 
-// markSpent records that vout of tree is used; the caller holds p.mu.
-func (p *Provider) markSpent(tree string, vout uint32) {
-	st := p.st
+// markSpent records that vout of tree is used; the provider's lock is held.
+func (st *State) markSpent(tree string, vout uint32) {
 	if st.Tree != nil && st.Tree.Txid == tree && st.Tree.Next <= vout {
 		st.Tree.Next = vout + 1
 		st.Trees = producer.Index(st.Trees, st.Tree)

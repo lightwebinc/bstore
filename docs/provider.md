@@ -166,7 +166,9 @@ when it lasts long enough; when it does not, it is renewed to.
 
 **Funding trees.** Advertisements and renewals are paid from funding trees
 of `tree_count` outputs of `tree_sats` each, locked to the wallet's fund
-key; the next tree is minted before the current one runs out. A tree is
+key; the next tree is minted before the current one runs out. An
+advertisement pays all of its output in fee and keeps no change, so
+`tree_sats` is the most one costs. A tree is
 recorded with its fee coin before it reaches the settlement leg (bcommon
 `producer`'s `Prepare`), so a provider that stops between the leg and the
 adoption finds the record on its next start and settles it (`Recover`):
@@ -494,7 +496,7 @@ GorillaPool's public arcade.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `data` | required | the data directory, absolute: `wallet/`, `state.json`, `store/`, `roots/`, `payments.jsonl` |
+| `data` | required | the data directory, absolute: `wallet/`, `state.json`, `fundings.log`, `ads/`, `store/`, `roots/`, `payments.jsonl` |
 | `listen` | `127.0.0.1:8095` | the address the routes are served on |
 | `tls_cert`, `tls_key` | none | serve TLS directly; otherwise a TLS proxy in front terminates it |
 | `public_url` | required | the `https` URL the routes are reached at: objects under `<public_url>/chirp/v1/`, the front at `<public_url>/bstore/v1`; no trailing slash, query, fragment or user |
@@ -524,7 +526,7 @@ GorillaPool's public arcade.
 | `terms.renew_per_gib_day`, `terms.renew_minimum` | 250, 500 | this provider's price, for a renewal and for what an even share of a bounty must cover; a renewal's minimum, at least the fee floor |
 | `terms.max_renew_seconds` | 366 days | the furthest a renewal runs |
 | `limits.*` | as the table above | `handshakes_per_sec` 32, `handshake_burst` 64, `handshakes_per_addr_per_sec` 1, `handshake_addr_burst` 4, `responses_per_sec` 5, `response_burst` 20, `sessions` 10000, `session_ttl_seconds` 600, `challenges_per_buyer_per_min` 6, `challenge_burst` 6, `free_per_writer_per_min` 12, `challenge_workers` 4, `renewals_per_root_per_hour` 4, `submits_per_addr_per_sec` 64, `submit_burst` 256, `object_readers` 32, `object_reads_per_addr_per_sec` 50, `object_read_burst` 200, `upload_sessions` 64, `upload_session_seconds` 3600 |
-| `tree_count`, `tree_sats` | 16, 1000 | the funding trees; `tree_sats` at least twice the fee floor |
+| `tree_count`, `tree_sats` | 16, 200 | the funding trees; `tree_sats` at least twice the fee floor, and past that only what an advertisement overpays; a provider taking many new roots a second wants `tree_count` 1023 |
 | `fee` | 100 satoshis per 1000 bytes, floor 100, cap 100/1000 | the miner fee policy ([the fee block](configuration.md#the-fee-block)); `source: arc` follows the broadcaster's published rate |
 | `fee_sat_per_byte`, `fee_floor` | none | the older fee keys, still read as `fee.rate {n, 1}` and `fee.floor`, the rate capped at `fee.max_rate` |
 | `mainnet` | false | mainnet addresses, and the mainnet services by default |
@@ -533,6 +535,7 @@ GorillaPool's public arcade.
 | `feeders` | none | CIDRs of the plane's local feeders: the overlay bridge that hands this provider what the plane delivers. A submission whose connection comes from one skips the per-address submission budgets; the bounds on bodies held and processed still apply |
 | `feed_listen` | none | a loopback address where the local bridge submits: `POST /submit` and `/healthz` only, plain HTTP, no per-address budgets, the way a bridge reaches its engine. Every other route stays on `listen`. A non-loopback address is refused |
 | `metrics_listen` | none | where `/metrics` is served; it is served nowhere else |
+| `pprof_listen` | none | where Go's `net/http/pprof` is served; a loopback address, since the profiles are the process's internals |
 | `accept_threshold_sats` | 25000000 | the largest payment taken on the network's acceptance; above it, held until mined; 0 holds every payment |
 | `accept_payer_limit`, `accept_total_limit` | one and ten thresholds | satoshis taken fast and not yet mined, per payer and in all |
 | `accept_window_seconds` | 3600 | how long a fast payment counts against the limits unless it mines first |
@@ -558,8 +561,9 @@ that the pool does not hold and the chain view does not show spent goes
 into the pool, its proof checked against the header source. Set `mainnet: true` on mainnet; with `false`
 the fund address is in the testnet form. Every advertisement and renewal
 is a mined transaction the provider pays for: 50,000 satoshis covers a
-funding tree (`tree_count` 16 outputs of `tree_sats` 1,000) and its fees
-with room to spare.
+funding tree (`tree_count` 16 outputs of `tree_sats` 200) and its fees
+with room to spare. One coin pays for each tree, so the pool needs a coin of
+`tree_count` x `tree_sats` plus the tree's fee.
 
 `rescan -from H` and `fund -blocks N` are **coinbase: only on a regtest
 chain you run (development and tests)**, with `chain asset:<url>`:
@@ -610,6 +614,7 @@ Behind a proxy, name it in `trusted_proxies`: otherwise every client is
 the proxy's address to every per-address budget. `/healthz` answers `ok`.
 `/metrics` (Prometheus text) is served on `metrics_listen` only: `bstore_provider_handshake_total`,
 `bstore_provider_request_total`, `bstore_provider_session_evicted_total`,
+`bstore_provider_state_saves_total`, `bstore_provider_state_save_seconds`,
 `bstore_provider_submits_total`, `bstore_provider_challenges_total`,
 `bstore_provider_payments_total{decision,reason}` (`requested`, `fast`,
 `hold` or `refuse`, with the acceptance reason),

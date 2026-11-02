@@ -227,7 +227,7 @@ The configuration's keys: `data`, `listen`, `tls_cert`, `tls_key`,
 `unclaimed_bytes`, `unclaimed_seconds`, `policy.*`, `terms.*`,
 `limits.*`, `tree_count`, `tree_sats`, `fee`, `fee_sat_per_byte`,
 `fee_floor`, `mainnet`, `refuse_unmined`, `trusted_proxies`, `feeders`,
-`feed_listen`, `metrics_listen` and the `accept_` keys. `chain`, `settle` and `headers`
+`feed_listen`, `metrics_listen`, `pprof_listen` and the `accept_` keys. `chain`, `settle` and `headers`
 default to the zero-infrastructure profile for the network `mainnet`
 selects; a busy provider needs `woc_key` or a node.
 

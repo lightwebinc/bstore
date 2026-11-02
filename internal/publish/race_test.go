@@ -291,7 +291,14 @@ func TestReclaimAfterTheDeadline(t *testing.T) {
 	if _, err := r.p.Settle(r.ctx, race, true); err != nil && !errors.Is(err, ErrPastDeadline) {
 		t.Fatalf("settle after the deadline: %v", err)
 	}
+	coins := r.p.Wallet().Pool.Count()
 	rc, err := r.p.Reclaim(r.ctx, race)
+	if rc != nil && rc.Fee.TxID != "" {
+		t.Fatalf("the reclaim of a hold that can pay its fee took coin %s", rc.Fee.TxID)
+	}
+	if n := r.p.Wallet().Pool.Count(); n < coins {
+		t.Fatalf("the reclaim took a coin from the pool: %d, was %d", n, coins)
+	}
 	if err != nil || rc == nil || race.State != RaceReclaimd {
 		t.Fatalf("reclaim: %v %s", err, race.State)
 	}

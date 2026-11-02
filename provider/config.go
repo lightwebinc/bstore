@@ -86,7 +86,8 @@ type Config struct {
 	Terms  Terms  `json:"terms"`
 	Limits Limits `json:"limits"`
 	// TreeCount and TreeSats size the funding trees advertisements and
-	// renewals spend. Fee is the miner fee policy (feepolicy.Config;
+	// renewals spend; an advertisement pays all of its output in fee, so
+	// TreeSats is the most one costs. Fee is the miner fee policy (feepolicy.Config;
 	// default 100 satoshis per 1000 bytes, floor 100, capped at 100/1000); FeeRate and FeeFloor
 	// are its older keys fee_sat_per_byte and fee_floor, still read.
 	TreeCount int               `json:"tree_count"`
@@ -111,6 +112,9 @@ type Config struct {
 	Feeders []string `json:"feeders,omitempty"`
 	// MetricsListen, when set, serves /metrics there, and only there.
 	MetricsListen string `json:"metrics_listen,omitempty"`
+	// PprofListen, when set, serves Go's net/http/pprof there (a loopback
+	// address: the profiles are the process's internals).
+	PprofListen string `json:"pprof_listen,omitempty"`
 	// FeedListen, when set, is a loopback address where the plane's local
 	// feeder (an overlay bridge on the same host) submits: POST /submit and
 	// /healthz only, plain HTTP, no BRC-104, and no per-address budgets, the
@@ -302,7 +306,7 @@ func (c *Config) defaults() {
 		c.TreeCount = 16
 	}
 	if c.TreeSats == 0 {
-		c.TreeSats = 1000
+		c.TreeSats = 200
 	}
 }
 

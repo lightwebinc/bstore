@@ -152,7 +152,8 @@ func (p *Provider) notePayout(c, txid string, rank int, sats uint64, via string)
 		return
 	}
 	p.st.Payouts[c] = &Payout{Settlement: txid, Rank: rank, Satoshis: sats, Via: via, At: p.now().Unix()}
-	_ = p.save()
+	// The scan finds it again, if a crash loses this.
+	p.dirty = true
 	p.metrics.inc("bstore_provider_payouts_total", "via="+via)
 	p.logf("entry %s: settlement %s pays rank %d, %d satoshis (%s)", short(c), short(txid), rank, sats, via)
 }
@@ -247,7 +248,7 @@ func (p *Provider) scanPayouts(ctx context.Context) {
 				continue
 			}
 			p.st.Payouts[e.C] = &Payout{Settlement: by, Via: "spent, nothing to this provider", At: p.now().Unix()}
-			_ = p.save()
+			p.dirty = true
 			p.mu.Unlock()
 			p.logf("entry %s: its hold output was spent by %s (height %d), paying this provider nothing", short(e.C), short(by), height)
 		}
