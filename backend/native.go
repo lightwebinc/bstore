@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"sync"
 
 	"github.com/lightwebinc/bstore/storerec"
 )
@@ -29,13 +28,16 @@ const MaxObject = 4 << 20
 //
 // Advertise is the front's: it leases the closure in its own records and
 // mints the advertisement, and the native backend hands the call to it.
+//
+// Writes of one store run side by side: each has its own temporary file and
+// the rename is atomic, so two puts of one object leave the same bytes under
+// its name whichever lands last. Concurrent fsyncs share the filesystem's
+// journal commits, which is what makes a store on a slow-syncing disk keep up.
 type Native struct {
 	dir     string
 	baseURL string
 	// Advertiser mints the advertisement for a native backend (the front).
 	Advertiser func(ctx context.Context, root [32]byte, until uint64) (*Advert, error)
-
-	mu sync.Mutex // serializes writes of one store
 }
 
 var _ Backend = (*Native)(nil)
@@ -67,18 +69,23 @@ func (n *Native) Path(hash [32]byte) string {
 
 // Put stores data under hash.
 func (n *Native) Put(hash [32]byte, data []byte) error {
-	if len(data) > MaxObject {
-		return ErrTooLarge
-	}
 	if sha256.Sum256(data) != hash {
 		return ErrHash
+	}
+	return n.PutHashed(hash, data)
+}
+
+// PutHashed is Put for a caller that has just hashed data itself: a 4 MiB
+// piece costs a provider's take milliseconds to hash, and a store keeps what
+// it is handed under the name it is given, so the name must be right.
+func (n *Native) PutHashed(hash [32]byte, data []byte) error {
+	if len(data) > MaxObject {
+		return ErrTooLarge
 	}
 	p := n.Path(hash)
 	if st, err := os.Stat(p); err == nil && st.Size() == int64(len(data)) {
 		return nil
 	}
-	n.mu.Lock()
-	defer n.mu.Unlock()
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}

@@ -420,7 +420,7 @@ func (p *Provider) keepPiece(data []byte, rootHex, bucket, writer string) string
 		if why := p.room(uint64(len(data)), writer); why != "" {
 			return why
 		}
-		if err := p.store.Put(h, data); err != nil {
+		if err := p.store.PutHashed(h, data); err != nil {
 			p.logf("storing piece %s: %v", short(hh), err)
 			return storeFailed
 		}
