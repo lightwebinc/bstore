@@ -43,6 +43,13 @@ There are two ways in, and the provider is the same behind both.
   the `refused` reason. So an overlay bridge whose facade routes a blob
   topic here publishes exactly the valid pieces, and a bridge that feeds
   the provider from the plane retries a header lag and never a refusal.
+  A feeder's submission (on `feed_listen`, or from a `feeders` address) is
+  answered as soon as every piece has passed its check, and stored right
+  after, at most eight takes at a time, each holding its body's slot of
+  the 64 until it is done; a writer that submits directly is answered
+  after its take, since it reads the `refused` reason. A crash between a
+  feeder's answer and the store loses the piece, as it loses one the next
+  background pass (every 5 s) had not yet recorded.
 - **Unicast upload sessions** (spec section 14, BRC-167's baseline
   profile), over BRC-104: `POST <public>/chirp/v1/uploads` opens a
   session bound to the caller's identity; `PUT` (and `HEAD`)
@@ -437,7 +444,7 @@ how readers reach the bytes.
 | Signed answers | `responses_per_sec`, `response_burst` per session, taken before a request is verified |
 | Challenges | `challenges_per_buyer_per_min` with `challenge_burst` per buyer, `free_per_writer_per_min` free ones per writer, `challenge_workers` answered at once |
 | Renewals | `renewals_per_root_per_hour` per root |
-| Submissions | `submits_per_addr_per_sec`, `submit_burst` per address; 4 in flight from one address, uploads included (a connection from one of the `feeders` skips both); 64 bodies read or held at once; 16 processed at once, a slot taken only once the body is read |
+| Submissions | `submits_per_addr_per_sec`, `submit_burst` per address; 4 in flight from one address, uploads included (a connection from one of the `feeders` skips both); 64 bodies read or held at once, a feeder's held until its take is done; 16 processed at once, a slot taken only once the body is read; 8 of a feeder's takes at once, after their answers |
 | Funding outpoints remembered | 200,000, each for seven days, recorded only for a carrier taken |
 | Reads | `object_readers` objects read at once, the slot released before the answer is written; `object_reads_per_addr_per_sec`, `object_read_burst` per address |
 | Upload sessions | `upload_sessions` open, 4 per identity and 8 per address, 60 opened an hour from one address, `upload_session_seconds` each, 65,536 objects each |
@@ -614,8 +621,9 @@ the proxy's address to every per-address budget. `/healthz` answers `ok`.
 gauges `bstore_provider_holdings`, `bstore_provider_store_bytes`,
 `bstore_provider_sessions`, `bstore_provider_pool_satoshis`.
 
-A stop (`SIGINT`, `SIGTERM`) saves the state; a crash loses nothing that
-was answered, and the next start finishes what was in flight. Pieces are
+A stop (`SIGINT`, `SIGTERM`) waits for a feeder's takes and saves the
+state; a crash loses nothing that was answered but a feeder's pieces not
+yet stored, and the next start finishes what was in flight. Pieces are
 recorded with the next background pass: an object in the store that no held
 closure names and no record keeps is removed at the start, and its writer
 sends it again.
