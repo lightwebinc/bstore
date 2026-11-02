@@ -128,17 +128,15 @@ func TestPutDeliversAndRetries(t *testing.T) {
 		t.Fatalf("hold records: %d used by the entry, %d ready", used, ready)
 	}
 
-	// The provider is down: the pieces stay in the outbox and the put
-	// fails before any entry; once it is back, a retry sends the same
-	// bytes.
+	// The provider is down: the put fails before any entry, and the
+	// carriers it minted leave the outbox with it, since no entry names
+	// them and a retry of the put mints its own.
 	prov.down.Store(true)
 	if _, err := p.Put(ctx, Fields{Bucket: testBucket, ID: f.ID, Key: "a/c", ContentType: "text/plain"}, obj, nil); err == nil {
 		t.Fatal("a put whose pieces reached no target succeeded")
 	}
-	// Pieces are sent four at a time: the carriers in flight when the
-	// first failed stay in the outbox with it.
-	if n := p.Outbox().Pending(); n < 1 || n > 4 {
-		t.Fatalf("outbox holds %d", n)
+	if n := p.Outbox().Pending(); n != 0 {
+		t.Fatalf("outbox holds %d carrier(s) of the failed put", n)
 	}
 	// The host is down: the entry is minted, not sent; the outbox keeps it.
 	prov.down.Store(false)

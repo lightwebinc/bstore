@@ -181,8 +181,6 @@ func (p *Publisher) PublishOutcome(ctx context.Context, o *storerec.Outcome) (st
 	if p.Killed() {
 		return "", ErrKilled
 	}
-	p.mintMu.Lock()
-	defer p.mintMu.Unlock()
 	if err := p.noteBucket(o.Bucket); err != nil {
 		return "", err
 	}

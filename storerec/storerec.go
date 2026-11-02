@@ -161,7 +161,7 @@ const (
 	SeedWindow       = 6
 	MaxProofPath     = 31
 	DefaultC         = 30
-	MaxAdsPerTx      = 16
+	MaxAdsPerTx      = 1024
 	MaxAdURL         = 2048
 	MinAge           = 0
 	MaxMinAge        = 1008

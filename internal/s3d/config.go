@@ -82,7 +82,10 @@ type Config struct {
 	// how many mined hold outputs of it each identity keeps ready.
 	Bounty    *BountyConfig `json:"bounty,omitempty"`
 	HoldAhead int           `json:"hold_ahead,omitempty"`
-	Limits    Limits        `json:"limits"`
+	// HoldTree is how many hold outputs one transaction carries: 16 by
+	// default, at most what hosts admit of a mined transaction (1,024).
+	HoldTree int    `json:"hold_tree,omitempty"`
+	Limits   Limits `json:"limits"`
 	// PieceTree and EntryTree size funding trees. Fee is the miner fee
 	// policy (feepolicy.Config; default 100 satoshis per 1000 bytes, floor
 	// 100, capped at 100/1000); FeeRate and FeeFloor are its older keys,
@@ -99,10 +102,18 @@ type Config struct {
 	// keys, docs/s3.md).
 	acceptcfg.Config
 	// PieceWorkers is how many piece carriers a put mints and sends at once
-	// (default 4); PieceAhead how few outputs left on a piece tree start the
-	// next one in the background (default piece_tree: one always ready).
+	// (default 4); PieceAhead how many piece outputs are kept ready ahead
+	// of the puts, across the current tree, the trees held for a switch
+	// and the trees being minted, with more trees minted in the background
+	// when fewer are left (default piece_tree: one tree always ready);
+	// EntryAhead the same for entry trees (default half of entry_tree). A
+	// writer is held to the entry outputs ready per block interval: set
+	// entry_ahead to the puts one block interval must absorb, and the
+	// gateway keeps that many ready across as many trees of entry_tree
+	// outputs as it takes, each entry carrier carrying only its own tree.
 	PieceWorkers int `json:"piece_workers,omitempty"`
 	PieceAhead   int `json:"piece_ahead,omitempty"`
+	EntryAhead   int `json:"entry_ahead,omitempty"`
 	// Race is the hold race, settlement and reclaim the gateway runs in the
 	// background for its own puts.
 	Race RaceConfig `json:"race"`
@@ -115,6 +126,10 @@ type Config struct {
 	OutboxBytes int64 `json:"outbox_bytes,omitempty"`
 	// MetricsListen, when set, serves /metrics there, and only there.
 	MetricsListen string `json:"metrics_listen,omitempty"`
+	// PprofListen, when set, serves Go's net/http/pprof there (a loopback
+	// address: the profiles are the process's internals), with mutex and
+	// block profiling on.
+	PprofListen string `json:"pprof_listen,omitempty"`
 }
 
 // RaceConfig is the gateway's background race (spec section 9.4): for each
@@ -381,8 +396,8 @@ func (c *Config) Check() error {
 	if c.HoldAhead <= 0 {
 		c.HoldAhead = 8
 	}
-	if c.PieceTree < 0 || c.EntryTree < 0 || c.PieceAhead < 0 || c.PieceWorkers < 0 {
-		return errors.New("piece_tree, entry_tree, piece_ahead and piece_workers are not negative")
+	if c.PieceTree < 0 || c.EntryTree < 0 || c.PieceAhead < 0 || c.EntryAhead < 0 || c.PieceWorkers < 0 {
+		return errors.New("piece_tree, entry_tree, piece_ahead, entry_ahead and piece_workers are not negative")
 	}
 	if c.PieceTree > 1023 || c.EntryTree > 1023 {
 		return errors.New("piece_tree and entry_tree are at most 1023")
@@ -412,7 +427,7 @@ func (c *Config) Check() error {
 	if c.EntryTree == 0 {
 		c.EntryTree = 16
 	}
-	if c.PieceAhead == 0 || c.PieceAhead > c.PieceTree {
+	if c.PieceAhead == 0 {
 		c.PieceAhead = c.PieceTree
 	}
 	if c.PieceWorkers == 0 {

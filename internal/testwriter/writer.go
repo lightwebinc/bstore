@@ -314,6 +314,26 @@ func (w *Writer) Entry(ctx context.Context, o *Object, key string, t Terms) (*Pu
 	return put, nil
 }
 
+// Delete makes the delete entry for key: the put it ends is whichever the
+// bucket holds under that key, created no later than this.
+func (w *Writer) Delete(ctx context.Context, key string) (*Put, error) {
+	e := &storerec.Entry{Bucket: w.Bucket, ID: sha256.Sum256([]byte("bstore test bucket")), Writer: w.Identity(), Key: key,
+		Kind: storerec.KindDelete, Created: uint64(time.Now().UnixMilli())}
+	rec, err := e.Encode()
+	if err != nil {
+		return nil, err
+	}
+	tree, err := w.Tree(ctx, storerec.EntryDerivation, 1)
+	if err != nil {
+		return nil, err
+	}
+	beef, c, err := w.Carrier(ctx, storerec.EntryDerivation, rec, tree, 0)
+	if err != nil {
+		return nil, err
+	}
+	return &Put{Entry: e, BEEF: beef, C: c}, nil
+}
+
 // Submit posts a BEEF to base's /submit on topic and returns the answer.
 func (w *Writer) Submit(ctx context.Context, base, topic string, beef []byte) (map[string]any, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(base, "/")+"/submit", bytes.NewReader(beef))

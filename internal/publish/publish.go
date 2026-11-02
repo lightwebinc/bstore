@@ -35,6 +35,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bsv-blockchain/go-sdk/script"
@@ -83,7 +84,8 @@ func Init(dir string) (string, error) {
 
 // Config is one publisher identity.
 type Config struct {
-	// Dir is the identity's directory: wallet/, publisher.json, outbox/.
+	// Dir is the identity's directory: wallet/, publisher.json and txs/
+	// (the state, state.go), outbox/, races/.
 	Dir string
 	// Chain is the chain view transactions, proofs and spends are asked
 	// of (a node, or WhatsOnChain: chaincfg); Known says whether a
@@ -128,8 +130,14 @@ type Config struct {
 	LockWait time.Duration
 	// HoldAhead is how many mined hold outputs of each bounty value are kept
 	// ready, so a put never waits for a block; HoldWait is how long a put
-	// waits for one when none is ready.
+	// waits for one when none is ready. HoldTree is how many hold outputs
+	// one transaction carries (a hold tree): 16 by default, at most
+	// storerec.MaxAdsPerTx, what a host admits of a mined transaction. A
+	// hold output is named by the entry and never carried in a BEEF, so the
+	// tree costs no carrier anything; a bigger tree means fewer
+	// transactions, coins and records a block for the same holds ahead.
 	HoldAhead int
+	HoldTree  int
 	HoldWait  time.Duration
 	// Store is the local closure store, shared by every identity.
 	Store *Store
@@ -157,20 +165,29 @@ type Publisher struct {
 
 	mu sync.Mutex // st and every save
 	st *state
+	sv saver // writes st: see save.go
 
-	mintMu sync.Mutex // one put mints at a time: the trees are not shared
+	// spendMu, one a tree kind, holds a spend from the library's answer to
+	// the state's record of it, so that two puts never take the same
+	// outputs; puts otherwise run side by side.
+	spendMu [3]sync.Mutex
+	// tip is the chain height the payer judges coinbase maturity at,
+	// learned by whichever put or settlement asks last.
+	tip atomic.Uint32
 	// run is the Publisher's own lifetime: what a put starts in the
 	// background (a funding tree minted ahead) outlives the request.
 	run    context.Context
 	stop   context.CancelFunc
-	holdMu sync.Mutex // one hold transaction minted at a time
-	kept   *producer.Kept
-	payer  *producer.Payer
-	pieces *producer.Trees
-	ents   *producer.Trees
-	outs   *producer.Trees
-	outbox *Outbox
-	lock   *dirLock
+	holdMu sync.Mutex // one hold fill runs at a time
+	// holdMark is where the next takeHold starts looking; under mu.
+	holdMark int
+	kept     *producer.Kept
+	payer    *producer.Payer
+	pieces   *producer.Trees
+	ents     *producer.Trees
+	outs     *producer.Trees
+	outbox   *Outbox
+	lock     *dirLock
 	// auth reaches the providers configured (upload sessions); frontAuth
 	// reaches the fronts advertisements and statements name, through
 	// FrontHTTP, a client a front.
@@ -188,7 +205,13 @@ type state struct {
 	Entry    treeSet       `json:"entry"`
 	Outcome  treeSet       `json:"outcome"`
 	Pending  []pendingTree `json:"pendingTrees,omitempty"`
-	Holds    []HoldRecord  `json:"holds,omitempty"`
+	// Holds is every hold record, in memory, each carrying its transaction.
+	// On disk the records are rows in HoldOutputs and the transactions are
+	// cold files (state.go); Holds and HoldTxs on disk are an earlier
+	// build's layout, the transaction on each record or once by txid.
+	Holds       []HoldRecord        `json:"holds,omitempty"`
+	HoldTxs     map[string]txRecord `json:"holdTxs,omitempty"`
+	HoldOutputs json.RawMessage     `json:"holdOutputs,omitempty"`
 	// Buckets are the buckets this identity published carriers in: where
 	// a sweep of its trees is published (spec section 13.5).
 	Buckets []string `json:"buckets,omitempty"`
@@ -223,7 +246,7 @@ type HoldRecord struct {
 	Txid    string `json:"txid"`
 	Vout    uint32 `json:"vout"`
 	Sats    uint64 `json:"sats"`
-	RawHex  string `json:"rawHex"`
+	RawHex  string `json:"rawHex,omitempty"`
 	BumpHex string `json:"bumpHex,omitempty"`
 	Height  uint32 `json:"height,omitempty"`
 	// Used marks a hold output a put has taken, saved before its entry is
@@ -277,6 +300,10 @@ func Open(ctx context.Context, cfg Config) (*Publisher, error) {
 	if cfg.HoldAhead <= 0 {
 		cfg.HoldAhead = 8
 	}
+	if cfg.HoldTree <= 0 {
+		cfg.HoldTree = defaultHoldTree
+	}
+	cfg.HoldTree = min(cfg.HoldTree, storerec.MaxAdsPerTx)
 	if cfg.HoldWait <= 0 {
 		cfg.HoldWait = 30 * time.Second
 	}
@@ -306,7 +333,7 @@ func Open(ctx context.Context, cfg Config) (*Publisher, error) {
 			lk.release()
 		}
 	}()
-	if p.st, err = loadState(cfg.Dir); err != nil {
+	if p.st, p.sv.cold, err = readState(cfg.Dir); err != nil {
 		return nil, err
 	}
 	if p.st.Identity == "" {
@@ -314,9 +341,12 @@ func Open(ctx context.Context, cfg Config) (*Publisher, error) {
 	} else if p.st.Identity != p.signer.IdentityHex() {
 		return nil, fmt.Errorf("publish: the state in %s belongs to %s, not this wallet's %s", cfg.Dir, p.st.Identity, p.signer.IdentityHex())
 	}
+	if n := p.repairProofs(); n > 0 {
+		cfg.Logf("publisher state: %d proof(s) recorded by an earlier run cut to the minimal path", n)
+	}
 	p.kept = &producer.Kept{Load: p.loadKept}
 	p.payer = &producer.Payer{Pool: w.Pool, Keys: map[string]*bwallet.Signer{p.signer.IdentityHex(): p.signer},
-		Kept: p.kept, Settler: cfg.Settler, Chain: cfg.Chain, Fees: p.fees(), Note: p.note, Poll: cfg.Poll}
+		Kept: p.kept, Settler: cfg.Settler, Chain: cfg.Chain, Fees: p.fees(), Note: p.note, Poll: cfg.Poll, TipFunc: p.tip.Load}
 	p.pieces = p.newTrees(kindPiece, storerec.PieceDerivation, cfg.PieceTree, cfg.PieceAhead)
 	p.ents = p.newTrees(kindEntry, storerec.EntryDerivation, cfg.EntryTree, cfg.EntryAhead)
 	p.outs = p.newTrees(kindOutcome, storerec.OutcomeDerivation, cfg.EntryTree, cfg.EntryAhead)
@@ -337,8 +367,29 @@ func Open(ctx context.Context, cfg Config) (*Publisher, error) {
 	if err := p.recoverTrees(ctx); err != nil {
 		return nil, err
 	}
+	p.holdAhead()
 	ok = true
 	return p, nil
+}
+
+// holdAhead gives the library every tree an earlier run minted ahead and
+// did not use (the state's trees ahead), so that the spends switch to them
+// before more are minted.
+func (p *Publisher) holdAhead() {
+	for _, kind := range []string{kindPiece, kindEntry, kindOutcome} {
+		p.mu.Lock()
+		ahead := slices.Clone(p.set(kind).Ahead)
+		p.mu.Unlock()
+		trees := p.treesOf(kind)
+		for _, t := range ahead {
+			if t.IdentityKeyHex != p.signer.IdentityHex() || t.Remaining() == 0 {
+				continue
+			}
+			if err := trees.Hold(t); err != nil {
+				p.cfg.Logf("funding tree %s, minted ahead by an earlier run: %v", short(t.Txid), err)
+			}
+		}
+	}
 }
 
 // Close stops what the identity runs in the background (a funding tree
@@ -351,6 +402,7 @@ func (p *Publisher) Close() {
 	if p.stop != nil {
 		p.stop()
 	}
+	p.flushSaves()
 	if p.lock != nil {
 		p.lock.release()
 		p.lock = nil
@@ -651,38 +703,64 @@ func (p *Publisher) recoverTrees(ctx context.Context) error {
 func (p *Publisher) spend(ctx context.Context, kind string, need uint32) (*transaction.Transaction, uint32, error) {
 	trees := p.treesOf(kind)
 	if h, err := p.bestHeader(ctx); err == nil {
-		p.payer.Tip = h.Height
+		p.tip.Store(h.Height)
 	}
-	if err := p.promoteAhead(kind); err != nil {
+	// The library answers the state's next outputs and the state records
+	// them spent here: one spend of a kind at a time between the two, or
+	// two puts would be answered the same outputs.
+	tree, vout, gen, err := func() (*transaction.Transaction, uint32, uint64, error) {
+		mu := p.spendLock(kind)
+		mu.Lock()
+		defer mu.Unlock()
+		if err := p.promoteAhead(kind); err != nil {
+			return nil, 0, 0, err
+		}
+		// The run's context, not the request's: a spend that leaves the tree
+		// low starts the next one in the background, and that mint must
+		// outlive this put. A spend that has to wait for a tree is bounded by
+		// the payer's own timeout.
+		tree, vout, err := trees.Spend(p.run, need)
+		if errors.Is(err, producer.ErrPublish) {
+			tree, vout, err = trees.Spend(p.run, need)
+		}
+		p.keepHeld(kind)
+		if err != nil {
+			return nil, 0, 0, feeError(fmt.Errorf("%s funding tree: %w", kind, err))
+		}
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		s := p.set(kind)
+		id := tree.TxID().String()
+		if s.Tree == nil || s.Tree.Txid != id {
+			return nil, 0, 0, fmt.Errorf("publish: the %s tree spent is not the current one", kind)
+		}
+		if s.Tree.Next < vout+need {
+			s.Tree.Next = vout + need
+			s.Trees = producer.Index(s.Trees, s.Tree)
+		}
+		return tree, vout, p.markDirtyLocked(), nil
+	}()
+	if err != nil {
 		return nil, 0, err
 	}
-	// The run's context, not the request's: a spend that leaves the tree
-	// low starts the next one in the background, and that mint must
-	// outlive this put. A spend that has to wait for a tree is bounded by
-	// the payer's own timeout.
-	tree, vout, err := trees.Spend(p.run, need)
-	if errors.Is(err, producer.ErrPublish) {
-		tree, vout, err = trees.Spend(p.run, need)
-	}
-	p.keepHeld(kind)
-	if err != nil {
-		return nil, 0, feeError(fmt.Errorf("%s funding tree: %w", kind, err))
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	s := p.set(kind)
-	id := tree.TxID().String()
-	if s.Tree == nil || s.Tree.Txid != id {
-		return nil, 0, fmt.Errorf("publish: the %s tree spent is not the current one", kind)
-	}
-	if s.Tree.Next < vout+need {
-		s.Tree.Next = vout + need
-		s.Trees = producer.Index(s.Trees, s.Tree)
-	}
-	if err := p.saveLocked(); err != nil {
+	// The outputs are this put's once recorded; the record is durable
+	// before a carrier is signed on them, and the spends of other puts do
+	// not wait for this put's write (the saver batches them).
+	if err := p.awaitSave(gen); err != nil {
 		return nil, 0, err
 	}
 	return tree, vout, nil
+}
+
+// spendLock is the lock a spend of kind holds.
+func (p *Publisher) spendLock(kind string) *sync.Mutex {
+	switch kind {
+	case kindPiece:
+		return &p.spendMu[0]
+	case kindOutcome:
+		return &p.spendMu[2]
+	}
+	return &p.spendMu[1]
 }
 
 // keepHeld records every tree the library holds for a switch (a tree
@@ -763,53 +841,37 @@ func (p *Publisher) loadKept(txid string) (*transaction.Transaction, error) {
 		for _, list := range [][]funding.Tree{s.Trees, s.Ahead} {
 			for _, t := range list {
 				if t.Txid == txid {
-					return funding.Rebuild(t.RawHex, t.BumpHex, t.BeefHex)
+					return rebuilt(funding.Rebuild(t.RawHex, t.BumpHex, t.BeefHex))
 				}
 			}
 		}
 		if s.Tree != nil && s.Tree.Txid == txid {
-			return funding.Rebuild(s.Tree.RawHex, s.Tree.BumpHex, s.Tree.BeefHex)
+			return rebuilt(funding.Rebuild(s.Tree.RawHex, s.Tree.BumpHex, s.Tree.BeefHex))
 		}
 	}
 	for _, pt := range p.st.Pending {
 		if pt.Tree.Txid == txid {
-			return funding.Rebuild(pt.Tree.RawHex, pt.Tree.BumpHex, pt.Tree.BeefHex)
+			return rebuilt(funding.Rebuild(pt.Tree.RawHex, pt.Tree.BumpHex, pt.Tree.BeefHex))
 		}
 	}
 	return nil, fmt.Errorf("publish: %s is not a transaction this identity keeps", txid)
+}
+
+// rebuilt is a kept transaction with its txid cached: the library hands the
+// one object to every carrier spending it (producer.Kept), and each asks
+// its txid (AddInputFromTx), which would otherwise serialize and hash the
+// tree's outputs again per piece. A kept transaction does not change.
+func rebuilt(tx *transaction.Transaction, err error) (*transaction.Transaction, error) {
+	if err == nil {
+		tx.SetTxHash(tx.TxID())
+	}
+	return tx, err
 }
 
 func (p *Publisher) save() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.saveLocked()
-}
-
-func (p *Publisher) saveLocked() error {
-	raw, err := json.MarshalIndent(p.st, "", " ")
-	if err != nil {
-		return err
-	}
-	tmp := filepath.Join(p.cfg.Dir, "tmp")
-	if err := os.MkdirAll(tmp, 0o700); err != nil {
-		return err
-	}
-	return writeFileSync(tmp, filepath.Join(p.cfg.Dir, "publisher.json"), raw)
-}
-
-func loadState(dir string) (*state, error) {
-	raw, err := os.ReadFile(filepath.Join(dir, "publisher.json"))
-	if errors.Is(err, os.ErrNotExist) {
-		return &state{}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var st state
-	if err := json.Unmarshal(raw, &st); err != nil {
-		return nil, fmt.Errorf("publisher.json: %w", err)
-	}
-	return &st, nil
 }
 
 // feeError words the library's refusals to find a fee input.

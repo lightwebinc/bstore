@@ -249,7 +249,7 @@ func (c *Config) defaults() {
 		t.MinBounty = 1000
 	}
 	if t.RenewPerGiBDay == 0 {
-		t.RenewPerGiBDay = 100
+		t.RenewPerGiBDay = 250
 	}
 	if t.RenewMinimum == 0 {
 		t.RenewMinimum = 500

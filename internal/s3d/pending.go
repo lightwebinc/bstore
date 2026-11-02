@@ -21,9 +21,12 @@ import (
 // put, a removal or in consumed), when an anchored entry for its key is
 // the same or newer (by created, then commitment), or after pendingKeep.
 //
-// They are kept in pending.log, one line appended (and synced) per change,
-// and rewritten whole only when it holds four times the live entries; the
-// tokens the reader holds are in state.json, rewritten when one moves.
+// They are kept in pending.log, a line per change, and rewritten whole only
+// when it holds four times the live entries; the tokens the reader holds are
+// in state.json, rewritten when one moves. A put answers once its line is
+// durable, and the lines of the puts waiting share one write and one fsync (a
+// group commit): one sync per put under the state's lock was the largest wait
+// on the put path at 40 puts a second.
 
 const (
 	pendingKeep = 7 * 24 * time.Hour
@@ -73,6 +76,18 @@ type state struct {
 	byC   map[string]*pendingEntry
 	log   *os.File
 	lines int
+	// The log's group commit, under mu. batch holds the lines not yet
+	// written; gen numbers the last line appended to it; synced and failed
+	// are the last lines known durable and known lost, with err for the
+	// latter. syncing says a caller of awaitLog is writing with mu released;
+	// done wakes the others.
+	batch, spare []byte
+	gen          uint64
+	synced       uint64
+	failed       uint64
+	err          error
+	syncing      bool
+	done         *sync.Cond
 	// unsent are the entries a put answered 503 for (made, not yet taken
 	// by a quorum), by commitment, with when: the only ones a retry of the
 	// same write is answered from. Kept in memory.
@@ -82,6 +97,7 @@ type state struct {
 func openState(dir string, now func() time.Time) (*state, error) {
 	s := &state{dir: dir, now: now, held: map[string]storerec.Held{}, byKey: map[string]map[string][]*pendingEntry{},
 		byC: map[string]*pendingEntry{}}
+	s.done = sync.NewCond(&s.mu)
 	raw, err := os.ReadFile(filepath.Join(dir, "state.json"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
@@ -159,8 +175,60 @@ func (s *state) unindex(c string) bool {
 	return true
 }
 
-// appendLocked writes one line to the log and syncs it.
-func (s *state) appendLocked(l logLine) error {
+// appendLocked adds one line to the log's next write and returns its number
+// for awaitLog, or rewrites the log when it has grown past its live entries,
+// which holds the line already. The change is in memory either way; only a
+// caller that answers for durability waits.
+func (s *state) appendLocked(l logLine) (uint64, error) {
+	raw, err := json.Marshal(l)
+	if err != nil {
+		return 0, err
+	}
+	s.batch = append(append(s.batch, raw...), '\n')
+	s.gen++
+	s.lines++
+	if s.lines > 4*len(s.byC)+1024 {
+		return s.gen, s.compactLocked()
+	}
+	return s.gen, nil
+}
+
+// awaitLog returns once line gen is durable, or with the write's error when
+// it was lost. The first caller finds no write under way and does it, with
+// mu released, taking every line batched so far; a caller that arrives
+// meanwhile waits and its line goes in the next. Called and left with mu
+// held.
+func (s *state) awaitLog(gen uint64) error {
+	for {
+		switch {
+		case gen <= s.failed:
+			return s.err
+		case gen <= s.synced:
+			return nil
+		case s.syncing:
+			s.done.Wait()
+			continue
+		}
+		s.syncing = true
+		b, upto := s.batch, s.gen
+		s.batch = s.spare[:0]
+		s.mu.Unlock()
+		err := s.writeLog(b)
+		s.mu.Lock()
+		s.spare = b[:0]
+		s.syncing = false
+		if err != nil {
+			s.failed, s.err = upto, err
+		} else {
+			s.synced = upto
+		}
+		s.done.Broadcast()
+	}
+}
+
+// writeLog appends b to the log and syncs it. awaitLog's writer alone calls
+// it; compactLocked, the other user of s.log, waits for that writer first.
+func (s *state) writeLog(b []byte) error {
 	if s.log == nil {
 		f, err := os.OpenFile(filepath.Join(s.dir, "pending.log"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 		if err != nil {
@@ -168,22 +236,17 @@ func (s *state) appendLocked(l logLine) error {
 		}
 		s.log = f
 	}
-	raw, err := json.Marshal(l)
-	if err != nil {
+	if _, err := s.log.Write(b); err != nil {
 		return err
-	}
-	if _, err := s.log.Write(append(raw, '\n')); err != nil {
-		return err
-	}
-	s.lines++
-	if s.lines > 4*len(s.byC)+1024 {
-		return s.compactLocked()
 	}
 	return s.log.Sync()
 }
 
 // compactLocked rewrites the log as the live entries.
 func (s *state) compactLocked() error {
+	for s.syncing {
+		s.done.Wait()
+	}
 	if s.log != nil {
 		s.log.Close()
 		s.log = nil
@@ -200,7 +263,11 @@ func (s *state) compactLocked() error {
 	if err := writeSynced(filepath.Join(s.dir, "pending.log"), []byte(b.String())); err != nil {
 		return err
 	}
+	// Every line batched is in the rewrite, or dropped an entry it left out.
+	s.batch = s.batch[:0]
+	s.synced = s.gen
 	s.lines = len(s.byC)
+	s.done.Broadcast()
 	return nil
 }
 
@@ -242,7 +309,11 @@ func (s *state) add(e *storerec.Entry, rec []byte, c [32]byte) error {
 	p := &pendingEntry{Bucket: e.Bucket, Key: e.Key, C: hex.EncodeToString(c[:]), Created: e.Created, Kind: e.Kind,
 		Record: rec, Seen: s.now().Unix(), entry: e}
 	s.index(p)
-	return s.appendLocked(logLine{Add: p})
+	gen, err := s.appendLocked(logLine{Add: p})
+	if err != nil {
+		return err
+	}
+	return s.awaitLog(gen)
 }
 
 // named drops the pending entries a token names (its changes' commitments
@@ -250,10 +321,11 @@ func (s *state) add(e *storerec.Entry, rec []byte, c [32]byte) error {
 func (s *state) named(t *storerec.Bucket) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	var last uint64
 	drop := func(c [32]byte) {
 		x := hex.EncodeToString(c[:])
 		if s.unindex(x) {
-			_ = s.appendLocked(logLine{Drop: x})
+			last, _ = s.appendLocked(logLine{Drop: x})
 		}
 	}
 	for _, ch := range t.Changes {
@@ -261,6 +333,9 @@ func (s *state) named(t *storerec.Bucket) {
 	}
 	for _, c := range t.Consumed {
 		drop(c)
+	}
+	if last != 0 {
+		_ = s.awaitLog(last)
 	}
 }
 
@@ -288,10 +363,14 @@ func (s *state) settle(bucket, key string, created uint64, c string) {
 			drop = append(drop, p.C)
 		}
 	}
+	var last uint64
 	for _, x := range drop {
 		if s.unindex(x) {
-			_ = s.appendLocked(logLine{Drop: x})
+			last, _ = s.appendLocked(logLine{Drop: x})
 		}
+	}
+	if last != 0 {
+		_ = s.awaitLog(last)
 	}
 }
 

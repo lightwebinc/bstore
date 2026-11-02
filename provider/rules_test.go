@@ -549,6 +549,136 @@ func TestUploadSessions(t *testing.T) {
 	}
 }
 
+// The default price is a number people compare by the GB: docs/limits.md and
+// the published comparisons are arithmetic on it.
+func TestDefaultPrice(t *testing.T) {
+	c := &Config{}
+	c.defaults()
+	if got := c.Terms.RenewPerGiBDay; got != 250 {
+		t.Fatalf("default price %d satoshis per GiB-day", got)
+	}
+	if got := 3 * renewPrice(1<<30, 0, 30*86400, c.Terms.RenewPerGiBDay, 0); got != 22500 {
+		t.Fatalf("three copies of 1 GiB for 30 days at the default price: %d satoshis", got)
+	}
+}
+
+// A bounty pays the provider's price for the object's size and retention,
+// from an even share among the paid ranks.
+func TestBountyShort(t *testing.T) {
+	const gib, week = 1 << 30, 7 * 86400
+	for _, c := range []struct {
+		size, sats, k, retention, perGiBDay, price uint64
+		short                                      bool
+	}{
+		{gib, 2100, 3, week, 100, 700, false},
+		{gib, 2099, 3, week, 100, 700, true},
+		{gib, 1000, 3, week, 100, 700, true},
+		{gib, 700, 1, week, 100, 700, false},
+		{gib, 9000, 3, 30 * 86400, 100, 3000, false},
+		{100 << 20, 1000, 3, week, 100, 69, false},
+		{1000, 1000, 3, week, 100, 1, false},
+	} {
+		price, short := bountyShort(c.size, &HoldRec{Sats: c.sats, K: c.k, Retention: c.retention}, c.perGiBDay)
+		if price != c.price || short != c.short {
+			t.Errorf("%+v: price %d, short %v", c, price, short)
+		}
+	}
+}
+
+// A provider declines a hold below its price, and takes one at it.
+func TestProviderDeclinesAnUnderpricedHold(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	cfg := r.config(filepath.Join(t.TempDir(), "p"))
+	// 1 MiB for a day at this price is 2,000 satoshis.
+	cfg.Terms.RenewPerGiBDay = 2048000
+	p := r.start(cfg, true)
+	terms := func(sats uint64) testwriter.Terms {
+		return testwriter.Terms{Sats: sats, T: 1, K: 1, Retention: 86400, DeadlineAhead: 200, CheckC: 30}
+	}
+	low := r.put(ctx, []*Provider{p}, content(1<<20, 3), "low", terms(1999))
+	r.eventually("declined", 10*time.Second, func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		e := p.st.Entries[low.C]
+		return e != nil && strings.Contains(e.Decision, "price of 2000")
+	})
+	at := r.put(ctx, []*Provider{p}, content(1<<20, 4), "at", terms(2000))
+	r.eventually("held", 10*time.Second, func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		e := p.st.Entries[at.C]
+		return e != nil && e.Decision == decisionHeld
+	})
+}
+
+// The pieces of an object the provider declined give way at once: on the plane
+// they arrive whether it wants them or not, and they would otherwise keep the
+// writer's next object out for their whole time.
+func TestDeclinedPiecesGiveWay(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	cfg := r.config(filepath.Join(t.TempDir(), "p"))
+	cfg.QuotaBytes, cfg.UnclaimedBytes, cfg.Policy.MaxObject = 256<<20, 32<<20, 8<<20
+	// 8 MiB for a day at this price is 10,000 satoshis.
+	cfg.Terms.RenewPerGiBDay = 1280000
+	p := r.start(cfg, true)
+	terms := func(sats uint64) testwriter.Terms {
+		return testwriter.Terms{Sats: sats, T: 1, K: 1, Retention: 86400, DeadlineAhead: 200, CheckC: 30}
+	}
+	base := "https://" + p.Addr()
+	// As the plane delivers it: the pieces, then the entry.
+	o, err := r.writer.Build(ctx, content(8<<20, 3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, pc := range o.Pieces {
+		ans, _ := r.writer.Submit(ctx, base, storerec.BlobTopic(testBucket), pc)
+		if ok, why := testwriter.Admitted(ans, storerec.BlobTopic(testBucket)); !ok {
+			t.Fatalf("piece %d: %s", i+1, why)
+		}
+	}
+	low, err := r.writer.Entry(ctx, o, "low", terms(9999))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.writer.Submit(ctx, base, storerec.RecordsTopic(testBucket), low.BEEF); err != nil {
+		t.Fatal(err)
+	}
+	r.eventually("declined", 10*time.Second, func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		e := p.st.Entries[low.C]
+		return e != nil && strings.Contains(e.Decision, "price of 10000")
+	})
+	at := r.put(ctx, []*Provider{p}, content(8<<20, 4), "at", terms(10000))
+	r.eventually("held", 10*time.Second, func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		e := p.st.Entries[at.C]
+		return e != nil && e.Decision == decisionHeld
+	})
+}
+
+// One writer's share of the space for unclaimed pieces holds a whole object
+// of policy.max_object, which is its content and its nodes: a piece refused on
+// the plane is never sent again, so the object would never be held.
+func TestWriterShareHoldsAWholeObject(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	cfg := r.config(filepath.Join(t.TempDir(), "p"))
+	cfg.QuotaBytes, cfg.UnclaimedBytes, cfg.Policy.MaxObject = 256<<20, 32<<20, 8<<20
+	p := r.start(cfg, true)
+	base := "https://" + p.Addr()
+	o, _ := r.writer.Build(ctx, content(int(cfg.Policy.MaxObject), 7))
+	for i, piece := range o.Pieces {
+		ans, _ := r.writer.Submit(ctx, base, storerec.BlobTopic(testBucket), piece)
+		if ok, why := testwriter.Admitted(ans, storerec.BlobTopic(testBucket)); !ok {
+			t.Fatalf("piece %d of %d: %s", i+1, len(o.Pieces), why)
+		}
+	}
+}
+
 // Storage is bounded: pieces no entry claimed have their own share and
 // their own time, and a holding goes only once its lease and advertisement
 // run out.

@@ -1,7 +1,10 @@
 package publish
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -10,7 +13,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/bsv-blockchain/go-sdk/chainhash"
+	"github.com/bsv-blockchain/go-sdk/script"
 	"github.com/bsv-blockchain/go-sdk/transaction"
+	"github.com/bsv-blockchain/go-sdk/util"
 
 	"github.com/lightwebinc/bcommon/carrier"
 	"github.com/lightwebinc/bcommon/mint"
@@ -103,8 +109,6 @@ func (p *Publisher) Put(ctx context.Context, f Fields, obj Object, b *Bounty) (*
 			return nil, err
 		}
 	}
-	p.mintMu.Lock()
-	defer p.mintMu.Unlock()
 	var hold *HoldRecord
 	minted := false
 	defer func() {
@@ -144,15 +148,17 @@ func (p *Publisher) Put(ctx context.Context, f Fields, obj Object, b *Bounty) (*
 		}
 		ups = p.uploadClosure(ctx, obj.Root, obj.Closure, retention)
 		taken := 0
+		var why error
 		for _, u := range ups {
 			if u.Err == nil {
 				taken++
 			} else {
+				why = u.Err
 				p.cfg.Logf("closure %s: not taken by %s (%v); it is sent again later", short(hex.EncodeToString(obj.Root[:])), u.Provider, u.Err)
 			}
 		}
 		if taken == 0 {
-			return nil, fmt.Errorf("pieces: no provider took the closure by upload session")
+			return nil, fmt.Errorf("pieces: no provider took the closure by upload session: %w", why)
 		}
 	} else if obj.Closure != nil {
 		if n, err = p.publishPieces(ctx, f.Bucket, obj.Root, obj.Closure); err != nil {
@@ -194,8 +200,6 @@ func (p *Publisher) Delete(ctx context.Context, bucket string, id [32]byte, key 
 	if p.Killed() {
 		return nil, ErrKilled
 	}
-	p.mintMu.Lock()
-	defer p.mintMu.Unlock()
 	if err := p.noteBucket(bucket); err != nil {
 		return nil, err
 	}
@@ -209,8 +213,9 @@ func (p *Publisher) Delete(ctx context.Context, bucket string, id [32]byte, key 
 // each carrier is written to the outbox, synced, before it is sent. A put
 // spends what the current tree has left before it switches to the next,
 // minted ahead. A piece that reaches no target stops the put: the next one
-// would only add to the backlog; what was minted stays in the outbox and
-// is sent again.
+// would only add to the backlog, and the carriers the put minted are
+// dropped from the outbox, since no entry names them and the client's
+// retry mints its own.
 func (p *Publisher) publishPieces(ctx context.Context, bucket string, root [32]byte, c Closure) (int, error) {
 	objs := c.Objects()
 	targets := p.cfg.Delivery.pieceTargets(bucket)
@@ -238,9 +243,11 @@ func (p *Publisher) publishPieces(ctx context.Context, bucket string, root [32]b
 		}
 		tree, vout, err := p.spend(ctx, kindPiece, uint32(batch))
 		if err != nil {
+			b.abandon()
 			return int(minted.Load()), err
 		}
 		if err := p.sendPieces(ctx, bucket, root, c, objs[done:done+batch], tree, vout, targets, b, byRef, &minted); err != nil {
+			b.abandon()
 			return int(minted.Load()), err
 		}
 		done += batch
@@ -297,45 +304,165 @@ func (p *Publisher) sendPieces(ctx context.Context, bucket string, root [32]byte
 }
 
 // sendPiece mints one piece carrier, records it in the outbox and sends it.
-// Its transaction id is computed once and kept on the transaction, so the
-// BEEF and the outbox key hash the 4 MiB carrier no second time.
+// Its transaction id is computed once, over the carrier's bytes where they
+// lie in the BEEF, and kept on the transaction, so the outbox key hashes
+// the 4 MiB carrier no second time.
 func (p *Publisher) sendPiece(ctx context.Context, bucket string, root [32]byte, c Closure, h [32]byte,
 	tree *transaction.Transaction, out uint32, targets []Target, b *outBatch, byRef bool, minted *atomic.Int64) error {
+	d, t0 := p.cfg.Delivery, time.Now()
 	data, err := c.Object(ctx, h)
 	if err != nil {
 		return fmt.Errorf("object %x: %w", h[:6], err)
 	}
-	pc := &storerec.Piece{Bucket: bucket, Writer: p.Identity(), Root: root, Piece: data}
-	rec, err := pc.Encode()
-	if err != nil {
-		return err
-	}
-	tx, err := carrier.Mint(ctx, p.wallet, p.wallet.Originator, carrierParams(storerec.PieceDerivation), rec, tree, out)
+	d.observe(pieceStage("read"), t0)
+	t0 = time.Now()
+	tx, beef, at, err := p.mintPiece(ctx, bucket, root, data, tree, out)
 	if err != nil {
 		return err
 	}
 	minted.Add(1)
 	txid := tx.TxID()
-	tx.SetTxHash(txid)
-	beef, err := tx.AtomicBEEF(false)
-	if err != nil {
-		return err
-	}
+	d.observe(pieceStage("mint"), t0)
+	t0 = time.Now()
 	var it *outItem
 	if byRef {
-		it, err = p.outbox.addRef(b, txid.String(), "piece", beef, h, data, targets)
+		it, err = p.outbox.addRef(b, txid.String(), "piece", beef, h, at, len(data), targets)
 	} else {
 		it, err = p.outbox.add(txid.String(), "piece", beef, targets)
 	}
 	if err != nil {
 		return err
 	}
-	data, rec = nil, nil
-	if ok, refused := p.outbox.sendAll(ctx, it, beef); len(ok)+len(refused) == 0 {
+	b.track(it.ID)
+	data = nil
+	d.observe(pieceStage("outbox"), t0)
+	t0 = time.Now()
+	ok, refused := p.outbox.sendAll(ctx, it, beef)
+	d.observe(pieceStage("send"), t0)
+	if len(ok)+len(refused) == 0 {
 		return fmt.Errorf("piece %s reached no target", short(it.ID))
 	}
 	return nil
 }
+
+// mintPiece mints the carrier of one object of a closure on output out of
+// tree: the piece record, the carrier spending the output, and its atomic
+// BEEF, with the offset of the object's bytes in it (-1 when they are not
+// placed, and the outbox then keeps the carrier whole).
+func (p *Publisher) mintPiece(ctx context.Context, bucket string, root [32]byte, data []byte,
+	tree *transaction.Transaction, out uint32) (*transaction.Transaction, []byte, int, error) {
+	pc := &storerec.Piece{Bucket: bucket, Writer: p.Identity(), Root: root, Piece: data}
+	rec, err := pc.Encode()
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	tx, err := carrier.Mint(ctx, p.wallet, p.wallet.Originator, carrierParams(storerec.PieceDerivation), rec, tree, out)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	beef, at, err := pieceBEEF(tx, tree)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	return tx, beef, objectAt(beef, at, tx, rec, len(data)), nil
+}
+
+// objectAt is the offset in beef of the object a piece carrier's record
+// ends with, from the carrier's layout rather than a search of the 4 MiB:
+// the carrier's bytes at carrierAt hold one input and one output, whose
+// script is <key> OP_CHECKSIG <record> <signature> OP_2DROP, and the object
+// is the record's last field (storerec.PieceAt), so it ends 4 + 1 +
+// len(signature) + 1 bytes before the BEEF does. It is -1 when the bytes
+// there are not laid out so.
+func objectAt(beef []byte, carrierAt int, tx *transaction.Transaction, rec []byte, n int) int {
+	if carrierAt < 0 || len(tx.Inputs) != 1 || len(tx.Outputs) != 1 || tx.Inputs[0].UnlockingScript == nil || tx.Outputs[0].LockingScript == nil {
+		return -1
+	}
+	u, s := len(*tx.Inputs[0].UnlockingScript), len(*tx.Outputs[0].LockingScript)
+	// The version, one input (outpoint, script, sequence), one output
+	// (value, script) and the locktime.
+	at := carrierAt + 4 + 1 + 32 + 4 + varintLen(u) + u + 4 + 1 + 8 + varintLen(s)
+	head := pushHead(len(rec))
+	recAt := at + 35 + len(head)
+	end := recAt + len(rec)
+	if at+s+4 != len(beef) || end+2 > at+s || !bytes.Equal(beef[at+35:recAt], head) {
+		return -1
+	}
+	sig := int(beef[end])
+	if sig < 1 || sig > 75 || end+1+sig+1 != at+s || beef[at+s-1] != script.Op2DROP {
+		return -1
+	}
+	i := storerec.PieceAt(beef[recAt:end], n)
+	if i < 0 {
+		return -1
+	}
+	return recAt + i
+}
+
+func varintLen(n int) int { return util.VarInt(uint64(n)).Length() }
+
+// pushHead is the opcode and length of the minimal push of n bytes, as the
+// SDK's PushDrop writes a field of more than one byte.
+func pushHead(n int) []byte {
+	switch {
+	case n <= 75:
+		return []byte{byte(n)}
+	case n <= 0xff:
+		return []byte{script.OpPUSHDATA1, byte(n)}
+	case n <= 0xffff:
+		return []byte{script.OpPUSHDATA2, byte(n), byte(n >> 8)}
+	}
+	return []byte{script.OpPUSHDATA4, byte(n), byte(n >> 8), byte(n >> 16), byte(n >> 24)}
+}
+
+// pieceBEEF is tx.AtomicBEEF(false) for a carrier spending one output of a
+// mined funding tree, built once into a buffer of the exact size: the
+// atomic prefix, the carrier's txid, BEEF v2, one BUMP (the tree's proof),
+// then the tree (raw, BUMP 0) and the carrier (raw), as the SDK lays them
+// out. The txid is hashed over the carrier's bytes where they lie, written
+// into the header and kept on tx. It returns the BEEF and the offset of the
+// carrier's bytes within it: the carrier is the BEEF's last transaction. A
+// tree without a proof (unmined, so the BEEF carries its ancestry) goes
+// through the SDK, which lays the carrier last as well.
+func pieceBEEF(tx, tree *transaction.Transaction) ([]byte, int, error) {
+	if tree == nil || tree.MerklePath == nil || len(tx.Inputs) != 1 || tx.Inputs[0].SourceTransaction != tree {
+		tx.SetTxHash(tx.TxID())
+		beef, err := tx.AtomicBEEF(false)
+		if err != nil {
+			return nil, 0, err
+		}
+		at := len(beef) - tx.Size()
+		if at < 1 || beef[at-1] != byte(transaction.RawTx) {
+			return nil, 0, errors.New("publish: the carrier is not the last transaction of its BEEF")
+		}
+		return beef, at, nil
+	}
+	bump := tree.MerklePath.Bytes()
+	n := 4 + 32 + 4 + 1 + len(bump) + 1 + 2 + tree.Size() + 1 + tx.Size()
+	beef := make([]byte, 0, n)
+	beef = binary.LittleEndian.AppendUint32(beef, transaction.ATOMIC_BEEF)
+	beef = append(beef, make([]byte, 32)...) // the txid, once the carrier's bytes are in place
+	beef = binary.LittleEndian.AppendUint32(beef, transaction.BEEF_V2)
+	beef = append(beef, 1) // one BUMP
+	beef = append(beef, bump...)
+	beef = append(beef, 2) // two transactions: the tree, proven by BUMP 0, then the carrier
+	beef = append(beef, byte(transaction.RawTxAndBumpIndex), 0)
+	beef = tree.AppendBytes(beef)
+	beef = append(beef, byte(transaction.RawTx))
+	at := len(beef)
+	beef = tx.AppendBytes(beef)
+	if len(beef) != n {
+		return nil, 0, fmt.Errorf("publish: a piece BEEF of %d bytes was sized at %d", len(beef), n)
+	}
+	first := sha256.Sum256(beef[at:])
+	txid := chainhash.Hash(sha256.Sum256(first[:]))
+	copy(beef[4:36], txid[:])
+	tx.SetTxHash(&txid)
+	return beef, at, nil
+}
+
+// pieceStage names the histogram of one step of a piece carrier.
+func pieceStage(stage string) string { return `bstore_publish_piece_seconds{stage="` + stage + `"}` }
 
 // publishEntry mints the entry carrier on an entry tree output recorded
 // used first, writes it to the outbox, and sends it.

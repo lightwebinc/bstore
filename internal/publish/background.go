@@ -74,8 +74,11 @@ func (p *Publisher) RaceTick(ctx context.Context, o RaceOptions) int {
 	return left
 }
 
+// settleQuiet and reclaimQuiet are the pass's settlement and reclaim: sent
+// and left to a later pass, never waited for, so one pass covers every
+// race whatever the block interval.
 func (p *Publisher) settleQuiet(ctx context.Context, r *Race) {
-	_, err := p.Settle(ctx, r, false)
+	_, err := p.settle(ctx, r, false, false)
 	switch {
 	case err == nil:
 	case errors.Is(err, ErrNotYet):
@@ -87,7 +90,7 @@ func (p *Publisher) settleQuiet(ctx context.Context, r *Race) {
 }
 
 func (p *Publisher) reclaimQuiet(ctx context.Context, r *Race) {
-	_, err := p.Reclaim(ctx, r)
+	_, err := p.reclaim(ctx, r, false)
 	if err != nil && !errors.Is(err, ErrBeforeDeadline) && !errors.Is(err, ErrNotYet) {
 		p.cfg.Logf("race %s: reclaim: %v", short(r.Entry), err)
 	}
@@ -103,14 +106,33 @@ func (p *Publisher) Background(ctx context.Context, o RaceOptions, tick time.Dur
 	}
 	t := time.NewTicker(tick)
 	defer t.Stop()
-	last := time.Time{}
+	// The housekeeping on a goroutine of its own, so that a long pass over
+	// the races never holds it off.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.housekeeping(ctx)
+	}()
+	defer func() { <-done }()
 	for {
 		p.RaceTick(ctx, o)
-		if time.Since(last) >= time.Minute {
-			p.CollectChange(ctx)
-			p.ReconcilePayments(ctx)
-			last = time.Now()
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
 		}
+	}
+}
+
+// housekeeping collects payments' change, settles payments not answered
+// and prunes the state, once a minute until ctx ends.
+func (p *Publisher) housekeeping(ctx context.Context) {
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		p.CollectChange(ctx)
+		p.ReconcilePayments(ctx)
+		p.Prune()
 		select {
 		case <-ctx.Done():
 			return

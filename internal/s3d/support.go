@@ -197,13 +197,58 @@ func (k *keyLimits) allow(id string) bool {
 	return true
 }
 
-// metrics are the gateway's counters, served as Prometheus text.
+// metrics are the gateway's counters and histograms, served as Prometheus
+// text.
 type metrics struct {
 	mu sync.Mutex
 	c  map[string]*atomic.Int64
+	h  map[string]*hist
 }
 
-func newMetrics() *metrics { return &metrics{c: map[string]*atomic.Int64{}} }
+func newMetrics() *metrics { return &metrics{c: map[string]*atomic.Int64{}, h: map[string]*hist{}} }
+
+// histBuckets are the upper bounds, in seconds, of every histogram.
+var histBuckets = [...]float64{0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30}
+
+// hist is a histogram of seconds: one count per bucket (the last past
+// every bound) and the sum in nanoseconds.
+type hist struct {
+	counts [len(histBuckets) + 1]atomic.Int64
+	sum    atomic.Int64
+}
+
+// observe adds one observation of seconds to the histogram name, which may
+// carry labels (`name{k="v"}`).
+func (m *metrics) observe(name string, seconds float64) {
+	m.mu.Lock()
+	h := m.h[name]
+	if h == nil {
+		h = &hist{}
+		m.h[name] = h
+	}
+	m.mu.Unlock()
+	h.counts[sort.SearchFloat64s(histBuckets[:], seconds)].Add(1)
+	h.sum.Add(int64(seconds * 1e9))
+}
+
+// render writes the histogram as Prometheus text: its cumulative buckets,
+// sum and count, with le beside the name's own labels.
+func (h *hist) render(b *strings.Builder, name string) {
+	base, labels := name, ""
+	if i := strings.IndexByte(name, '{'); i >= 0 {
+		base, labels = name[:i], name[i+1:len(name)-1]+","
+	}
+	var cum int64
+	for i, le := range histBuckets {
+		cum += h.counts[i].Load()
+		fmt.Fprintf(b, "%s_bucket{%sle=\"%g\"} %d\n", base, labels, le, cum)
+	}
+	cum += h.counts[len(histBuckets)].Load()
+	fmt.Fprintf(b, "%s_bucket{%sle=\"+Inf\"} %d\n", base, labels, cum)
+	own := strings.TrimSuffix(labels, ",")
+	fmt.Fprintf(b, "%s_sum{%s} %g\n", base, own, float64(h.sum.Load())/1e9)
+	fmt.Fprintf(b, "%s_count{%s} %d\n", base, own, cum)
+}
 
 func (m *metrics) add(name string, v int64) {
 	m.mu.Lock()
@@ -243,6 +288,19 @@ func (m *metrics) serve(w http.ResponseWriter, _ *http.Request) {
 		v := m.c[n].Load()
 		m.mu.Unlock()
 		fmt.Fprintf(&b, "%s %d\n", n, v)
+	}
+	m.mu.Lock()
+	hnames := make([]string, 0, len(m.h))
+	for n := range m.h {
+		hnames = append(hnames, n)
+	}
+	m.mu.Unlock()
+	sort.Strings(hnames)
+	for _, n := range hnames {
+		m.mu.Lock()
+		h := m.h[n]
+		m.mu.Unlock()
+		h.render(&b, n)
 	}
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	_, _ = w.Write([]byte(b.String()))

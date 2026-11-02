@@ -94,8 +94,9 @@ func (p *Provider) policy(ctx context.Context, e *EntryRec) (until uint64, why s
 // provider's own headers and spend evidence: the hold output exists, is
 // mined, is locked to derive(writer, "hold") and holds exactly satoshis,
 // is unspent by positive evidence (an empty or failed answer is not
-// evidence), is worth at least the provider's minimum, and, for racing,
-// its deadline is far enough ahead.
+// evidence), is worth at least the provider's minimum and pays its price for
+// the object's size and retention, and, for racing, its deadline is far
+// enough ahead.
 func (p *Provider) checkBounty(ctx context.Context, e *EntryRec, racing bool) error {
 	hr := e.Hold
 	if hr == nil {
@@ -103,6 +104,9 @@ func (p *Provider) checkBounty(ctx context.Context, e *EntryRec, racing bool) er
 	}
 	if hr.Sats < p.cfg.Terms.MinBounty {
 		return fmt.Errorf("%d satoshis is below this provider's minimum of %d", hr.Sats, p.cfg.Terms.MinBounty)
+	}
+	if price, short := bountyShort(e.Size, hr, p.cfg.Terms.RenewPerGiBDay); short {
+		return fmt.Errorf("%d satoshis among %d ranks is below this provider's price of %d for %d bytes and %d seconds", hr.Sats, hr.K, price, e.Size, hr.Retention)
 	}
 	tip, err := p.tip(ctx)
 	if err != nil {
@@ -126,13 +130,25 @@ func (p *Provider) checkBounty(ctx context.Context, e *EntryRec, racing bool) er
 	return nil
 }
 
+// bountyShort says whether a hold pays less than the provider's price, the
+// one its terms publish for a renewal: perGiBDay for the object's size and the
+// hold's retention. A provider cannot know its rank, so an even share of the
+// bounty among the K paid ranks has to cover it.
+func bountyShort(size uint64, hr *HoldRec, perGiBDay uint64) (uint64, bool) {
+	price := renewPrice(size, 0, hr.Retention, perGiBDay, 0)
+	return price, hr.Sats/hr.K < price
+}
+
 // holdOutput checks the hold output on the node and returns its height.
 func (p *Provider) holdOutput(ctx context.Context, e *EntryRec) (uint32, error) {
 	hr := e.Hold
 	raw, err := p.chain.TxRaw(ctx, hr.Txid)
 	if err != nil {
 		if nodeapi.IsHTTP(err, http.StatusNotFound) {
-			return 0, errors.New("the hold transaction is not known to the node")
+			// A writer's hold transaction reaches this provider's node on
+			// its own time, and the plane delivers the entry first: looked
+			// at again, for as long as an unclaimed piece is kept.
+			return 0, retry(errors.New("the hold transaction is not known to the node yet"))
 		}
 		return 0, retry(fmt.Errorf("the node did not answer for the hold transaction: %v", err))
 	}
@@ -253,7 +269,7 @@ func (p *Provider) room(n uint64, writer string) string {
 	case strings.HasPrefix(writer, uploaderKey) && uploaded+n > p.cfg.UnclaimedBytes/2:
 		p.metrics.inc("bstore_provider_refused_total", "reason=upload-share")
 		return "room: the space for uploads no entry has claimed is full"
-	case mine+n > max(p.cfg.UnclaimedBytes/4, storerec.BlobSize+1<<16):
+	case mine+n > p.writerShare():
 		p.metrics.inc("bstore_provider_refused_total", "reason=writer-share")
 		return "room: this writer's share of the space for unclaimed pieces is full"
 	case p.usageLocked()+n > p.cfg.QuotaBytes:
@@ -264,6 +280,15 @@ func (p *Provider) room(n uint64, writer string) string {
 		}
 	}
 	return ""
+}
+
+// writerShare is what one writer's unclaimed pieces may fill: a quarter of
+// their space, and always a whole object of policy.max_object with its nodes
+// (about 43 bytes a blob, well inside the 0.1 % here), because a piece refused
+// on the plane is never sent again.
+func (p *Provider) writerShare() uint64 {
+	m := p.cfg.Policy.MaxObject
+	return max(p.cfg.UnclaimedBytes/4, storerec.BlobSize+1<<16, m+m/1024+1<<16)
 }
 
 // usageLocked is the store's bytes: held closures and unclaimed pieces.

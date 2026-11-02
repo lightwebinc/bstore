@@ -42,11 +42,12 @@ spending one mined funding output.
 | What | Cost | Kind |
 | --- | --- | --- |
 | A funding output | a 64-output piece funding tree is 3,328 bytes, 52 bytes an output, so about 5.2 satoshis at the network's rate, 100 per 1000 bytes (measured at 1 satoshi a byte, bcommon `mint.LegacyFees`: about 52); the contract's arithmetic says about 57 bytes | measured |
-| A 100 MiB put's funding | 26 piece outputs and one entry output: about 1.4 KB mined, about 140 satoshis | measured rate, contract count |
+| A 100 MiB put's funding | 26 piece outputs and one entry output: about 1.4 KB mined, about 140 satoshis of fee, plus each output's 1 satoshi of value (a carrier spends it and is never mined) | measured |
+| A 1 GiB put's funding | 257 piece outputs and one entry output: about 12.9 KB mined, 1,269 satoshis of fee and 258 of value | measured |
 | An entry carrier | 1,915 to 2,176 bytes of BEEF on a 16-output entry tree | measured (8 entries) |
 | A piece carrier | the blob plus about 1.2 KB and 49 bytes per output of its funding tree: about 4.3 KB over the blob on the default 64-output piece tree, so a 100 MiB put delivers about 0.1 % above its content to each provider | contract arithmetic |
-| The hold output's transaction | 240 and 241 bytes, 100 satoshis of fee (the floor; 495 when measured at the older 1 satoshi a byte, floor 250), for one hold output (up to 16 a transaction when minted ahead) | measured |
-| The bounty | the writer's choice; the test runs used 30,000 satoshis, `t = 3`, `K = 3` | set by the writer |
+| The hold output's transaction | 240 and 241 bytes, 100 satoshis of fee (the floor; 495 when measured at the older 1 satoshi a byte, floor 250), for one hold output (up to `hold_tree` a transaction when minted ahead: 16 by default, 1,024 at most, about 49 bytes an output) | measured |
+| The bounty | the writer's choice; a provider races only if it is at least its `terms.min_bounty` (default 1,000) and an even share among `K` covers its `terms.renew_per_gib_day` (default 250) for the object's size and the retention: 5,250 satoshis for 1 GiB, a week, `K = 3` on the defaults, and 22,500 for 30 days; the test runs used 30,000 and 1,000 satoshis at 100 MiB, `t = 3`, `K = 3` | set by the writer |
 | A 100 MiB `PutObject` through the gateway | 7.9 s from the first byte to the `200`, with no block wait (hold outputs and funding trees minted ahead; staging hashed on several cores) | measured (v0.5.0; 9.8 s on v0.3.0) |
 | Staging 100 MiB (closure, proof root, store writes) | 0.6 to 0.8 s locally, was 2.9 to 3.3 s on one core | measured (v0.5.0) |
 | A provider's closure check once the entry arrives, 100 MiB | 0.05 to 0.08 s, the closure walked as the pieces arrived (about 1.7 s spread over the piece requests); 2.6 to 2.9 s when every piece is read back, as after a restart | measured (v0.8.0) |
@@ -58,7 +59,7 @@ spending one mined funding output.
 | Hold terms | `t` 1 to 16 distinct advertisers, `K` `t` to 16 paid ranks, `checkC` 1 to 1024 | contract |
 | Payout shares | rank `i` of `k` paid gets `floor(R * sqrt(k - i + 1) / S)`, the remainder to rank 1, summing to exactly the hold output | contract |
 | Shares measured | 12,533 / 10,232 / 7,235 of 30,000 for three ranks (also 11,716 / 8,284 of 20,000 for two in the end-to-end test) | measured |
-| The settlement transaction | 406 and 407 bytes, 446 satoshis of fee, three payees; the fee from another coin, never the hold output | measured |
+| The settlement transaction | 406 and 407 bytes, 100 satoshis of fee (the floor), three payees; the fee from another coin, never the hold output | measured |
 | The race, three advertisers seen in one look, each passing a free settlement challenge of `c = 30` | 0.9 s for `holds -watch`, the race already judged in the background by the gateway; `settle` 18.9 s, one block wait | measured (v0.3.0) |
 | A settlement challenge's `c` | `min(checkC, freeC)`; 30 when a provider's terms cannot be read | contract (C19) |
 | Draws | two per candidate over the whole race, each sent again unchanged until its seed leaves the window | contract (C23) |
@@ -108,7 +109,7 @@ every host.
 | What | Value | Kind |
 | --- | --- | --- |
 | Price | the provider's `perGiBDay` for the object's size and the time added, never below its `minimum`: 7 days of 100 MiB cost 500 satoshis (the minimum) at a native provider and 2,000 (its minimum) at a bridge | measured |
-| The successor | 650 to 656 bytes, 654 to 660 satoshis of fee, paid by the provider; it spends the advertisement it renews | measured |
+| The successor | 650 to 656 bytes, 100 satoshis of fee (the floor), paid by the provider; it spends the advertisement it renews | measured size |
 | Time | 7.6 s to an answer (the successor a promise until it mines); 87.9 s through a bridge that renewed at the incumbent and waited for the successor to mine | measured |
 | How far | `terms.max_renew_seconds`, default 366 days | set |
 
@@ -118,7 +119,7 @@ every host.
 | --- | --- | --- |
 | Keys in a bucket | 1,048,576; a put past it waits | contract |
 | A token | 65,536 bytes encoded, 16 writers, 1,024 changes and 1,024 consumed; `anchor` splits a larger interval | contract |
-| A token on chain | 616 to 727 bytes, 620 to 731 satoshis | measured (4 tokens) |
+| A token on chain | 616 to 961 bytes, 100 satoshis (the floor) | measured |
 | Cadence | when the owner runs `anchor`, at most one token a block: each spends the last and is minted only once the last is mined in the owner's headers. Until then a put is pending: readable at the writing gateway, and as a claim by `pending` | contract |
 | An anchoring run | 19.7 s for one change, 26.8 s for a delete (v0.3.0; each a block and both hosts) | measured |
 | Its walk | 16,384 `unanchored` pages a writer and host, ten minutes in all | set |
@@ -162,14 +163,16 @@ to each provider itself, as piece carriers to `/submit` or by a BRC-167
 upload session, and each record to each host: an object costs the writer
 one upload a provider. Records are the same either way.
 
-As built, pieces travel by unicast. The plane's facade publishes only what
-its own engine admits, and a host's blob topic manager refuses every piece
-(a host holds no bytes), so a piece offered to the facade is refused and
-never published; providers would have to be plane consumers themselves to
-receive the blob topic. The gateways and the command line therefore name
-the providers' submit routes (`providers`) and send records to the hosts
-directly. A 100 MiB put is about 104.9 MB to each provider either way; the
-difference is who sends it and who pays for the delivery.
+A piece reaches the plane through a facade that routes its bucket's blob
+topic to a provider on that host, because a host holds no bytes: the provider
+holds the piece to its rules first, so the facade publishes only valid pieces
+(provider.md). Pieces are larger than a plane's open object bound, so the
+facade's site must publish as an authenticated source. A provider on the
+plane is fed by its own bridge; a provider that refuses a piece gets no second
+copy, so its quota has to hold what it serves. A 100 MiB put is about 104.9 MB to
+each provider either way; the difference is who sends it and who pays for the
+delivery: one publish and each receiver's delivery on the plane, one upload a
+provider in unicast.
 
 ## Known limits
 

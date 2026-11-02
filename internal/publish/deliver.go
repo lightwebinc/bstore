@@ -5,16 +5,19 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,7 +35,7 @@ import (
 // go to each provider's submit route on the blob topic, and every record to
 // each host and, for an entry, each provider. Either way an entry also goes
 // to each provider named, so a provider that unicast pieces reached hears
-// of the entry.
+// of the entry, and to the origin of each of Uploads.
 type Delivery struct {
 	Facade    string
 	Hosts     []string
@@ -45,6 +48,30 @@ type Delivery struct {
 	// Quorum is how many hosts must take an entry for a put without a
 	// facade to count as sent; zero is one.
 	Quorum int
+	// Observe, when set, is told how long each step took, in seconds, as a
+	// histogram name with labels: `bstore_publish_submit_seconds{target}`
+	// for each send (plane, host or provider), and
+	// `bstore_publish_piece_seconds{stage}` for each piece carrier's read,
+	// mint, outbox and send.
+	Observe func(name string, seconds float64)
+}
+
+// observe reports a step that began at since.
+func (d *Delivery) observe(name string, since time.Time) {
+	if d != nil && d.Observe != nil {
+		d.Observe(name, time.Since(since).Seconds())
+	}
+}
+
+// kind is the target's label: the plane, a host or a provider.
+func (t Target) kind() string {
+	switch {
+	case t.Plane:
+		return "plane"
+	case t.Host:
+		return "host"
+	}
+	return "provider"
 }
 
 // Target is one place one object goes: a submit route and a topic.
@@ -89,8 +116,28 @@ func (d *Delivery) recordTargets(bucket string, entry bool) []Target {
 		for _, p := range d.Providers {
 			out = append(out, Target{Base: trim(p), Topic: topic})
 		}
+		if d.uploading() {
+			// A closure sent by upload session waits at its provider for the
+			// entry, and an unclaimed closure is dropped.
+			for _, u := range d.Uploads {
+				b := origin(u)
+				if !slices.ContainsFunc(out, func(t Target) bool { return t.Base == b }) {
+					out = append(out, Target{Base: b, Topic: topic})
+				}
+			}
+		}
 	}
 	return out
+}
+
+// origin is the scheme and host of a provider's public URL: its submit
+// route hangs from the origin, whatever path the public URL has.
+func origin(public string) string {
+	u, err := url.Parse(public)
+	if err != nil || u.Host == "" {
+		return trim(public)
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 // sent reports whether an entry delivered to ok counts as sent: the facade
@@ -121,11 +168,36 @@ var errRefused = errors.New("publish: refused")
 // an engine answers an object it already holds with nothing admitted, and a
 // provider names why it took nothing.
 func (d *Delivery) submit(ctx context.Context, t Target, beef []byte) error {
+	defer d.observe(`bstore_publish_submit_seconds{target="`+t.kind()+`"}`, time.Now())
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
+	for try := 0; ; try++ {
+		wait, err := d.submitOnce(ctx, t, beef)
+		if wait == 0 || try >= busyTries {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+}
+
+// busyTries is how many times a target that answers "busy, retry" is asked
+// again before the submission counts as not delivered: a facade's publish
+// queue full is the plane draining slower than a put offers, a moment's
+// backpressure, and a put that failed on it would mint every piece again.
+// With the facade's own wait for room and Retry-After 1 this rides out about
+// half a minute.
+const busyTries = 10
+
+// submitOnce makes one attempt. It returns how long to wait before another
+// when the target asked for one (a 503 with Retry-After), or zero.
+func (d *Delivery) submitOnce(ctx context.Context, t Target, beef []byte) (time.Duration, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.Base+"/submit", bytes.NewReader(beef))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.Header.Set("x-topics", t.Topic)
@@ -135,22 +207,28 @@ func (d *Delivery) submit(ctx context.Context, t Target, beef []byte) error {
 	}
 	res, err := hc.Do(req)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer res.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
 	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s on %s: %d %s", t.Base, t.Topic, res.StatusCode, strings.TrimSpace(string(body)))
+		err := fmt.Errorf("%s on %s: %d %s", t.Base, t.Topic, res.StatusCode, strings.TrimSpace(string(body)))
+		if res.StatusCode == http.StatusServiceUnavailable {
+			if secs, e := strconv.Atoi(res.Header.Get("Retry-After")); e == nil && secs >= 0 {
+				return max(time.Duration(secs)*time.Second, 100*time.Millisecond), err
+			}
+		}
+		return 0, err
 	}
 	var ans map[string]struct {
 		Refused string `json:"refused"`
 	}
 	if json.Unmarshal(body, &ans) == nil {
 		if a, ok := ans[t.Topic]; ok && a.Refused != "" {
-			return fmt.Errorf("%w by %s on %s: %s", errRefused, t.Base, t.Topic, a.Refused)
+			return 0, fmt.Errorf("%w by %s on %s: %s", errRefused, t.Base, t.Topic, a.Refused)
 		}
 	}
-	return nil
+	return 0, nil
 }
 
 // Outbox is what an identity minted and has not delivered everywhere: each
@@ -159,8 +237,9 @@ func (d *Delivery) submit(ctx context.Context, t Target, beef []byte) error {
 // taken them, or a week has passed.
 //
 // A piece carrier is kept by reference: its BEEF less the stored object it
-// carries (a head and a tail around it), the object's hash and the whole
-// BEEF's SHA-256, so the 4 MiB of an object are not written a second time.
+// carries (a head and a tail around it), the object's hash and a SHA-256
+// binding the head and the tail, so the 4 MiB of an object are neither
+// written nor hashed a second time: the store holds the object to its hash.
 // A put's pieces are written to one batch file, a line each, and the
 // workers minting them share each sync (a group commit): every line is
 // synced before its carrier is sent. An item a target still owes after its
@@ -210,11 +289,14 @@ type outItem struct {
 	Tries   int       `json:"tries"`
 	Next    time.Time `json:"next"`
 	// Ref, Head, Tail and Sum keep a BEEF by reference: Head, the stored
-	// object Ref names (hex), then Tail, whose SHA-256 is Sum (hex).
+	// object Ref names (hex), then Tail. At Ver refVersion, Sum (hex) is
+	// refSum of the head and the tail; at Ver 0, an item an earlier build
+	// wrote, it is the SHA-256 of the whole BEEF.
 	Ref  string `json:"ref,omitempty"`
 	Head []byte `json:"head,omitempty"`
 	Tail []byte `json:"tail,omitempty"`
 	Sum  string `json:"sum,omitempty"`
+	Ver  int    `json:"ver,omitempty"`
 	// Done marks a batch line whose item left the batch.
 	Done string `json:"done,omitempty"`
 
@@ -291,17 +373,32 @@ func (o *Outbox) add(id, what string, beef []byte, targets []Target) (*outItem, 
 	return it, nil
 }
 
+// refVersion marks an item whose Sum binds its head and tail alone.
+const refVersion = 1
+
+// refSum binds an item's head and tail, and where they meet: the SHA-256
+// of the head's length (8 bytes, little-endian), the head and the tail.
+func refSum(head, tail []byte) string {
+	h := sha256.New()
+	var n [8]byte
+	binary.LittleEndian.PutUint64(n[:], uint64(len(head)))
+	h.Write(n[:])
+	h.Write(head)
+	h.Write(tail)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 // addRef records a carrier of a stored object in batch b, by reference
-// when the object is found in the BEEF, and returns once the line is
-// synced.
-func (o *Outbox) addRef(b *outBatch, id, what string, beef []byte, obj [32]byte, data []byte, targets []Target) (*outItem, error) {
-	it := &outItem{ID: id, What: what, Targets: targets, Created: o.now(), Next: o.now(), batch: b}
-	if i := bytes.Index(beef, data); i >= 0 && o.store != nil && len(data) > 0 {
-		sum := sha256.Sum256(beef)
-		it.Ref, it.Head, it.Tail, it.Sum = hex.EncodeToString(obj[:]), beef[:i:i], beef[i+len(data):], hex.EncodeToString(sum[:])
-	} else {
+// when the object's n bytes lie at offset at of the BEEF and there is a
+// store to read them back from, and returns once the line is synced. A
+// carrier whose object is not placed (at below zero) is kept whole.
+func (o *Outbox) addRef(b *outBatch, id, what string, beef []byte, obj [32]byte, at, n int, targets []Target) (*outItem, error) {
+	if at < 0 || n < 1 || at+n > len(beef) || o.store == nil {
 		return o.add(id, what, beef, targets)
 	}
+	it := &outItem{ID: id, What: what, Targets: targets, Created: o.now(), Next: o.now(), batch: b,
+		Ref: hex.EncodeToString(obj[:]), Head: beef[:at:at], Tail: beef[at+n:], Ver: refVersion}
+	it.Sum = refSum(it.Head, it.Tail)
 	o.markSending(id)
 	o.pinRef(it)
 	if err := b.append(it); err != nil {
@@ -313,7 +410,7 @@ func (o *Outbox) addRef(b *outBatch, id, what string, beef []byte, obj [32]byte,
 }
 
 // beefOf is an item's BEEF: its own file, or rebuilt from its reference
-// and held to its hash.
+// and held to its Sum (the store holds the object to its hash).
 func (o *Outbox) beefOf(it *outItem) ([]byte, error) {
 	if it.Ref == "" {
 		bp, _ := o.paths(it.ID)
@@ -326,14 +423,20 @@ func (o *Outbox) beefOf(it *outItem) ([]byte, error) {
 	if o.store == nil {
 		return nil, errors.New("no store to read the carried object from")
 	}
+	if it.Ver >= refVersion && refSum(it.Head, it.Tail) != it.Sum {
+		return nil, errors.New("the head and tail kept are not the ones recorded")
+	}
 	data, err := o.store.Get(h)
 	if err != nil {
 		return nil, err
 	}
 	beef := make([]byte, 0, len(it.Head)+len(data)+len(it.Tail))
 	beef = append(append(append(beef, it.Head...), data...), it.Tail...)
-	if sum := sha256.Sum256(beef); hex.EncodeToString(sum[:]) != it.Sum {
-		return nil, errors.New("the rebuilt BEEF is not the one recorded")
+	if it.Ver < refVersion {
+		// An item an earlier build wrote: its Sum is over the whole BEEF.
+		if sum := sha256.Sum256(beef); hex.EncodeToString(sum[:]) != it.Sum {
+			return nil, errors.New("the rebuilt BEEF is not the one recorded")
+		}
 	}
 	return beef, nil
 }
@@ -557,6 +660,16 @@ type outBatch struct {
 	syncMu          sync.Mutex
 	// live is the file's name while the put that writes it runs.
 	live string
+	// ids is every item the put wrote, in the batch or in a file of its
+	// own, for abandon.
+	ids []string
+}
+
+// track records an item of the put, wherever it is kept.
+func (b *outBatch) track(id string) {
+	b.mu.Lock()
+	b.ids = append(b.ids, id)
+	b.mu.Unlock()
 }
 
 // newBatch starts a batch file.
@@ -677,6 +790,19 @@ func (b *outBatch) markDone(id string) {
 	}
 }
 
+// abandon drops every item the put wrote and did not deliver, in the batch
+// or moved to a file of its own: the put failed, so no entry names their
+// carriers, and a retry of the put mints its own. Called once the put's
+// senders have stopped.
+func (b *outBatch) abandon() {
+	b.mu.Lock()
+	ids := slices.Clone(b.ids)
+	b.mu.Unlock()
+	for _, id := range ids {
+		b.o.remove(&outItem{ID: id, batch: b})
+	}
+}
+
 // close closes the file, removing it when every line is done.
 func (b *outBatch) close() {
 	b.mu.Lock()
@@ -747,6 +873,7 @@ func (o *Outbox) count() owedCount {
 			c.byDest[t.Base] += n
 		}
 	}
+	o.closeBatches(items)
 	o.mu.Lock()
 	o.owed, o.owedAt = c, o.now()
 	o.mu.Unlock()

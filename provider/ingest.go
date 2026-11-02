@@ -39,7 +39,9 @@ import (
 // `refused` reason when it does not. So an overlay bridge whose facade
 // routes a blob topic here publishes exactly the valid pieces, and a bridge
 // feeding this provider from the plane retries a header lag and never a
-// refusal.
+// refusal. A feeder is answered as soon as its pieces have passed their
+// checks and its takes run after (takeLater); a unicast writer, which reads
+// the refusal, is answered after its take.
 func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		auth104.Write(w, auth104.Error(http.StatusMethodNotAllowed, "ERR_METHOD", "submit is a POST"))
@@ -79,15 +81,23 @@ func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	// The body is read under its own deadline, before a processing slot is
 	// taken; at most maxBodies bodies are read or held at once, so the
-	// memory they take is bounded.
+	// memory they take is bounded. The slot is held until the body is done
+	// with: by this handler, or by a feeder's takes once they are handed it
+	// (below), so a body a pending take holds counts against the bound as
+	// one being read does.
 	select {
 	case p.limits.bodies <- struct{}{}:
-		defer func() { <-p.limits.bodies }()
 	case <-r.Context().Done():
 		return
 	}
+	handed := false
+	defer func() {
+		if !handed {
+			<-p.limits.bodies
+		}
+	}()
 	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(bodyDeadline))
-	beef, err := io.ReadAll(http.MaxBytesReader(w, r.Body, bound))
+	beef, err := readBody(w, r, bound)
 	if err == nil {
 		select {
 		case p.limits.ingest <- struct{}{}:
@@ -119,6 +129,26 @@ func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		}
 		pieces[t] = pc
 	}
+	if feeder {
+		// A feeder (the local bridge) is answered once every piece has
+		// passed its check, as an engine answers a piece it takes, and the
+		// takes run after, on a goroutine that holds the body's slot until
+		// they are done (takeLater). The bridge publishes on the answer and
+		// reads no refusal of this provider's own, so nothing it acts on
+		// waits for the store; a unicast writer reads the refusal, so it is
+		// answered after its take (below). A piece is saved with the next
+		// background pass either way: a crash between the answer and the
+		// take loses what that pass would have.
+		handed = true
+		p.wg.Add(1)
+		go p.takeLater(context.WithoutCancel(r.Context()), topics, beef, pieces)
+		out := map[string]any{}
+		for _, t := range topics {
+			out[t] = map[string]any{"outputsToAdmit": []int{0}, "coinsToRetain": []int{}}
+		}
+		auth104.Write(w, auth104.JSON(http.StatusOK, out))
+		return
+	}
 	out := map[string]any{}
 	for _, t := range topics {
 		admitted, why := p.take(r.Context(), t, beef, pieces[t])
@@ -132,6 +162,33 @@ func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		out[t] = res
 	}
 	auth104.Write(w, auth104.JSON(http.StatusOK, out))
+}
+
+// takeLater is a feeder's take loop, run after its answer: at most maxTakes
+// at once, so the takes queue here rather than on the store's lock, and the
+// body's slot released once they are done. Each take's outcome is counted;
+// a store error is logged where the synchronous path logs it (keepPiece),
+// since no answer carries it.
+func (p *Provider) takeLater(ctx context.Context, topics []string, beef []byte, pieces map[string]*storerec.PieceCarrier) {
+	defer p.wg.Done()
+	defer func() { <-p.limits.bodies }()
+	p.limits.takes <- struct{}{}
+	defer func() { <-p.limits.takes }()
+	for _, t := range topics {
+		_, why := p.take(ctx, t, beef, pieces[t])
+		result := "taken"
+		switch {
+		case why == storeFailed:
+			result = "error"
+			p.metrics.inc("bstore_provider_submits_total", "result=refused")
+		case why != "":
+			result = "refused"
+			p.metrics.inc("bstore_provider_submits_total", "result=refused")
+		default:
+			p.metrics.inc("bstore_provider_submits_total", "result=taken")
+		}
+		p.metrics.inc("bstore_provider_async_takes_total", "result="+result)
+	}
 }
 
 // parseTopics reads x-topics: one bare name, or a JSON array of names.
@@ -213,7 +270,7 @@ func (p *Provider) take(ctx context.Context, topic string, beef []byte, pc *stor
 		return []int{}, "" // the topic's other objects are a host's, not a provider's
 	}
 	e := a.Carrier.Entry
-	if e.Kind != storerec.KindPut {
+	if e.Kind != storerec.KindPut && e.Kind != storerec.KindDelete {
 		return []int{}, ""
 	}
 	if !writerAllowed(b, e.Writer) {
@@ -222,7 +279,9 @@ func (p *Provider) take(ctx context.Context, topic string, beef []byte, pc *stor
 	if !p.fundingFree(a.Carrier.Funding, a.Carrier.Commitment) {
 		return []int{}, "funding: a second carrier on one funding output"
 	}
-	if why := p.noteEntry(chainhash.Hash(a.Txid).String(), e, writerAllowList(b)); why != "" {
+	if e.Kind == storerec.KindDelete {
+		p.noteDelete(e)
+	} else if why := p.noteEntry(chainhash.Hash(a.Txid).String(), e, writerAllowList(b)); why != "" {
 		return []int{}, why
 	}
 	p.claimFunding(a.Carrier.Funding, a.Carrier.Commitment)
@@ -288,9 +347,21 @@ func (p *Provider) noteEntry(c string, e *storerec.Entry, listed bool) string {
 			p.mu.Unlock()
 			return "room: too many entries waiting for their closures"
 		}
-		rec := &EntryRec{C: c, Bucket: e.Bucket, Writer: hex.EncodeToString(e.Writer), Root: rootHex, Size: e.Size,
+		rec := &EntryRec{C: c, Bucket: e.Bucket, Key: e.Key, Writer: hex.EncodeToString(e.Writer), Root: rootHex, Size: e.Size,
 			ContentHash: hex.EncodeToString(e.ContentHash[:]), ProofRoot: hex.EncodeToString(e.ProofRoot[:]), Created: e.Created,
 			At: p.now().UnixNano()}
+		if p.deletedOnArrival(e) {
+			// Its delete came first: ended on arrival, its pieces released,
+			// never queued for a closure that nobody will ever claim.
+			rec.Decision = decisionDeleted
+			p.st.Entries[c] = rec
+			p.metrics.inc("bstore_provider_deletes_total")
+			p.releasePiecesLocked(rootHex)
+			_ = p.save()
+			p.mu.Unlock()
+			p.logf("entry %s: %s %s: deleted before it arrived", short(c), e.Bucket, e.Key)
+			return ""
+		}
 		if e.Hold != nil {
 			rec.Hold = &HoldRec{Txid: chainhash.Hash(e.Hold.Txid).String(), Vout: uint32(e.Hold.Vout), Sats: e.Hold.Satoshis, T: e.Hold.T,
 				K: e.Hold.K, Retention: e.Hold.Retention, Deadline: e.Hold.Deadline, CheckC: e.Hold.CheckC}
@@ -327,6 +398,10 @@ func (p *Provider) pruneEntries() {
 	}
 }
 
+// storeFailed is why a piece was not kept when the store could not write
+// it: an error of this provider's, not a refusal of the piece.
+const storeFailed = "store: the piece could not be stored"
+
 // keepPiece stores a piece's bytes as unclaimed, if there is room.
 func (p *Provider) keepPiece(data []byte, rootHex, bucket, writer string) string {
 	h := sha256.Sum256(data)
@@ -345,9 +420,9 @@ func (p *Provider) keepPiece(data []byte, rootHex, bucket, writer string) string
 		if why := p.room(uint64(len(data)), writer); why != "" {
 			return why
 		}
-		if err := p.store.Put(h, data); err != nil {
+		if err := p.store.PutHashed(h, data); err != nil {
 			p.logf("storing piece %s: %v", short(hh), err)
-			return "store: the piece could not be stored"
+			return storeFailed
 		}
 		// Saved with the next background pass: a piece a crash forgets is
 		// collected from the store on the next start, and sent again.
@@ -729,4 +804,27 @@ func writeEngineError(w http.ResponseWriter, code int, msg string, hdr ...string
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// readBody reads a submit body of at most bound bytes. With a Content-Length
+// it reads into one buffer of that size: io.ReadAll grows by doubling, so a
+// 4 MiB piece cost about 16 MB of allocation, zeroing and copying before it
+// was even parsed (memmove and memclr were a third of the provider's CPU on
+// the lab edge). A body longer than its declared length is refused by the
+// extra read; a shorter one is an error from ReadFull.
+func readBody(w http.ResponseWriter, r *http.Request, bound int64) ([]byte, error) {
+	lr := http.MaxBytesReader(w, r.Body, bound)
+	n := r.ContentLength
+	if n <= 0 || n > bound {
+		return io.ReadAll(lr)
+	}
+	buf := make([]byte, n)
+	if _, err := io.ReadFull(lr, buf); err != nil {
+		return nil, err
+	}
+	var extra [1]byte
+	if m, _ := lr.Read(extra[:]); m > 0 {
+		return nil, errors.New("body longer than its Content-Length")
+	}
+	return buf, nil
 }

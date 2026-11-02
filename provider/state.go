@@ -34,6 +34,10 @@ type State struct {
 	Entries  map[string]*EntryRec `json:"entries"`
 	// Unclaimed are pieces no held closure names yet, by object hash.
 	Unclaimed map[string]*Unclaimed `json:"unclaimed"`
+	// Deletes are the newest delete entry seen per bucket and key: a put
+	// made no later than it that arrives after it (the plane does not order
+	// entries) is ended on arrival instead of waiting for a closure forever.
+	Deletes map[string]*DeleteRec `json:"deletes,omitempty"`
 	// PendingAds are advertisement and renewal transactions signed and not
 	// yet recorded as mined: the journal a restart resumes from.
 	PendingAds []PendingAd `json:"pendingAds,omitempty"`
@@ -146,8 +150,11 @@ type Outgoing struct {
 
 // EntryRec is an object entry the provider received, and what it decided.
 type EntryRec struct {
-	C           string   `json:"c"`
-	Bucket      string   `json:"bucket"`
+	C      string `json:"c"`
+	Bucket string `json:"bucket"`
+	// Key is the entry's key in the bucket: what a later delete names.
+	// Entries noted before it was kept have none and no delete reaches them.
+	Key         string   `json:"key,omitempty"`
 	Writer      string   `json:"writer"`
 	Root        string   `json:"root"`
 	Size        uint64   `json:"size"`
@@ -176,6 +183,12 @@ type HoldRec struct {
 
 // Outpoint is the hold output as "<txid>.<vout>".
 func (h *HoldRec) Outpoint() string { return h.Txid + "." + itoa(uint64(h.Vout)) }
+
+// DeleteRec is a delete entry remembered for the puts it may still meet.
+type DeleteRec struct {
+	Created uint64 `json:"created"`
+	At      int64  `json:"at"`
+}
 
 // Unclaimed is a piece kept until an entry names its closure.
 type Unclaimed struct {
@@ -244,6 +257,9 @@ func loadState(dir string) (*State, error) {
 	}
 	if st.Unclaimed == nil {
 		st.Unclaimed = map[string]*Unclaimed{}
+	}
+	if st.Deletes == nil {
+		st.Deletes = map[string]*DeleteRec{}
 	}
 	if st.Free == nil {
 		st.Free = map[string]int{}

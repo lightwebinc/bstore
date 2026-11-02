@@ -17,8 +17,10 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -66,6 +68,7 @@ type Server struct {
 
 	srv    *http.Server
 	msrv   *http.Server
+	psrv   *http.Server
 	ln     net.Listener
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -130,13 +133,14 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Server, error) {
 	if v.Arcade != nil {
 		status = v.Arcade
 	}
-	d := &publish.Delivery{Facade: cfg.Facade, Hosts: cfg.Hosts, Providers: cfg.Providers, HTTP: hostHTTP, Quorum: cfg.Quorum}
+	d := &publish.Delivery{Facade: cfg.Facade, Hosts: cfg.Hosts, Providers: cfg.Providers, HTTP: hostHTTP, Quorum: cfg.Quorum,
+		Observe: s.metrics.observe}
 	for _, name := range cfg.Identities {
 		p, err := publish.Open(ctx, publish.Config{Dir: cfg.IdentityDir(name), OutboxMax: cfg.OutboxBytes,
 			Chain: v.Chain, Known: v.Known, Tip: v.Tip, Settler: v.Settler, Accept: cfg.AcceptPolicy(), Status: status,
 			FeeSource: v.FeeSource, Mainnet: cfg.Mainnet,
-			PieceTree: cfg.PieceTree, EntryTree: cfg.EntryTree, PieceAhead: cfg.PieceAhead, PieceWorkers: cfg.PieceWorkers,
-			HoldAhead: cfg.HoldAhead, Store: s.store, Delivery: d, Reader: s.reader, FrontHTTP: fetchHTTP,
+			PieceTree: cfg.PieceTree, EntryTree: cfg.EntryTree, PieceAhead: cfg.PieceAhead, EntryAhead: cfg.EntryAhead, PieceWorkers: cfg.PieceWorkers,
+			HoldAhead: cfg.HoldAhead, HoldTree: cfg.HoldTree, Store: s.store, Delivery: d, Reader: s.reader, FrontHTTP: fetchHTTP,
 			LockWait: opts.LockWait, Logf: opts.Logf, Now: opts.Now})
 		if err != nil {
 			return nil, fmt.Errorf("identity %s (bstore s3d init creates it): %w", name, err)
@@ -298,6 +302,27 @@ func (s *Server) Start(ctx context.Context) error {
 			_ = s.msrv.Serve(mln)
 		}()
 	}
+	if s.cfg.PprofListen != "" {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/debug/pprof/", pprof.Index)
+		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		s.psrv = &http.Server{Addr: s.cfg.PprofListen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+		pln, err := net.Listen("tcp", s.cfg.PprofListen)
+		if err != nil {
+			cancel()
+			return err
+		}
+		runtime.SetMutexProfileFraction(10)
+		runtime.SetBlockProfileRate(int(time.Millisecond))
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			_ = s.psrv.Serve(pln)
+		}()
+	}
 	s.wg.Add(1)
 	go s.background(ctx)
 	return nil
@@ -315,6 +340,9 @@ func (s *Server) Close() error {
 	}
 	if s.msrv != nil {
 		_ = s.msrv.Shutdown(sctx)
+	}
+	if s.psrv != nil {
+		_ = s.psrv.Shutdown(sctx)
 	}
 	s.wg.Wait()
 	for _, p := range s.pubs {

@@ -43,6 +43,13 @@ There are two ways in, and the provider is the same behind both.
   the `refused` reason. So an overlay bridge whose facade routes a blob
   topic here publishes exactly the valid pieces, and a bridge that feeds
   the provider from the plane retries a header lag and never a refusal.
+  A feeder's submission (on `feed_listen`, or from a `feeders` address) is
+  answered as soon as every piece has passed its check, and stored right
+  after, at most eight takes at a time, each holding its body's slot of
+  the 64 until it is done; a writer that submits directly is answered
+  after its take, since it reads the `refused` reason. A crash between a
+  feeder's answer and the store loses the piece, as it loses one the next
+  background pass (every 5 s) had not yet recorded.
 - **Unicast upload sessions** (spec section 14, BRC-167's baseline
   profile), over BRC-104: `POST <public>/chirp/v1/uploads` opens a
   session bound to the caller's identity; `PUT` (and `HEAD`)
@@ -118,13 +125,17 @@ when the provider's own checks of spec section 9.3 pass with its own chain
 view and headers: the hold output exists, is mined (its proof verifies in the
 provider's headers), is locked to `derive(writer, "hold")`, holds exactly
 `satoshis`, is unspent by positive evidence from the chain view (one that
-does not answer is not evidence), is worth at least `min_bounty`, and the
-entry's `deadline` is at least `min_deadline_blocks` ahead of the tip. One
+does not answer is not evidence), is worth at least `min_bounty`, pays this
+provider's price (an even share among the hold's `K` ranks covers
+`renew_per_gib_day` for the object's size and the hold's retention, since a
+provider cannot know its rank), and the entry's `deadline` is at least
+`min_deadline_blocks` ahead of the tip. One
 hold output settles one entry (spec section 9.2): a second entry naming a
 hold output that backs an entry the provider took is declined. An entry
 whose bounty fails is declined, or held without racing when
 `hold_unbountied` is on; a check the chain view or the header source could not
-answer decides nothing, and the entry is looked at again for
+answer decides nothing (a hold transaction the node does not know or has
+not mined yet included), and the entry is looked at again for
 `unclaimed_seconds`, then declined. An entry the
 provider took is checked against the closure it holds: another size,
 content hash or proof root is declined. A closure is checked once for all
@@ -354,7 +365,7 @@ broadcasts each and takes it into the wallet's pool once it mines.
 ```json
 {"service": "bstore", "terms": 1,
  "challenge": {"base": 10, "perSample": 1, "freeC": 30, "minBounty": 1000, "minAge": 2},
- "renew": {"perGiBDay": 100, "minimum": 50}}
+ "renew": {"perGiBDay": 250, "minimum": 500}}
 ```
 
 The `402` is authoritative.
@@ -419,9 +430,11 @@ how readers reach the bytes.
 | What | Bound |
 | --- | --- |
 | The store | `quota_bytes` across held closures and unclaimed pieces |
-| Unclaimed pieces | `unclaimed_bytes` in all, a quarter of that from one writer (which must hold `policy.max_object`) and half of it from uploads, each piece counted at least 4 KiB and at most 200,000 pieces, each kept `unclaimed_seconds`; past a share a piece is refused, never makes room by pushing out another's |
+| Unclaimed pieces | `unclaimed_bytes` in all, a quarter of that from one writer, and always one whole object of `policy.max_object` with its nodes and half of it from uploads, each piece counted at least 4 KiB and at most 200,000 pieces, each kept `unclaimed_seconds`; past a share a piece is refused, never makes room by pushing out another's |
 | Entries waiting for their closures | 256 from one writer, 10,000 in all |
 | Eviction | a holding goes only when no advertisement of it is pending, its advertisement has expired and its lease has run out, or when it was never advertised and no entry for it is undecided; an object another held closure names stays |
+| A delete | a delete entry from one of the bucket's writers ends every put of that key made no later than it; a holding no held or undecided entry names any more is dropped at once (its objects leave the store unless another held closure names them, with its export and the renewals owed for it), whatever its lease: the advertisement on chain runs out on its own and nothing answers for it meanwhile. The newest delete per key is remembered (100,000 keys), so a put it ends that arrives after it (the plane does not order entries) is ended on arrival and its pieces released |
+| A declined entry | the pieces that waited for its root leave with the decision (not after `unclaimed_seconds`), unless another undecided entry wants the root or a held closure names them |
 | An object | `policy.max_object` |
 | A submission | 262,144 bytes on a records topic, 4,259,840 on a blob topic |
 | Request bodies | a handshake 16 KiB, a challenge 2 KiB, a renewal 1 KiB, a remittance 1 MiB, an uploaded object 4 MiB, a commit 1 KiB; headers 256 KiB (a payment rides in one) |
@@ -431,7 +444,7 @@ how readers reach the bytes.
 | Signed answers | `responses_per_sec`, `response_burst` per session, taken before a request is verified |
 | Challenges | `challenges_per_buyer_per_min` with `challenge_burst` per buyer, `free_per_writer_per_min` free ones per writer, `challenge_workers` answered at once |
 | Renewals | `renewals_per_root_per_hour` per root |
-| Submissions | `submits_per_addr_per_sec`, `submit_burst` per address; 4 in flight from one address, uploads included (a connection from one of the `feeders` skips both); 64 bodies read or held at once; 16 processed at once, a slot taken only once the body is read |
+| Submissions | `submits_per_addr_per_sec`, `submit_burst` per address; 4 in flight from one address, uploads included (a connection from one of the `feeders` skips both); 64 bodies read or held at once, a feeder's held until its take is done; 16 processed at once, a slot taken only once the body is read; 8 of a feeder's takes at once, after their answers |
 | Funding outpoints remembered | 200,000, each for seven days, recorded only for a carrier taken |
 | Reads | `object_readers` objects read at once, the slot released before the answer is written; `object_reads_per_addr_per_sec`, `object_read_burst` per address |
 | Upload sessions | `upload_sessions` open, 4 per identity and 8 per address, 60 opened an hour from one address, `upload_session_seconds` each, 65,536 objects each |
@@ -508,7 +521,7 @@ GorillaPool's public arcade.
 | `terms.free_c` | 30 | 30 to 1024 |
 | `terms.min_bounty` | 1000 | the least bounty raced for and owed a free challenge; at least the fee floor |
 | `terms.min_age` | 0 | 0 to 1008 blocks |
-| `terms.renew_per_gib_day`, `terms.renew_minimum` | 100, 500 | a renewal's price; the minimum at least the fee floor |
+| `terms.renew_per_gib_day`, `terms.renew_minimum` | 250, 500 | this provider's price, for a renewal and for what an even share of a bounty must cover; a renewal's minimum, at least the fee floor |
 | `terms.max_renew_seconds` | 366 days | the furthest a renewal runs |
 | `limits.*` | as the table above | `handshakes_per_sec` 32, `handshake_burst` 64, `handshakes_per_addr_per_sec` 1, `handshake_addr_burst` 4, `responses_per_sec` 5, `response_burst` 20, `sessions` 10000, `session_ttl_seconds` 600, `challenges_per_buyer_per_min` 6, `challenge_burst` 6, `free_per_writer_per_min` 12, `challenge_workers` 4, `renewals_per_root_per_hour` 4, `submits_per_addr_per_sec` 64, `submit_burst` 256, `object_readers` 32, `object_reads_per_addr_per_sec` 50, `object_read_burst` 200, `upload_sessions` 64, `upload_session_seconds` 3600 |
 | `tree_count`, `tree_sats` | 16, 1000 | the funding trees; `tree_sats` at least twice the fee floor |
@@ -608,8 +621,9 @@ the proxy's address to every per-address budget. `/healthz` answers `ok`.
 gauges `bstore_provider_holdings`, `bstore_provider_store_bytes`,
 `bstore_provider_sessions`, `bstore_provider_pool_satoshis`.
 
-A stop (`SIGINT`, `SIGTERM`) saves the state; a crash loses nothing that
-was answered, and the next start finishes what was in flight. Pieces are
+A stop (`SIGINT`, `SIGTERM`) waits for a feeder's takes and saves the
+state; a crash loses nothing that was answered but a feeder's pieces not
+yet stored, and the next start finishes what was in flight. Pieces are
 recorded with the next background pass: an object in the store that no held
 closure names and no record keeps is removed at the start, and its writer
 sends it again.
