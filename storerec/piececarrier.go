@@ -51,6 +51,13 @@ func CheckPieceCarrier(ctx context.Context, beef []byte, bucket string, headers 
 	if tx == nil {
 		return nil, fmt.Errorf("%w: no subject transaction", ErrBEEF)
 	}
+	// The wire's subject is the hash of the transaction carried (ReadWire
+	// held it to be: the subject names an entry, and each entry's txid is
+	// hashed from its bytes), and nothing below changes the transaction. Set
+	// as its cached txid, the shape check and the commitment read it rather
+	// than each serializing and hashing the 4 MiB again.
+	subject := w.Subject
+	tx.SetTxHash(&subject)
 	for _, e := range w.Entries {
 		if e.Tx == nil {
 			continue
