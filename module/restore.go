@@ -181,7 +181,7 @@ func (s *Service) Restore(ctx context.Context, outputs []bmodule.Output, storage
 			return 0, err
 		}
 		if tx == nil {
-			s.host.Log("ls_bstore could not restore an output without its transaction", map[string]any{"topic": r.o.Topic, "outpoint": r.o.Outpoint.String()})
+			s.host.Log("ls_bstore could not restore an output without its transaction", map[string]any{"topic": r.o.Topic, "txid": r.o.Outpoint.Txid.String()})
 			continue
 		}
 		take(r.o, tx)
