@@ -1,10 +1,13 @@
 package storerec
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"fmt"
+	"unicode/utf8"
 
 	"github.com/lightwebinc/bcommon/cbor"
+	"github.com/lightwebinc/bcommon/record"
 )
 
 // Piece is one CHIRP object of one closure (magic stp 0x01).
@@ -19,8 +22,45 @@ type Piece struct {
 // Hash is the piece's identity, SHA-256 of its bytes.
 func (p *Piece) Hash() [32]byte { return sha256.Sum256(p.Piece) }
 
+// PieceAt is where the piece's n bytes begin in a record Encode wrote: its
+// last field is key PKPiece, a byte string of n bytes, so the piece ends
+// where the record does. It is -1 when the record does not end that way (a
+// record with Extra keys, or n not its piece's length).
+func PieceAt(rec []byte, n int) int {
+	var buf [7]byte
+	h := appendHead(appendHead(buf[:0], 0, PKPiece), 2, uint64(n))
+	at := len(rec) - n
+	if n < 1 || at < len(h) || !bytes.Equal(rec[at-len(h):at], h) {
+		return -1
+	}
+	return at
+}
+
+// appendHead appends a CBOR head: the major type and the shortest encoding
+// of n, as package cbor writes it.
+func appendHead(b []byte, mt byte, n uint64) []byte {
+	mt <<= 5
+	switch {
+	case n < 24:
+		return append(b, mt|byte(n))
+	case n <= 0xff:
+		return append(b, mt|24, byte(n))
+	case n <= 0xffff:
+		return append(b, mt|25, byte(n>>8), byte(n))
+	case n <= 0xffffffff:
+		return append(b, mt|26, byte(n>>24), byte(n>>16), byte(n>>8), byte(n))
+	}
+	return append(b, mt|27, byte(n>>56), byte(n>>48), byte(n>>40), byte(n>>32), byte(n>>24), byte(n>>16), byte(n>>8), byte(n))
+}
+
 // Encode writes the piece canonically; it refuses what DecodePiece refuses.
+// A piece without Extra is written directly, its 4 MiB appended once, and
+// held to DecodePiece's rules without decoding it; one with Extra goes
+// through the record codec and is read back.
 func (p *Piece) Encode() ([]byte, error) {
+	if len(p.Extra) == 0 {
+		return p.encode()
+	}
 	out, err := encodeRecord(cbor.Map{
 		{Key: PKMagic, Val: MagicPiece},
 		{Key: PKBucket, Val: p.Bucket},
@@ -33,6 +73,45 @@ func (p *Piece) Encode() ([]byte, error) {
 	}
 	if _, err := DecodePiece(out); err != nil {
 		return nil, err
+	}
+	return out, nil
+}
+
+// encode is Encode for a piece without Extra: the canonical map of the five
+// defined keys, in key order, as the record codec writes it, with the
+// refusals in DecodePiece's order (the record's bound, then the bucket, the
+// writer and the piece's length; the magic and the root cannot be wrong).
+func (p *Piece) encode() ([]byte, error) {
+	if !utf8.ValidString(p.Bucket) {
+		return nil, fmt.Errorf("%w: %v", record.ErrCBOR, cbor.ErrUTF8)
+	}
+	var head [7]byte
+	size := 1 + 1 + len(appendHead(head[:0], 2, uint64(len(MagicPiece)))) + len(MagicPiece) +
+		1 + len(appendHead(head[:0], 3, uint64(len(p.Bucket)))) + len(p.Bucket) +
+		1 + len(appendHead(head[:0], 2, uint64(len(p.Writer)))) + len(p.Writer) +
+		1 + len(appendHead(head[:0], 2, 32)) + 32 +
+		1 + len(appendHead(head[:0], 2, uint64(len(p.Piece)))) + len(p.Piece)
+	if size > MaxPieceRecord {
+		return nil, record.ErrTooLarge
+	}
+	if err := CheckBucket(p.Bucket); err != nil {
+		return nil, err
+	}
+	if _, err := CheckKey(p.Writer); err != nil {
+		return nil, fmt.Errorf("key %d: %w", PKWriter, err)
+	}
+	if len(p.Piece) < 1 || len(p.Piece) > MaxPiece {
+		return nil, fmt.Errorf("%w: %d bytes", ErrPiece, len(p.Piece))
+	}
+	out := make([]byte, 0, size)
+	out = appendHead(out, 5, 5)
+	out = append(appendHead(appendHead(out, 0, PKMagic), 2, uint64(len(MagicPiece))), MagicPiece...)
+	out = append(appendHead(appendHead(out, 0, PKBucket), 3, uint64(len(p.Bucket))), p.Bucket...)
+	out = append(appendHead(appendHead(out, 0, PKWriter), 2, uint64(len(p.Writer))), p.Writer...)
+	out = append(appendHead(appendHead(out, 0, PKRoot), 2, 32), p.Root[:]...)
+	out = append(appendHead(appendHead(out, 0, PKPiece), 2, uint64(len(p.Piece))), p.Piece...)
+	if len(out) != size {
+		return nil, fmt.Errorf("storerec: a piece record of %d bytes was sized at %d", len(out), size)
 	}
 	return out, nil
 }

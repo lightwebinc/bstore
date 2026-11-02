@@ -844,20 +844,31 @@ func (p *Publisher) loadKept(txid string) (*transaction.Transaction, error) {
 		for _, list := range [][]funding.Tree{s.Trees, s.Ahead} {
 			for _, t := range list {
 				if t.Txid == txid {
-					return funding.Rebuild(t.RawHex, t.BumpHex, t.BeefHex)
+					return rebuilt(funding.Rebuild(t.RawHex, t.BumpHex, t.BeefHex))
 				}
 			}
 		}
 		if s.Tree != nil && s.Tree.Txid == txid {
-			return funding.Rebuild(s.Tree.RawHex, s.Tree.BumpHex, s.Tree.BeefHex)
+			return rebuilt(funding.Rebuild(s.Tree.RawHex, s.Tree.BumpHex, s.Tree.BeefHex))
 		}
 	}
 	for _, pt := range p.st.Pending {
 		if pt.Tree.Txid == txid {
-			return funding.Rebuild(pt.Tree.RawHex, pt.Tree.BumpHex, pt.Tree.BeefHex)
+			return rebuilt(funding.Rebuild(pt.Tree.RawHex, pt.Tree.BumpHex, pt.Tree.BeefHex))
 		}
 	}
 	return nil, fmt.Errorf("publish: %s is not a transaction this identity keeps", txid)
+}
+
+// rebuilt is a kept transaction with its txid cached: the library hands the
+// one object to every carrier spending it (producer.Kept), and each asks
+// its txid (AddInputFromTx), which would otherwise serialize and hash the
+// tree's outputs again per piece. A kept transaction does not change.
+func rebuilt(tx *transaction.Transaction, err error) (*transaction.Transaction, error) {
+	if err == nil {
+		tx.SetTxHash(tx.TxID())
+	}
+	return tx, err
 }
 
 func (p *Publisher) save() error {

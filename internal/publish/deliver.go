@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -205,8 +206,9 @@ func (d *Delivery) submit(ctx context.Context, t Target, beef []byte) error {
 // taken them, or a week has passed.
 //
 // A piece carrier is kept by reference: its BEEF less the stored object it
-// carries (a head and a tail around it), the object's hash and the whole
-// BEEF's SHA-256, so the 4 MiB of an object are not written a second time.
+// carries (a head and a tail around it), the object's hash and a SHA-256
+// binding the head and the tail, so the 4 MiB of an object are neither
+// written nor hashed a second time: the store holds the object to its hash.
 // A put's pieces are written to one batch file, a line each, and the
 // workers minting them share each sync (a group commit): every line is
 // synced before its carrier is sent. An item a target still owes after its
@@ -256,11 +258,14 @@ type outItem struct {
 	Tries   int       `json:"tries"`
 	Next    time.Time `json:"next"`
 	// Ref, Head, Tail and Sum keep a BEEF by reference: Head, the stored
-	// object Ref names (hex), then Tail, whose SHA-256 is Sum (hex).
+	// object Ref names (hex), then Tail. At Ver refVersion, Sum (hex) is
+	// refSum of the head and the tail; at Ver 0, an item an earlier build
+	// wrote, it is the SHA-256 of the whole BEEF.
 	Ref  string `json:"ref,omitempty"`
 	Head []byte `json:"head,omitempty"`
 	Tail []byte `json:"tail,omitempty"`
 	Sum  string `json:"sum,omitempty"`
+	Ver  int    `json:"ver,omitempty"`
 	// Done marks a batch line whose item left the batch.
 	Done string `json:"done,omitempty"`
 
@@ -337,17 +342,32 @@ func (o *Outbox) add(id, what string, beef []byte, targets []Target) (*outItem, 
 	return it, nil
 }
 
+// refVersion marks an item whose Sum binds its head and tail alone.
+const refVersion = 1
+
+// refSum binds an item's head and tail, and where they meet: the SHA-256
+// of the head's length (8 bytes, little-endian), the head and the tail.
+func refSum(head, tail []byte) string {
+	h := sha256.New()
+	var n [8]byte
+	binary.LittleEndian.PutUint64(n[:], uint64(len(head)))
+	h.Write(n[:])
+	h.Write(head)
+	h.Write(tail)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 // addRef records a carrier of a stored object in batch b, by reference
-// when the object is found in the BEEF, and returns once the line is
-// synced.
-func (o *Outbox) addRef(b *outBatch, id, what string, beef []byte, obj [32]byte, data []byte, targets []Target) (*outItem, error) {
-	it := &outItem{ID: id, What: what, Targets: targets, Created: o.now(), Next: o.now(), batch: b}
-	if i := bytes.Index(beef, data); i >= 0 && o.store != nil && len(data) > 0 {
-		sum := sha256.Sum256(beef)
-		it.Ref, it.Head, it.Tail, it.Sum = hex.EncodeToString(obj[:]), beef[:i:i], beef[i+len(data):], hex.EncodeToString(sum[:])
-	} else {
+// when the object's n bytes lie at offset at of the BEEF and there is a
+// store to read them back from, and returns once the line is synced. A
+// carrier whose object is not placed (at below zero) is kept whole.
+func (o *Outbox) addRef(b *outBatch, id, what string, beef []byte, obj [32]byte, at, n int, targets []Target) (*outItem, error) {
+	if at < 0 || n < 1 || at+n > len(beef) || o.store == nil {
 		return o.add(id, what, beef, targets)
 	}
+	it := &outItem{ID: id, What: what, Targets: targets, Created: o.now(), Next: o.now(), batch: b,
+		Ref: hex.EncodeToString(obj[:]), Head: beef[:at:at], Tail: beef[at+n:], Ver: refVersion}
+	it.Sum = refSum(it.Head, it.Tail)
 	o.markSending(id)
 	o.pinRef(it)
 	if err := b.append(it); err != nil {
@@ -359,7 +379,7 @@ func (o *Outbox) addRef(b *outBatch, id, what string, beef []byte, obj [32]byte,
 }
 
 // beefOf is an item's BEEF: its own file, or rebuilt from its reference
-// and held to its hash.
+// and held to its Sum (the store holds the object to its hash).
 func (o *Outbox) beefOf(it *outItem) ([]byte, error) {
 	if it.Ref == "" {
 		bp, _ := o.paths(it.ID)
@@ -372,14 +392,20 @@ func (o *Outbox) beefOf(it *outItem) ([]byte, error) {
 	if o.store == nil {
 		return nil, errors.New("no store to read the carried object from")
 	}
+	if it.Ver >= refVersion && refSum(it.Head, it.Tail) != it.Sum {
+		return nil, errors.New("the head and tail kept are not the ones recorded")
+	}
 	data, err := o.store.Get(h)
 	if err != nil {
 		return nil, err
 	}
 	beef := make([]byte, 0, len(it.Head)+len(data)+len(it.Tail))
 	beef = append(append(append(beef, it.Head...), data...), it.Tail...)
-	if sum := sha256.Sum256(beef); hex.EncodeToString(sum[:]) != it.Sum {
-		return nil, errors.New("the rebuilt BEEF is not the one recorded")
+	if it.Ver < refVersion {
+		// An item an earlier build wrote: its Sum is over the whole BEEF.
+		if sum := sha256.Sum256(beef); hex.EncodeToString(sum[:]) != it.Sum {
+			return nil, errors.New("the rebuilt BEEF is not the one recorded")
+		}
 	}
 	return beef, nil
 }
@@ -816,6 +842,7 @@ func (o *Outbox) count() owedCount {
 			c.byDest[t.Base] += n
 		}
 	}
+	o.closeBatches(items)
 	o.mu.Lock()
 	o.owed, o.owedAt = c, o.now()
 	o.mu.Unlock()
