@@ -145,8 +145,25 @@ func (s *saver) encode(st *state) ([]byte, error) {
 	}
 	s.rows = rows
 	s.hot.Reset()
-	if err := json.NewEncoder(&s.hot).Encode(st.hot(rows)); err != nil {
+	if err := json.NewEncoder(&s.hot).Encode(st.hot()); err != nil {
 		return nil, err
+	}
+	// The rows are JSON already, and megabytes of it: handed to the encoder
+	// as a field they were validated and reformatted on every save, half of
+	// the encode's time. They go in after it, as the object's last field.
+	if len(rows) > 0 {
+		b := bytes.TrimRight(s.hot.Bytes(), "\n")
+		if len(b) < 2 || b[len(b)-1] != '}' {
+			return nil, errors.New("publish: the state did not encode as an object")
+		}
+		first := len(b) == 2
+		s.hot.Truncate(len(b) - 1)
+		if !first {
+			s.hot.WriteByte(',')
+		}
+		s.hot.WriteString(`"holdOutputs":`)
+		s.hot.Write(rows)
+		s.hot.WriteByte('}')
 	}
 	return s.hot.Bytes(), nil
 }

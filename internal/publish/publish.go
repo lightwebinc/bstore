@@ -179,6 +179,8 @@ type Publisher struct {
 	run    context.Context
 	stop   context.CancelFunc
 	holdMu sync.Mutex // one hold fill runs at a time
+	// holdMark is where the next takeHold starts looking; under mu.
+	holdMark int
 	kept   *producer.Kept
 	payer  *producer.Payer
 	pieces *producer.Trees

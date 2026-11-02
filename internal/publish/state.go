@@ -206,13 +206,12 @@ func (ts treeSet) hot() treeSet {
 	return c
 }
 
-// hot is the state as publisher.json keeps it: the trees without their
-// bytes, and the hold records as rows (rows, from appendHoldGroups). The
-// transactions go to the cold files.
-func (s *state) hot(rows []byte) *state {
+// hot is the state as publisher.json keeps it, without the hold rows, which
+// the saver writes after it (saver.encode): the trees without their bytes.
+// The transactions go to the cold files.
+func (s *state) hot() *state {
 	c := *s
-	c.Holds, c.HoldTxs = nil, nil
-	c.HoldOutputs = rows
+	c.Holds, c.HoldTxs, c.HoldOutputs = nil, nil, nil
 	c.Piece, c.Entry, c.Outcome = s.Piece.hot(), s.Entry.hot(), s.Outcome.hot()
 	c.Pending = append([]pendingTree(nil), s.Pending...)
 	for i := range c.Pending {
