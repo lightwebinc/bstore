@@ -62,6 +62,11 @@ func WalletDir(data string) string { return filepath.Join(data, "wallet") }
 // Options are what a caller embedding a provider may set beyond the
 // configuration.
 type Options struct {
+	// FreshSpends reads the node for every hold and spend asked about,
+	// rather than answering from one read of a transaction for a moment
+	// (chaincfg CacheSpends, minedHolds): for a test that changes what the
+	// node holds and looks at once.
+	FreshSpends bool
 	// Now is the clock; Tick paces the background work (resuming,
 	// publishing, collecting, settling, evicting); Logf receives the log.
 	Now  func() time.Time
@@ -137,10 +142,13 @@ type Provider struct {
 
 	// view is the chain view, header source, settlement leg and fee
 	// policy the configuration names (chaincfg); chain is its chain view.
-	view    *chaincfg.View
-	chain   *nodeapi.Sources
-	settler publish.Settler
-	arcade  *publish.Arcade
+	view  *chaincfg.View
+	chain *nodeapi.Sources
+	// minedHolds are the hold transactions checked lately (policy.go).
+	holdsMu    sync.Mutex
+	minedHolds map[string]*minedHold
+	settler    publish.Settler
+	arcade     *publish.Arcade
 	// acc decides every payment offered; mon watches the fast ones until
 	// they mine (accept.go).
 	acc    *acceptance.Verifier
@@ -186,7 +194,7 @@ type Provider struct {
 	lastTip atomic.Uint32
 	// scanned is when each entry's hold output was last looked at for a
 	// payout (under mu).
-	scanned map[string]time.Time
+	scanned map[string]scanMark
 	// rechecked is when each damaged root was last looked at again, for a
 	// front (under mu).
 	rechecked map[string]time.Time
@@ -328,6 +336,9 @@ func (p *Provider) legs() error {
 	v, err := chaincfg.Open(c.Spec())
 	if err != nil {
 		return err
+	}
+	if !p.opts.FreshSpends {
+		v.CacheSpends()
 	}
 	p.view, p.chain, p.settler, p.arcade, p.hc = v, v.Chain, v.Settler, v.Arcade, v.Headers
 	for _, h := range c.Hosts {

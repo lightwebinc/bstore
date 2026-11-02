@@ -97,7 +97,7 @@ func (r *rig) config(dir string) *Config {
 // start funds and starts a provider on cfg.
 func (r *rig) start(cfg *Config, fund bool) *Provider {
 	r.t.Helper()
-	return r.startWith(cfg, fund, Options{})
+	return r.startWith(cfg, fund, Options{FreshSpends: true})
 }
 
 // startWith is start with options (a front's, say).

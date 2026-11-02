@@ -59,7 +59,7 @@ func TestHoldOutputUnknownSpendStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := &Provider{view: v, chain: v.Chain, hc: hc}
+	p := &Provider{opts: Options{FreshSpends: true}, view: v, chain: v.Chain, hc: hc}
 	e := &EntryRec{Writer: hex.EncodeToString(r.writer.Identity()), Hold: &HoldRec{Txid: txid, Vout: 0, Sats: 2000}}
 
 	// The test chain's own answer: OK, unspent.
