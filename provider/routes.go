@@ -49,6 +49,7 @@ type routeLimits struct {
 	verifyMu  chan struct{}  // closures verified at once
 	commits   chan struct{}  // upload commits checked at once, apart from the worker
 	bodies    chan struct{}  // submission bodies read or held at once
+	takes     chan struct{}  // a feeder's takes run at once, after its answer
 	commitsBy *auth104.Keyed // upload commits checked per identity
 }
 
@@ -56,7 +57,8 @@ func newRouteLimits(c *Config, now func() time.Time) (*routeLimits, error) {
 	l := c.Limits
 	var err error
 	r := &routeLimits{inflight: &perAddr{max: 4, n: map[string]int{}}, work: make(chan struct{}, l.ChallengeWorkers), readers: make(chan struct{}, l.ObjectReaders),
-		ingest: make(chan struct{}, 16), verifyMu: make(chan struct{}, 2), commits: make(chan struct{}, 1), bodies: make(chan struct{}, maxBodies)}
+		ingest: make(chan struct{}, 16), verifyMu: make(chan struct{}, 2), commits: make(chan struct{}, 1), bodies: make(chan struct{}, maxBodies),
+		takes: make(chan struct{}, maxTakes)}
 	if r.buyers, err = auth104.NewKeyed(auth104.Budget{Rate: l.ChallengesPerBuyerPerMin / 60, Burst: l.ChallengeBurst}, 100000, now); err != nil {
 		return nil, err
 	}
@@ -322,6 +324,11 @@ const bodyDeadline = time.Minute
 // maxBodies bounds the submission bodies in memory at once: about 270 MB of
 // piece carriers.
 const maxBodies = 64
+
+// maxTakes bounds a feeder's takes run at once, after their answers: each
+// is a store write under the store's one lock, so more would only queue
+// there; the bodies they hold stay within maxBodies.
+const maxTakes = 8
 
 // perAddr bounds the requests one address has in flight.
 type perAddr struct {

@@ -39,7 +39,9 @@ import (
 // `refused` reason when it does not. So an overlay bridge whose facade
 // routes a blob topic here publishes exactly the valid pieces, and a bridge
 // feeding this provider from the plane retries a header lag and never a
-// refusal.
+// refusal. A feeder is answered as soon as its pieces have passed their
+// checks and its takes run after (takeLater); a unicast writer, which reads
+// the refusal, is answered after its take.
 func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		auth104.Write(w, auth104.Error(http.StatusMethodNotAllowed, "ERR_METHOD", "submit is a POST"))
@@ -79,13 +81,21 @@ func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	// The body is read under its own deadline, before a processing slot is
 	// taken; at most maxBodies bodies are read or held at once, so the
-	// memory they take is bounded.
+	// memory they take is bounded. The slot is held until the body is done
+	// with: by this handler, or by a feeder's takes once they are handed it
+	// (below), so a body a pending take holds counts against the bound as
+	// one being read does.
 	select {
 	case p.limits.bodies <- struct{}{}:
-		defer func() { <-p.limits.bodies }()
 	case <-r.Context().Done():
 		return
 	}
+	handed := false
+	defer func() {
+		if !handed {
+			<-p.limits.bodies
+		}
+	}()
 	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(bodyDeadline))
 	beef, err := readBody(w, r, bound)
 	if err == nil {
@@ -119,6 +129,26 @@ func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		}
 		pieces[t] = pc
 	}
+	if feeder {
+		// A feeder (the local bridge) is answered once every piece has
+		// passed its check, as an engine answers a piece it takes, and the
+		// takes run after, on a goroutine that holds the body's slot until
+		// they are done (takeLater). The bridge publishes on the answer and
+		// reads no refusal of this provider's own, so nothing it acts on
+		// waits for the store; a unicast writer reads the refusal, so it is
+		// answered after its take (below). A piece is saved with the next
+		// background pass either way: a crash between the answer and the
+		// take loses what that pass would have.
+		handed = true
+		p.wg.Add(1)
+		go p.takeLater(context.WithoutCancel(r.Context()), topics, beef, pieces)
+		out := map[string]any{}
+		for _, t := range topics {
+			out[t] = map[string]any{"outputsToAdmit": []int{0}, "coinsToRetain": []int{}}
+		}
+		auth104.Write(w, auth104.JSON(http.StatusOK, out))
+		return
+	}
 	out := map[string]any{}
 	for _, t := range topics {
 		admitted, why := p.take(r.Context(), t, beef, pieces[t])
@@ -132,6 +162,33 @@ func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		out[t] = res
 	}
 	auth104.Write(w, auth104.JSON(http.StatusOK, out))
+}
+
+// takeLater is a feeder's take loop, run after its answer: at most maxTakes
+// at once, so the takes queue here rather than on the store's lock, and the
+// body's slot released once they are done. Each take's outcome is counted;
+// a store error is logged where the synchronous path logs it (keepPiece),
+// since no answer carries it.
+func (p *Provider) takeLater(ctx context.Context, topics []string, beef []byte, pieces map[string]*storerec.PieceCarrier) {
+	defer p.wg.Done()
+	defer func() { <-p.limits.bodies }()
+	p.limits.takes <- struct{}{}
+	defer func() { <-p.limits.takes }()
+	for _, t := range topics {
+		_, why := p.take(ctx, t, beef, pieces[t])
+		result := "taken"
+		switch {
+		case why == storeFailed:
+			result = "error"
+			p.metrics.inc("bstore_provider_submits_total", "result=refused")
+		case why != "":
+			result = "refused"
+			p.metrics.inc("bstore_provider_submits_total", "result=refused")
+		default:
+			p.metrics.inc("bstore_provider_submits_total", "result=taken")
+		}
+		p.metrics.inc("bstore_provider_async_takes_total", "result="+result)
+	}
 }
 
 // parseTopics reads x-topics: one bare name, or a JSON array of names.
@@ -341,6 +398,10 @@ func (p *Provider) pruneEntries() {
 	}
 }
 
+// storeFailed is why a piece was not kept when the store could not write
+// it: an error of this provider's, not a refusal of the piece.
+const storeFailed = "store: the piece could not be stored"
+
 // keepPiece stores a piece's bytes as unclaimed, if there is room.
 func (p *Provider) keepPiece(data []byte, rootHex, bucket, writer string) string {
 	h := sha256.Sum256(data)
@@ -361,7 +422,7 @@ func (p *Provider) keepPiece(data []byte, rootHex, bucket, writer string) string
 		}
 		if err := p.store.Put(h, data); err != nil {
 			p.logf("storing piece %s: %v", short(hh), err)
-			return "store: the piece could not be stored"
+			return storeFailed
 		}
 		// Saved with the next background pass: a piece a crash forgets is
 		// collected from the store on the next start, and sent again.
