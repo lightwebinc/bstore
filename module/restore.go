@@ -14,8 +14,23 @@ import (
 
 type restoreRow struct {
 	o     bmodule.Output
-	tx    *transaction.Transaction
 	sweep bool
+}
+
+// isSweep is whether a row is output 0 of a funding transaction, read from
+// the row's script when it carries one.
+func isSweep(o bmodule.Output, read func(bmodule.Output) (*transaction.Transaction, error)) (bool, error) {
+	if o.Outpoint.Index != 0 {
+		return false, nil
+	}
+	if o.OutputScript != nil {
+		return storerec.Classify(*o.OutputScript) == storerec.ClaimFunding, nil
+	}
+	tx, err := read(o)
+	if err != nil || tx == nil || len(tx.Outputs) == 0 || tx.Outputs[0] == nil || tx.Outputs[0].LockingScript == nil {
+		return false, err
+	}
+	return storerec.Classify(*tx.Outputs[0].LockingScript) == storerec.ClaimFunding, nil
 }
 
 // scoreMs is a stored row's score as the host's first sight in Unix
@@ -119,25 +134,21 @@ func (s *Service) Restore(ctx context.Context, outputs []bmodule.Output, storage
 		}
 		return tx, nil
 	}
-	var txs []restoreRow
+	// A row is sorted on what it says of itself and parsed when its turn
+	// comes: a carrier's transaction parses with its whole parent, a hold
+	// transaction of 1,024 outputs, and hundreds of thousands of them held
+	// for the sort are gigabytes, on a host that restarts the engine.
+	rows := make([]restoreRow, 0, len(queue))
 	for _, o := range queue {
-		tx, err := read(o)
+		sweep, err := isSweep(o, read)
 		if err != nil {
 			return 0, err
 		}
-		if tx == nil {
-			s.host.Log("ls_bstore could not restore an output without its transaction", map[string]any{"topic": o.Topic, "txid": o.Outpoint.Txid.String()})
-			continue
-		}
-		sweep := false
-		if o.Outpoint.Index == 0 && len(tx.Outputs) > 0 && tx.Outputs[0] != nil && tx.Outputs[0].LockingScript != nil {
-			sweep = storerec.Classify(*tx.Outputs[0].LockingScript) == storerec.ClaimFunding
-		}
-		txs = append(txs, restoreRow{o: o, tx: tx, sweep: sweep})
+		rows = append(rows, restoreRow{o: o, sweep: sweep})
 	}
 	// Everything else first, in storage's order; sweeps after them.
-	sort.SliceStable(txs, func(i, j int) bool {
-		a, b := txs[i], txs[j]
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
 		if a.sweep != b.sweep {
 			return !a.sweep
 		}
@@ -163,8 +174,17 @@ func (s *Service) Restore(ctx context.Context, outputs []bmodule.Output, storage
 			indexed++
 		}
 	}
-	for _, r := range txs {
-		take(r.o, r.tx)
+	for _, r := range rows {
+		tx, err := read(r.o)
+		if err != nil {
+			s.restoring = false
+			return 0, err
+		}
+		if tx == nil {
+			s.host.Log("ls_bstore could not restore an output without its transaction", map[string]any{"topic": r.o.Topic, "txid": r.o.Outpoint.Txid.String()})
+			continue
+		}
+		take(r.o, tx)
 	}
 	// Each held token's predecessors, through the input that spends them.
 	type step struct {
@@ -181,8 +201,23 @@ func (s *Service) Restore(ctx context.Context, outputs []bmodule.Output, storage
 			}
 		}
 	}
-	for _, r := range txs {
-		next(r.o, r.tx)
+	for _, r := range rows {
+		txid := r.o.Outpoint.Txid.String()
+		k, ok := s.tokenChain[txid]
+		if !ok {
+			continue
+		}
+		if t := s.chains[k].byTxid[txid]; t == nil || t.vout != r.o.Outpoint.Index || t.prev == "" {
+			continue
+		}
+		tx, err := read(r.o)
+		if err != nil {
+			s.restoring = false
+			return 0, err
+		}
+		if tx != nil {
+			next(r.o, tx)
+		}
 	}
 	for len(walk) > 0 {
 		w := walk[len(walk)-1]

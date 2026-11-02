@@ -389,7 +389,8 @@ func (s *Server) background(ctx context.Context) {
 	}
 	lastAge := time.Time{}
 	for {
-		if time.Since(lastAge) >= time.Minute {
+		minute := time.Since(lastAge) >= time.Minute
+		if minute {
 			s.remittedAlarm()
 			lastAge = time.Now()
 		}
@@ -399,8 +400,12 @@ func (s *Server) background(ctx context.Context) {
 				go p.FillHolds(ctx, b.Satoshis)
 			}
 		}
-		if _, err := s.store.Trim(s.cfg.StoreBytes); err != nil {
-			s.opts.Logf("store: %v", err)
+		// A trim reads every manifest and walks the store, which a tick would
+		// keep a core at once the store holds a day of small puts.
+		if minute {
+			if _, err := s.store.Trim(s.cfg.StoreBytes); err != nil {
+				s.opts.Logf("store: %v", err)
+			}
 		}
 		s.st.expire()
 		s.uploads.expire(time.Duration(s.cfg.Limits.UploadSeconds) * time.Second)
