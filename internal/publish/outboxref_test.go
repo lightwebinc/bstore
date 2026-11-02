@@ -5,6 +5,9 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"os"
+	"runtime"
+	"runtime/debug"
 	"slices"
 	"testing"
 	"time"
@@ -99,5 +102,49 @@ func TestOutboxRefRoundTrip(t *testing.T) {
 	}
 	if got, err := o.beefOf(whole); err != nil || !bytes.Equal(got, beef) {
 		t.Fatalf("the carrier kept whole: %d bytes (%v)", len(got), err)
+	}
+}
+
+// A count of the bytes owed, taken for every put's bound, closes the batch
+// files it read rather than leaving each handle to the garbage collector.
+func TestOutboxCountClosesBatches(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("open files are counted through /proc")
+	}
+	store, err := OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("an object a carrier carries")
+	h, _ := store.Put(data)
+	now := time.Unix(1_800_000_000, 0)
+	o, err := openOutbox(t.TempDir(), &Delivery{}, store, func(string, ...any) {}, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := o.newBatch()
+	beef := slices.Concat([]byte("head"), data, []byte("tail"))
+	it, err := o.addRef(b, "aa", "piece", beef, h, 4, len(data), []Target{{Base: "http://p"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.done(it.ID)
+	b.close() // the batch holds a line still owed
+	open := func() int {
+		ents, err := os.ReadDir("/proc/self/fd")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(ents)
+	}
+	defer debug.SetGCPercent(debug.SetGCPercent(-1)) // no finalizer closes a handle meanwhile
+	before := open()
+	for range 8 {
+		if c := o.count(); c.total != int64(len(beef)) {
+			t.Fatalf("owed %d bytes, want %d", c.total, len(beef))
+		}
+	}
+	if after := open(); after > before {
+		t.Fatalf("%d more open file(s) after eight counts", after-before)
 	}
 }

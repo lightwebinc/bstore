@@ -842,6 +842,7 @@ func (o *Outbox) count() owedCount {
 			c.byDest[t.Base] += n
 		}
 	}
+	o.closeBatches(items)
 	o.mu.Lock()
 	o.owed, o.owedAt = c, o.now()
 	o.mu.Unlock()
