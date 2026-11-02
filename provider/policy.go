@@ -10,8 +10,10 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/bsv-blockchain/go-sdk/chainhash"
+	"github.com/bsv-blockchain/go-sdk/transaction"
 
 	"github.com/lightwebinc/bcommon/guard"
 	"github.com/lightwebinc/bcommon/nodeapi"
@@ -139,25 +141,76 @@ func bountyShort(size uint64, hr *HoldRec, perGiBDay uint64) (uint64, bool) {
 	return price, hr.Sats/hr.K < price
 }
 
+// minedHold is a hold transaction checked once: its bytes parsed and its proof
+// verified. Up to 1,024 entries sit on one, and neither changes.
+type minedHold struct {
+	tx     *transaction.Transaction
+	height uint32
+	at     time.Time
+}
+
+const (
+	// minedHoldTTL bounds how long a checked hold transaction answers, which
+	// also bounds how long a reorganization of its block goes unnoticed here.
+	minedHoldTTL = time.Minute
+	maxMinedHold = 64
+)
+
+func (p *Provider) minedHoldOf(txid string) *minedHold {
+	if p.opts.FreshSpends {
+		return nil
+	}
+	p.holdsMu.Lock()
+	defer p.holdsMu.Unlock()
+	if m := p.minedHolds[txid]; m != nil && p.clock().Sub(m.at) < minedHoldTTL {
+		return m
+	}
+	return nil
+}
+
+// clock is p.now for a memory that also serves a Provider built by hand.
+func (p *Provider) clock() time.Time {
+	if p.opts.Now != nil {
+		return p.opts.Now()
+	}
+	return time.Now()
+}
+
+func (p *Provider) noteMinedHold(txid string, tx *transaction.Transaction, height uint32) {
+	p.holdsMu.Lock()
+	defer p.holdsMu.Unlock()
+	if p.minedHolds == nil || len(p.minedHolds) >= maxMinedHold {
+		p.minedHolds = map[string]*minedHold{}
+	}
+	p.minedHolds[txid] = &minedHold{tx: tx, height: height, at: p.clock()}
+}
+
 // holdOutput checks the hold output on the node and returns its height.
 func (p *Provider) holdOutput(ctx context.Context, e *EntryRec) (uint32, error) {
 	hr := e.Hold
-	raw, err := p.chain.TxRaw(ctx, hr.Txid)
-	if err != nil {
-		if nodeapi.IsHTTP(err, http.StatusNotFound) {
-			// A writer's hold transaction reaches this provider's node on
-			// its own time, and the plane delivers the entry first: looked
-			// at again, for as long as an unclaimed piece is kept.
-			return 0, retry(errors.New("the hold transaction is not known to the node yet"))
+	var tx *transaction.Transaction
+	var height uint32
+	mined := p.minedHoldOf(hr.Txid)
+	if mined != nil {
+		tx, height = mined.tx, mined.height
+	} else {
+		raw, err := p.chain.TxRaw(ctx, hr.Txid)
+		if err != nil {
+			if nodeapi.IsHTTP(err, http.StatusNotFound) {
+				// A writer's hold transaction reaches this provider's node on
+				// its own time, and the plane delivers the entry first: looked
+				// at again, for as long as an unclaimed piece is kept.
+				return 0, retry(errors.New("the hold transaction is not known to the node yet"))
+			}
+			return 0, retry(fmt.Errorf("the node did not answer for the hold transaction: %v", err))
 		}
-		return 0, retry(fmt.Errorf("the node did not answer for the hold transaction: %v", err))
-	}
-	tx, err := guard.ParseTransaction(raw, len(raw))
-	if err != nil {
-		return 0, fmt.Errorf("the hold transaction does not parse: %v", err)
-	}
-	if tx.TxID().String() != hr.Txid {
-		return 0, errors.New("the node answered another transaction")
+		tx, err = guard.ParseTransaction(raw, len(raw))
+		if err != nil {
+			return 0, fmt.Errorf("the hold transaction does not parse: %v", err)
+		}
+		if tx.TxID().String() != hr.Txid {
+			return 0, errors.New("the node answered another transaction")
+		}
 	}
 	if uint64(hr.Vout) >= uint64(len(tx.Outputs)) {
 		return 0, errors.New("the hold transaction has no such output")
@@ -174,15 +227,19 @@ func (p *Provider) holdOutput(ctx context.Context, e *EntryRec) (uint32, error) 
 	if out.Satoshis != hr.Sats {
 		return 0, fmt.Errorf("the hold output holds %d satoshis, not %d", out.Satoshis, hr.Sats)
 	}
-	mp, height, err := p.chain.Proof(ctx, hr.Txid)
-	if err != nil {
-		return 0, retry(errors.New("the hold output is not mined yet"))
-	}
-	id := chainhash.Hash(*tx.TxID())
-	if ok, err := mp.Verify(ctx, &id, p.hc); err != nil {
-		return 0, retry(fmt.Errorf("the header source did not answer: %v", err))
-	} else if !ok {
-		return 0, errors.New("the hold output's proof does not verify against this provider's headers")
+	if mined == nil {
+		mp, h, err := p.chain.Proof(ctx, hr.Txid)
+		if err != nil {
+			return 0, retry(errors.New("the hold output is not mined yet"))
+		}
+		id := chainhash.Hash(*tx.TxID())
+		if ok, err := mp.Verify(ctx, &id, p.hc); err != nil {
+			return 0, retry(fmt.Errorf("the header source did not answer: %v", err))
+		} else if !ok {
+			return 0, errors.New("the hold output's proof does not verify against this provider's headers")
+		}
+		height = h
+		p.noteMinedHold(hr.Txid, tx, height)
 	}
 	by, err := p.chain.Spender(ctx, hr.Txid, hr.Vout)
 	if err != nil {

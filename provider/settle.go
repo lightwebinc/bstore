@@ -112,9 +112,21 @@ func (p *Provider) settle(ctx context.Context, r *http.Request, body []byte, _ *
 	return auth104.JSON(http.StatusOK, map[string]any{"accepted": true, "txid": in.Txid, "satoshis": sats})
 }
 
-// scanEvery is how often one entry's hold output is looked at for a
-// settlement that paid this provider without a remittance.
+// scanEvery is how soon one entry's hold output is first looked at again for
+// a spend, and scanMost how far apart the looks grow, doubling from there. The
+// scan is the backstop for a remittance that never came: the writer remits a
+// settlement itself, so most entries are told, and a few thousand entries
+// waiting for their races would otherwise cost the node a read each a minute,
+// for as long as they wait.
 var scanEvery = time.Minute
+
+const scanMost = time.Hour
+
+// scanMark is when an entry was last looked at and how long until the next.
+type scanMark struct {
+	at    time.Time
+	every time.Duration
+}
 
 func spendsHold(tx *transaction.Transaction, h *HoldRec) bool {
 	for _, in := range tx.Inputs {
@@ -155,13 +167,19 @@ func (p *Provider) scanPayouts(ctx context.Context) {
 	var todo []EntryRec
 	now := p.now()
 	if p.scanned == nil {
-		p.scanned = map[string]time.Time{}
+		p.scanned = map[string]scanMark{}
 	}
 	for c, e := range p.st.Entries {
-		if e.Decision == decisionHeld && e.Hold != nil && p.payoutOpenLocked(c) && now.Sub(p.scanned[c]) >= scanEvery {
-			todo = append(todo, *e)
-			p.scanned[c] = now
+		if e.Decision != decisionHeld || e.Hold == nil || !p.payoutOpenLocked(c) {
+			continue
 		}
+		m := p.scanned[c]
+		if now.Sub(m.at) < m.every {
+			continue
+		}
+		m.at, m.every = now, min(max(m.every*2, scanEvery), scanMost)
+		p.scanned[c] = m
+		todo = append(todo, *e)
 	}
 	p.mu.Unlock()
 	for _, e := range todo {

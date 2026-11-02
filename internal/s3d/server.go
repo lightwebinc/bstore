@@ -124,6 +124,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	v.CacheSpends()
 	s.reader = &reader.Reader{Hosts: cfg.Hosts, HTTP: hostHTTP, Fetch: fetchHTTP, Headers: v.Headers, Held: s.st, Logf: opts.Logf, Now: opts.Now,
 		WalkDir: filepath.Join(cfg.Data, "walks")}
 	s.fetch = fetchHTTP

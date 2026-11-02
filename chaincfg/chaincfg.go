@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/bsv-blockchain/go-sdk/chainhash"
 
@@ -208,6 +209,17 @@ type Tip interface {
 	CurrentHeight(ctx context.Context) (uint32, error)
 	HeaderAt(ctx context.Context, height uint32) (*headers.Header, error)
 }
+
+// spendTTL is how long one read of a transaction's outputs answers for them.
+const spendTTL = 2 * time.Second
+
+// CacheSpends is for a long-running service, whose answers may be spendTTL
+// old in exchange for reading a transaction once. A hold transaction holds up
+// to 1,024 outputs and a node answers for all of them at once: one read serves
+// every entry on that transaction, where a read per entry kept a node's cores
+// busy with no put running. A command that acts once on what it reads keeps
+// the plain view.
+func (v *View) CacheSpends() { v.Chain.CacheSpends(spendTTL) }
 
 // View is an opened configuration.
 type View struct {
