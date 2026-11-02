@@ -246,6 +246,9 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 	}
 	p := &Provider{cfg: cfg, inc: newIncremental(), opts: opts, st: st, wallet: w, signer: signer, pool: w.Pool,
 		queue: make(chan string, 4096), queued: map[string]bool{}, metrics: newMetrics()}
+	for _, r := range []string{"taken", "refused", "error"} {
+		p.metrics.preset("bstore_provider_async_takes_total", "result="+r)
+	}
 	if err := p.legs(); err != nil {
 		return nil, err
 	}
