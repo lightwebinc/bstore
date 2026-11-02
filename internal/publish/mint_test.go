@@ -34,8 +34,11 @@ type mintRig struct {
 	c     StoreClosure
 	root  [32]byte
 	blob  [32]byte // the one object of BlobSize
-	tree  *transaction.Transaction
-	vout  uint32
+	// tree is the piece tree as the library hands it to a put, loaded
+	// through Kept; first is the same tree as the spend that minted it was
+	// handed it, the library's own object.
+	tree, first *transaction.Transaction
+	vout        uint32
 }
 
 func newMintRig(tb testing.TB) *mintRig {
@@ -71,11 +74,17 @@ func newMintRig(tb testing.TB) *mintRig {
 	}
 	tb.Cleanup(st.Release)
 	r := &mintRig{ctx: ctx, p: p, store: store, c: StoreClosure{Store: store, Manifest: st.Manifest, Staged: true}, root: st.Root, blob: sha256.Sum256(content)}
+	// The first spend mints the tree and is handed the library's own
+	// object; the second is handed the one loaded through Kept, as every
+	// later put is.
+	if r.first, _, err = p.spend(ctx, kindPiece, 1); err != nil {
+		tb.Fatal(err)
+	}
 	if r.tree, r.vout, err = p.spend(ctx, kindPiece, 1); err != nil {
 		tb.Fatal(err)
 	}
-	if r.tree.MerklePath == nil {
-		tb.Fatal("the piece tree spent has no proof")
+	if r.tree.MerklePath == nil || r.tree == r.first || *r.tree.TxID() != *r.first.TxID() {
+		tb.Fatal("the second spend is not the same tree, loaded through Kept, with its proof")
 	}
 	return r
 }
@@ -156,6 +165,36 @@ func TestMintPiecePlacesTheObject(t *testing.T) {
 
 // PKAfter is a key above the piece's last defined one.
 const PKAfter = storerec.PKLast + 1
+
+// A kept tree's txid is cached when it is loaded: the one object the trees
+// share with every carrier spending it answers TxID without serializing
+// its outputs again. The SDK keeps the cache private, so it shows as TxID
+// answering the one pointer twice, which a transaction not cached never
+// does. The spend that mints a tree is handed the library's own object,
+// which is not cached: only the spends after it load the tree through Kept.
+func TestKeptTreeHashCached(t *testing.T) {
+	r := newMintRig(t)
+	fresh, err := transaction.NewTransactionFromBytes(r.tree.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.TxID() == fresh.TxID() {
+		t.Fatal("the check is empty: a transaction just parsed answers TxID from a cache")
+	}
+	if r.first.TxID() == r.first.TxID() {
+		t.Log("the tree as the spend that minted it was handed it answers TxID from a cache: the library caches it now")
+	}
+	if r.tree.TxID() != r.tree.TxID() || *r.tree.TxID() != *fresh.TxID() {
+		t.Fatal("the piece tree spent, loaded through Kept, answers TxID by serializing its outputs")
+	}
+	tx, err := r.p.loadKept(r.tree.TxID().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tx.TxID() != tx.TxID() || *tx.TxID() != *fresh.TxID() {
+		t.Fatal("a kept tree loaded answers TxID by serializing its outputs")
+	}
+}
 
 // A piece carrier's BEEF built here is byte for byte the SDK's, for a 4 MiB
 // piece and a small one, with the carrier last and its txid kept; a
