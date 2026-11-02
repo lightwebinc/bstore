@@ -1,11 +1,16 @@
 package backend
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -84,4 +89,97 @@ func hexOf(h [32]byte) string {
 		out[2*i], out[2*i+1] = d[c>>4], d[c&15]
 	}
 	return string(out)
+}
+
+// TestNativePutConcurrent has writers race on one object and on objects of
+// their own: every object ends whole under its name, and no temporary file
+// is left behind.
+func TestNativePutConcurrent(t *testing.T) {
+	dir := t.TempDir()
+	n, err := OpenNative(dir, "https://provider.example/store")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := []byte("one object, many writers")
+	sh := sha256.Sum256(shared)
+	var wg sync.WaitGroup
+	for i := range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			own := []byte(fmt.Sprintf("object %d", i))
+			if err := n.Put(sha256.Sum256(own), own); err != nil {
+				t.Error(err)
+			}
+			if err := n.PutHashed(sh, shared); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	for i := range 16 {
+		own := []byte(fmt.Sprintf("object %d", i))
+		got, err := n.Get(sha256.Sum256(own), 0, uint64(len(own)))
+		if err != nil || string(got) != string(own) {
+			t.Fatalf("object %d: %q, %v", i, got, err)
+		}
+	}
+	got, err := n.Get(sh, 0, uint64(len(shared)))
+	if err != nil || string(got) != string(shared) {
+		t.Fatalf("shared object: %q, %v", got, err)
+	}
+	if ents, err := os.ReadDir(filepath.Join(dir, "tmp")); err != nil || len(ents) != 0 {
+		t.Fatalf("temporary files left: %d, %v", len(ents), err)
+	}
+}
+
+// BenchmarkNativePut measures the store's write path at one and at eight
+// writers, on the directory BENCH_DIR names (the disk under test) or a
+// temporary one: the case that matters is a disk whose fsync is slow.
+func BenchmarkNativePut(b *testing.B) {
+	for _, writers := range []int{1, 8} {
+		b.Run(fmt.Sprintf("writers-%d", writers), func(b *testing.B) {
+			dir := os.Getenv("BENCH_DIR")
+			if dir == "" {
+				dir = b.TempDir()
+			} else {
+				var err error
+				if dir, err = os.MkdirTemp(dir, "nativeput-"); err != nil {
+					b.Fatal(err)
+				}
+				defer os.RemoveAll(dir)
+			}
+			n, err := OpenNative(dir, "http://example.invalid")
+			if err != nil {
+				b.Fatal(err)
+			}
+			data := make([]byte, 4<<20)
+			if _, err := rand.Read(data); err != nil {
+				b.Fatal(err)
+			}
+			b.SetBytes(int64(len(data)))
+			var seq atomic.Uint64
+			work := make(chan int)
+			var wg sync.WaitGroup
+			for range writers {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					for range work {
+						var h [32]byte
+						binary.BigEndian.PutUint64(h[:], seq.Add(1))
+						if err := n.PutHashed(h, data); err != nil {
+							b.Error(err)
+						}
+					}
+				}()
+			}
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				work <- i
+			}
+			close(work)
+			wg.Wait()
+		})
+	}
 }
