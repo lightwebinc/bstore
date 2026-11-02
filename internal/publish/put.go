@@ -1,6 +1,7 @@
 package publish
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -13,7 +14,9 @@ import (
 	"time"
 
 	"github.com/bsv-blockchain/go-sdk/chainhash"
+	"github.com/bsv-blockchain/go-sdk/script"
 	"github.com/bsv-blockchain/go-sdk/transaction"
+	"github.com/bsv-blockchain/go-sdk/util"
 
 	"github.com/lightwebinc/bcommon/carrier"
 	"github.com/lightwebinc/bcommon/mint"
@@ -313,7 +316,7 @@ func (p *Publisher) sendPiece(ctx context.Context, bucket string, root [32]byte,
 	}
 	d.observe(pieceStage("read"), t0)
 	t0 = time.Now()
-	tx, beef, _, err := p.mintPiece(ctx, bucket, root, data, tree, out)
+	tx, beef, at, err := p.mintPiece(ctx, bucket, root, data, tree, out)
 	if err != nil {
 		return err
 	}
@@ -323,7 +326,7 @@ func (p *Publisher) sendPiece(ctx context.Context, bucket string, root [32]byte,
 	t0 = time.Now()
 	var it *outItem
 	if byRef {
-		it, err = p.outbox.addRef(b, txid.String(), "piece", beef, h, data, targets)
+		it, err = p.outbox.addRef(b, txid.String(), "piece", beef, h, at, len(data), targets)
 	} else {
 		it, err = p.outbox.add(txid.String(), "piece", beef, targets)
 	}
@@ -344,7 +347,8 @@ func (p *Publisher) sendPiece(ctx context.Context, bucket string, root [32]byte,
 
 // mintPiece mints the carrier of one object of a closure on output out of
 // tree: the piece record, the carrier spending the output, and its atomic
-// BEEF, with the offset of the carrier's own bytes in it.
+// BEEF, with the offset of the object's bytes in it (-1 when they are not
+// placed, and the outbox then keeps the carrier whole).
 func (p *Publisher) mintPiece(ctx context.Context, bucket string, root [32]byte, data []byte,
 	tree *transaction.Transaction, out uint32) (*transaction.Transaction, []byte, int, error) {
 	pc := &storerec.Piece{Bucket: bucket, Writer: p.Identity(), Root: root, Piece: data}
@@ -360,7 +364,55 @@ func (p *Publisher) mintPiece(ctx context.Context, bucket string, root [32]byte,
 	if err != nil {
 		return nil, nil, 0, err
 	}
-	return tx, beef, at, nil
+	return tx, beef, objectAt(beef, at, tx, rec, len(data)), nil
+}
+
+// objectAt is the offset in beef of the object a piece carrier's record
+// ends with, from the carrier's layout rather than a search of the 4 MiB:
+// the carrier's bytes at carrierAt hold one input and one output, whose
+// script is <key> OP_CHECKSIG <record> <signature> OP_2DROP, and the object
+// is the record's last field (storerec.PieceAt), so it ends 4 + 1 +
+// len(signature) + 1 bytes before the BEEF does. It is -1 when the bytes
+// there are not laid out so.
+func objectAt(beef []byte, carrierAt int, tx *transaction.Transaction, rec []byte, n int) int {
+	if carrierAt < 0 || len(tx.Inputs) != 1 || len(tx.Outputs) != 1 || tx.Inputs[0].UnlockingScript == nil || tx.Outputs[0].LockingScript == nil {
+		return -1
+	}
+	u, s := len(*tx.Inputs[0].UnlockingScript), len(*tx.Outputs[0].LockingScript)
+	// The version, one input (outpoint, script, sequence), one output
+	// (value, script) and the locktime.
+	at := carrierAt + 4 + 1 + 32 + 4 + varintLen(u) + u + 4 + 1 + 8 + varintLen(s)
+	head := pushHead(len(rec))
+	recAt := at + 35 + len(head)
+	end := recAt + len(rec)
+	if at+s+4 != len(beef) || end+2 > at+s || !bytes.Equal(beef[at+35:recAt], head) {
+		return -1
+	}
+	sig := int(beef[end])
+	if sig < 1 || sig > 75 || end+1+sig+1 != at+s || beef[at+s-1] != script.Op2DROP {
+		return -1
+	}
+	i := storerec.PieceAt(beef[recAt:end], n)
+	if i < 0 {
+		return -1
+	}
+	return recAt + i
+}
+
+func varintLen(n int) int { return util.VarInt(uint64(n)).Length() }
+
+// pushHead is the opcode and length of the minimal push of n bytes, as the
+// SDK's PushDrop writes a field of more than one byte.
+func pushHead(n int) []byte {
+	switch {
+	case n <= 75:
+		return []byte{byte(n)}
+	case n <= 0xff:
+		return []byte{script.OpPUSHDATA1, byte(n)}
+	case n <= 0xffff:
+		return []byte{script.OpPUSHDATA2, byte(n), byte(n >> 8)}
+	}
+	return []byte{script.OpPUSHDATA4, byte(n), byte(n >> 8), byte(n >> 16), byte(n >> 24)}
 }
 
 // pieceBEEF is tx.AtomicBEEF(false) for a carrier spending one output of a

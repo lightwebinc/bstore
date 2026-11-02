@@ -14,9 +14,11 @@ import (
 
 	"github.com/lightwebinc/bcommon/bwallet"
 	"github.com/lightwebinc/bcommon/carrier"
+	"github.com/lightwebinc/bcommon/cbor"
 	"github.com/lightwebinc/bcommon/mint"
 	"github.com/lightwebinc/bcommon/nodeapi"
 	bpub "github.com/lightwebinc/bcommon/publish"
+	"github.com/lightwebinc/bcommon/pushdrop"
 	"github.com/lightwebinc/bcommon/testchain"
 
 	"github.com/lightwebinc/bstore/storerec"
@@ -77,6 +79,83 @@ func newMintRig(tb testing.TB) *mintRig {
 	}
 	return r
 }
+
+// The object of a minted piece carrier is placed in its BEEF by the
+// carrier's layout: at the offset a search would find, 4 + 1 + len(sig) +
+// 1 bytes before the end; the outbox keeps the carrier by that place and
+// rebuilds the same bytes, which a provider takes. A record that does not
+// end with the object is not placed.
+func TestMintPiecePlacesTheObject(t *testing.T) {
+	r := newMintRig(t)
+	data, err := r.c.Object(r.ctx, r.blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := r.p.outbox.newBatch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.close()
+	targets := r.p.cfg.Delivery.pieceTargets(testBucket)
+	for _, n := range []int{len(data), 1000, 1} {
+		obj := data[:n]
+		tx, beef, at, err := r.p.mintPiece(r.ctx, testBucket, r.root, obj, r.tree, r.vout)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if at < 0 || !bytes.Equal(beef[at:at+n], obj) || (n > 32 && at != bytes.Index(beef, obj)) {
+			t.Fatalf("piece of %d: placed at %d, found at %d", n, at, bytes.Index(beef, obj))
+		}
+		fields, ok := pushdrop.Fields(*tx.Outputs[0].LockingScript)
+		if !ok || len(fields) != 2 || at+n != len(beef)-(4+1+len(fields[1])+1) {
+			t.Fatalf("piece of %d: the object ends at %d of %d, with a signature of %d bytes", n, at+n, len(beef), len(fields[1]))
+		}
+		h := sha256.Sum256(obj)
+		if _, err := r.store.Put(obj); err != nil {
+			t.Fatal(err)
+		}
+		it, err := r.p.outbox.addRef(b, tx.TxID().String(), "piece", beef, h, at, n, targets)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.p.outbox.done(it.ID)
+		if it.Ref == "" || len(it.Head)+len(it.Tail)+n != len(beef) {
+			t.Fatalf("piece of %d: kept as %d + %d bytes around the object", n, len(it.Head), len(it.Tail))
+		}
+		got, err := r.p.outbox.beefOf(it)
+		if err != nil || !bytes.Equal(got, beef) {
+			t.Fatalf("piece of %d: rebuilt %d bytes (%v)", n, len(got), err)
+		}
+		if _, err := storerec.CheckPieceCarrier(r.ctx, got, testBucket, nil); err != nil {
+			t.Fatalf("piece of %d: a provider refuses the rebuilt carrier: %v", n, err)
+		}
+		r.p.outbox.remove(it)
+	}
+	// A record that does not end with the object (Extra keys after it) is
+	// not placed, and a carrier of it is kept whole.
+	pc := &storerec.Piece{Bucket: testBucket, Writer: r.p.Identity(), Root: r.root, Piece: data[:1000], Extra: cbor.Map{{Key: uint64(PKAfter), Val: []byte("x")}}}
+	rec, err := pc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storerec.PieceAt(rec, 1000) != -1 {
+		t.Fatal("a record with keys after the piece placed it")
+	}
+	tx, err := carrier.Mint(r.ctx, r.p.wallet, r.p.wallet.Originator, carrierParams(storerec.PieceDerivation), rec, r.tree, r.vout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beef, at, err := pieceBEEF(tx, r.tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if objectAt(beef, at, tx, rec, 1000) != -1 {
+		t.Fatal("the object of a record with keys after it was placed")
+	}
+}
+
+// PKAfter is a key above the piece's last defined one.
+const PKAfter = storerec.PKLast + 1
 
 // A piece carrier's BEEF built here is byte for byte the SDK's, for a 4 MiB
 // piece and a small one, with the carrier last and its txid kept; a

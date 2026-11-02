@@ -1,6 +1,7 @@
 package storerec
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"fmt"
 
@@ -18,6 +19,37 @@ type Piece struct {
 
 // Hash is the piece's identity, SHA-256 of its bytes.
 func (p *Piece) Hash() [32]byte { return sha256.Sum256(p.Piece) }
+
+// PieceAt is where the piece's n bytes begin in a record Encode wrote: its
+// last field is key PKPiece, a byte string of n bytes, so the piece ends
+// where the record does. It is -1 when the record does not end that way (a
+// record with Extra keys, or n not its piece's length).
+func PieceAt(rec []byte, n int) int {
+	var buf [7]byte
+	h := appendHead(appendHead(buf[:0], 0, PKPiece), 2, uint64(n))
+	at := len(rec) - n
+	if n < 1 || at < len(h) || !bytes.Equal(rec[at-len(h):at], h) {
+		return -1
+	}
+	return at
+}
+
+// appendHead appends a CBOR head: the major type and the shortest encoding
+// of n, as package cbor writes it.
+func appendHead(b []byte, mt byte, n uint64) []byte {
+	mt <<= 5
+	switch {
+	case n < 24:
+		return append(b, mt|byte(n))
+	case n <= 0xff:
+		return append(b, mt|24, byte(n))
+	case n <= 0xffff:
+		return append(b, mt|25, byte(n>>8), byte(n))
+	case n <= 0xffffffff:
+		return append(b, mt|26, byte(n>>24), byte(n>>16), byte(n>>8), byte(n))
+	}
+	return append(b, mt|27, byte(n>>56), byte(n>>48), byte(n>>40), byte(n>>32), byte(n>>24), byte(n>>16), byte(n>>8), byte(n))
+}
 
 // Encode writes the piece canonically; it refuses what DecodePiece refuses.
 func (p *Piece) Encode() ([]byte, error) {
