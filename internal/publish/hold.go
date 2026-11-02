@@ -56,12 +56,20 @@ func (p *Publisher) takeHold(ctx context.Context, bucket string, sats uint64) (*
 	deadline := time.Now().Add(p.cfg.HoldWait)
 	for {
 		p.mu.Lock()
-		for i := range p.st.Holds {
+		// From where the last take stopped: the holds before it are spent,
+		// tens of thousands of them, and this is under the lock every put
+		// takes. Past the end it wraps, for a transaction that has mined
+		// behind the mark, so a full turn still finds any hold there is.
+		n := len(p.st.Holds)
+		from := min(p.holdMark, n)
+		for step := range n {
+			i := (from + step) % n
 			h := &p.st.Holds[i]
 			if h.Used || h.Sats != sats || h.BumpHex == "" {
 				continue
 			}
 			h.Used = true
+			p.holdMark = i + 1
 			rec := *h
 			if err := p.saveLocked(); err != nil {
 				// The save released p.mu: the hold is found again by id.

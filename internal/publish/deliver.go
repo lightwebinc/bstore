@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -170,9 +171,33 @@ func (d *Delivery) submit(ctx context.Context, t Target, beef []byte) error {
 	defer d.observe(`bstore_publish_submit_seconds{target="`+t.kind()+`"}`, time.Now())
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
+	for try := 0; ; try++ {
+		wait, err := d.submitOnce(ctx, t, beef)
+		if wait == 0 || try >= busyTries {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+}
+
+// busyTries is how many times a target that answers "busy, retry" is asked
+// again before the submission counts as not delivered: a facade's publish
+// queue full is the plane draining slower than a put offers, a moment's
+// backpressure, and a put that failed on it would mint every piece again.
+// With the facade's own wait for room and Retry-After 1 this rides out about
+// half a minute.
+const busyTries = 10
+
+// submitOnce makes one attempt. It returns how long to wait before another
+// when the target asked for one (a 503 with Retry-After), or zero.
+func (d *Delivery) submitOnce(ctx context.Context, t Target, beef []byte) (time.Duration, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.Base+"/submit", bytes.NewReader(beef))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.Header.Set("x-topics", t.Topic)
@@ -182,22 +207,28 @@ func (d *Delivery) submit(ctx context.Context, t Target, beef []byte) error {
 	}
 	res, err := hc.Do(req)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer res.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
 	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s on %s: %d %s", t.Base, t.Topic, res.StatusCode, strings.TrimSpace(string(body)))
+		err := fmt.Errorf("%s on %s: %d %s", t.Base, t.Topic, res.StatusCode, strings.TrimSpace(string(body)))
+		if res.StatusCode == http.StatusServiceUnavailable {
+			if secs, e := strconv.Atoi(res.Header.Get("Retry-After")); e == nil && secs >= 0 {
+				return max(time.Duration(secs)*time.Second, 100*time.Millisecond), err
+			}
+		}
+		return 0, err
 	}
 	var ans map[string]struct {
 		Refused string `json:"refused"`
 	}
 	if json.Unmarshal(body, &ans) == nil {
 		if a, ok := ans[t.Topic]; ok && a.Refused != "" {
-			return fmt.Errorf("%w by %s on %s: %s", errRefused, t.Base, t.Topic, a.Refused)
+			return 0, fmt.Errorf("%w by %s on %s: %s", errRefused, t.Base, t.Topic, a.Refused)
 		}
 	}
-	return nil
+	return 0, nil
 }
 
 // Outbox is what an identity minted and has not delivered everywhere: each
