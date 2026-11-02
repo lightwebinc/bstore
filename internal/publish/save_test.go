@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+
+	"github.com/lightwebinc/bcommon/funding"
 )
 
 // Concurrent changes are all durable when their saves return, whatever
@@ -45,5 +47,65 @@ func TestSaveErrorReachesItsBatch(t *testing.T) {
 	p.cfg.Dir = t.TempDir()
 	if err := p.noteBucket("b"); err != nil {
 		t.Fatalf("a save after the directory was fixed failed: %v", err)
+	}
+}
+
+// wrote is what the last write that succeeded wrote: hot and cold bytes.
+func (s *saver) wrote() (int, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.hotBytes, s.coldBytes
+}
+
+// A put-sized change writes the hot part and nothing else: no cold file is
+// written again, the hot part is a few bytes a hold output, and it does not
+// grow with the transactions kept.
+func TestPutSizedChangeWritesTheHotPartOnly(t *testing.T) {
+	var hot [2]int
+	for i, more := range []int{0, 32} {
+		st := benchState(t, 4, 1024, 0)
+		for j := 0; j < more; j++ {
+			txid, raw := benchTx(t, 1023, byte(0x80+j))
+			st.Piece.Trees = append(st.Piece.Trees, funding.Tree{Txid: txid, RawHex: raw, Count: 1023, Next: 100})
+		}
+		p := &Publisher{cfg: Config{Dir: t.TempDir(), Logf: t.Logf}, st: st}
+		if err := p.save(); err != nil {
+			t.Fatal(err)
+		}
+		if _, cold := p.sv.wrote(); cold < (8+more)*100_000 {
+			t.Fatalf("the first save wrote %d cold bytes for %d transactions of 100 KB", cold, 8+more)
+		}
+		p.mu.Lock()
+		putSized(p.st, 1)
+		err := p.saveLocked()
+		p.mu.Unlock()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cold int
+		hot[i], cold = p.sv.wrote()
+		if cold != 0 {
+			t.Fatalf("a put-sized change wrote %d cold bytes", cold)
+		}
+		if hot[i] > 10*len(st.Holds)+8192 {
+			t.Fatalf("the hot part is %d bytes for %d holds", hot[i], len(st.Holds))
+		}
+		p.flushSaves()
+	}
+	if hot[1]-hot[0] > 32*400 {
+		t.Fatalf("the hot part grew from %d to %d bytes with 32 more transactions kept", hot[0], hot[1])
+	}
+}
+
+// The encode alone of a put-sized change, the state of BenchmarkSave.
+func BenchmarkEncodeState(b *testing.B) {
+	p := &Publisher{st: benchState(b, 4, 1024, 1024)}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		putSized(p.st, i%1024)
+		if _, err := p.sv.encode(p.st); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
