@@ -154,6 +154,11 @@ type RaceOptions struct {
 	Fetch *http.Client
 	// Publish publishes failed challenges as outcome records.
 	Publish bool
+	// Parallel is how many open races a pass steps at once. A step is mostly
+	// waiting on providers, so one at a time held a gateway to about five races
+	// a minute. Zero or one steps them one at a time. Settlements and reclaims
+	// spend coins and stay one at a time either way.
+	Parallel int
 }
 
 func (p *Publisher) racesDir() string { return filepath.Join(p.cfg.Dir, "races") }
