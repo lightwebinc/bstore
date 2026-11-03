@@ -378,7 +378,7 @@ func (s *Server) background(ctx context.Context) {
 	// own: a settlement waits for its block.
 	if !s.cfg.Race.Off {
 		o := publish.RaceOptions{Window: time.Duration(s.cfg.Race.WindowSeconds) * time.Second, Budget: s.cfg.Race.Budget,
-			Fetch: s.fetch, Publish: !s.cfg.Race.NoPublish, Parallel: s.cfg.Race.Parallel}
+			Fetch: s.fetch, Publish: !s.cfg.Race.NoPublish}
 		for _, p := range s.pubs {
 			s.wg.Add(1)
 			go func(p *publish.Publisher) {

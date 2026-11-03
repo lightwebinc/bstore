@@ -149,8 +149,6 @@ type RaceConfig struct {
 	Budget uint64 `json:"budget,omitempty"`
 	// NoPublish keeps failed challenges unpublished as outcome records.
 	NoPublish bool `json:"no_publish,omitempty"`
-	// Parallel is how many open races a pass steps at once (default 8).
-	Parallel int `json:"parallel,omitempty"`
 }
 
 // AccessKey is one S3 access key.
@@ -407,11 +405,8 @@ func (c *Config) Check() error {
 	if c.PieceWorkers > 32 {
 		return errors.New("piece_workers is at most 32")
 	}
-	if c.Race.WindowSeconds < 0 || c.Race.TickSeconds < 0 || c.Race.Parallel < 0 {
-		return errors.New("race: window_seconds, tick_seconds and parallel are not negative")
-	}
-	if c.Race.Parallel == 0 {
-		c.Race.Parallel = 8
+	if c.Race.WindowSeconds < 0 || c.Race.TickSeconds < 0 {
+		return errors.New("race: window_seconds and tick_seconds are not negative")
 	}
 	if c.Race.WindowSeconds == 0 {
 		c.Race.WindowSeconds = 3600
