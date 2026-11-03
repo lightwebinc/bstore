@@ -89,6 +89,9 @@ type Race struct {
 	Outcomes  []PublishedNote `json:"outcomes,omitempty"`
 
 	entry *storerec.Entry
+	// saved is the file's bytes as last read or written: a pass steps every
+	// open race and would otherwise rewrite and sync each one unchanged.
+	saved []byte
 }
 
 // PublishedNote is an outcome record the race published.
@@ -168,7 +171,14 @@ func (p *Publisher) saveRace(r *Race) error {
 	if err != nil {
 		return err
 	}
-	return writeFileSync(filepath.Join(p.cfg.Dir, "tmp"), filepath.Join(p.racesDir(), r.Entry+".json"), raw)
+	if bytes.Equal(raw, r.saved) {
+		return nil
+	}
+	if err := writeFileSync(filepath.Join(p.cfg.Dir, "tmp"), filepath.Join(p.racesDir(), r.Entry+".json"), raw); err != nil {
+		return err
+	}
+	r.saved = raw
+	return nil
 }
 
 // Races are this identity's races, oldest first.
@@ -220,6 +230,7 @@ func (p *Publisher) Race(entry string) (*Race, error) {
 	if err := r.decode(); err != nil {
 		return nil, err
 	}
+	r.saved = raw
 	return &r, nil
 }
 
