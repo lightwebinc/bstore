@@ -193,7 +193,11 @@ func (d *Delivery) submit(ctx context.Context, t Target, beef []byte) error {
 const busyTries = 10
 
 // submitOnce makes one attempt. It returns how long to wait before another
-// when the target asked for one (a 503 with Retry-After), or zero.
+// when the target asked for one, or zero: a 503 with Retry-After (a facade's
+// queue full), or a 429 with Retry-After (a provider's per-address submit
+// budget or in-flight limit). Without the 429, a gateway with more piece
+// workers than a provider's default in-flight allowance failed a large put
+// on the direct path: every piece "reached no target".
 func (d *Delivery) submitOnce(ctx context.Context, t Target, beef []byte) (time.Duration, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.Base+"/submit", bytes.NewReader(beef))
 	if err != nil {
@@ -213,7 +217,7 @@ func (d *Delivery) submitOnce(ctx context.Context, t Target, beef []byte) (time.
 	body, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
 	if res.StatusCode != http.StatusOK {
 		err := fmt.Errorf("%s on %s: %d %s", t.Base, t.Topic, res.StatusCode, strings.TrimSpace(string(body)))
-		if res.StatusCode == http.StatusServiceUnavailable {
+		if res.StatusCode == http.StatusServiceUnavailable || res.StatusCode == http.StatusTooManyRequests {
 			if secs, e := strconv.Atoi(res.Header.Get("Retry-After")); e == nil && secs >= 0 {
 				return max(time.Duration(secs)*time.Second, 100*time.Millisecond), err
 			}
