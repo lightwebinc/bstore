@@ -5,8 +5,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -438,5 +440,65 @@ func TestSettleForwardedAndSpentPayees(t *testing.T) {
 	again, _ := r.p.Race(race.Entry)
 	if got := again.Settlement.Payees[0]; got.Spent != byA || !got.Done() {
 		t.Fatalf("a after its spend: %+v", got)
+	}
+}
+
+// A race saved unchanged is not rewritten, read back or held in memory: a pass
+// steps every open race, and each write is a synced file replace. A change is
+// still written. The file is replaced by rename, so a write shows as a new inode.
+func TestSaveRaceSkipsUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "tmp"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	p := &Publisher{cfg: Config{Dir: dir, Logf: t.Logf}, st: &state{}}
+	entry := strings.Repeat("cc", 32)
+	path := filepath.Join(p.racesDir(), entry+".json")
+	stat := func() os.FileInfo {
+		t.Helper()
+		fi, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fi
+	}
+	r := &Race{Entry: entry, State: RaceOpen, Note: "first"}
+	if err := p.saveRace(r); err != nil {
+		t.Fatal(err)
+	}
+	first := stat()
+	if err := p.saveRace(r); err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(first, stat()) {
+		t.Fatal("an unchanged race was rewritten")
+	}
+	r.Note = "second"
+	if err := p.saveRace(r); err != nil {
+		t.Fatal(err)
+	}
+	second := stat()
+	if os.SameFile(first, second) {
+		t.Fatal("a changed race was not written")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Race
+	if err := json.Unmarshal(raw, &back); err != nil || back.Note != "second" {
+		t.Fatalf("file holds %q, %v; want the second note", back.Note, err)
+	}
+	// Race keeps the bytes it read: a race read back and saved unchanged is not
+	// rewritten either. (Race itself needs a full record to decode; this is the
+	// state it leaves.)
+	read := &Race{}
+	*read = back
+	read.saved = raw
+	if err := p.saveRace(read); err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(second, stat()) {
+		t.Fatal("a race read back and saved unchanged was rewritten")
 	}
 }
