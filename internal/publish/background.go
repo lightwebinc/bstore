@@ -131,6 +131,9 @@ func (p *Publisher) housekeeping(ctx context.Context) {
 	defer t.Stop()
 	for {
 		p.CollectChange(ctx)
+		if _, err := p.MergeCoins(ctx); err != nil {
+			p.cfg.Logf("coin merge: %v", feeError(err))
+		}
 		p.ReconcilePayments(ctx)
 		p.Prune()
 		select {
