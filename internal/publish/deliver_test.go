@@ -59,6 +59,28 @@ func TestSubmitRidesOutBusyTarget(t *testing.T) {
 	}
 }
 
+// A provider over its per-address budget answers 429 with Retry-After: the
+// piece waits and is delivered, as on a busy facade.
+func TestSubmitRidesOutRateLimit(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) <= 2 {
+			w.Header().Set("Retry-After", "0")
+			http.Error(w, `{"code":"ERR_RATE_LIMITED","description":"too many submissions in flight from this address"}`, http.StatusTooManyRequests)
+			return
+		}
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	d := &Delivery{}
+	if err := d.submit(context.Background(), Target{Base: srv.URL, Topic: "t"}, []byte("beef")); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if n := calls.Load(); n != 3 {
+		t.Fatalf("%d attempts, want 3", n)
+	}
+}
+
 func TestSubmitFailsWithoutRetryAfter(t *testing.T) {
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
