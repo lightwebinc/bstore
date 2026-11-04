@@ -98,8 +98,22 @@ func (b *bodyHashes) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// newSums computes only the flexible checksums h declares: a completed
+// upload's whole-object checksums, where no MD5 is needed.
+func newSums(h http.Header) *bodyHashes {
+	b := newBodyHashes(h, "")
+	b.md5 = nil
+	return b
+}
+
+// any reports whether there is a digest to compute.
+func (b *bodyHashes) any() bool { return len(b.all()) > 0 }
+
 func (b *bodyHashes) all() []hash.Hash {
-	hs := []hash.Hash{b.md5}
+	var hs []hash.Hash
+	if b.md5 != nil {
+		hs = append(hs, b.md5)
+	}
 	if b.sha256 != nil {
 		hs = append(hs, b.sha256)
 	}
