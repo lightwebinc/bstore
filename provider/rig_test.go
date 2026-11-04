@@ -32,7 +32,7 @@ const testBucket = "photos_qzvmkwerty"
 
 // rig is a local chain, a TLS certificate for 127.0.0.1, and a writer.
 type rig struct {
-	t      *testing.T
+	t      testing.TB
 	chain  *testchain.Chain
 	srv    *httptest.Server
 	cert   string
@@ -44,7 +44,7 @@ type rig struct {
 	logs []string
 }
 
-func newRig(t *testing.T) *rig {
+func newRig(t testing.TB) *rig {
 	t.Helper()
 	chain := testchain.New(700)
 	srv := httptest.NewServer(chain)
@@ -143,7 +143,7 @@ func (r *rig) eventually(what string, d time.Duration, f func() bool) {
 	r.t.Fatalf("%s: did not happen\n%s", what, r.said())
 }
 
-func testCert(t *testing.T, dir string) (string, string, *x509.CertPool) {
+func testCert(t testing.TB, dir string) (string, string, *x509.CertPool) {
 	t.Helper()
 	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

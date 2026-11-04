@@ -35,7 +35,7 @@ func (r *rig) post(base, topic string, beef []byte) (int, string) {
 	return res.StatusCode, string(b)
 }
 
-func taken(t *testing.T, body, topic string) (bool, string) {
+func taken(t testing.TB, body, topic string) (bool, string) {
 	t.Helper()
 	var ans map[string]struct {
 		Out     []int  `json:"outputsToAdmit"`
