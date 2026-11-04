@@ -390,10 +390,8 @@ func (p *Provider) writeProofFiles(rootHex string, c *chirp.Closure) ([32]byte, 
 			return [32]byte{}, 0, err
 		}
 	}
-	for _, f := range files {
-		if err := f.Sync(); err != nil {
-			return [32]byte{}, 0, err
-		}
+	if err := syncAll(files); err != nil {
+		return [32]byte{}, 0, err
 	}
 	pr := storerec.EmptyHash
 	if len(roots) > 0 {
@@ -407,6 +405,25 @@ func (p *Provider) writeProofFiles(rootHex string, c *chirp.Closure) ([32]byte, 
 		return [32]byte{}, 0, err
 	}
 	return pr, total, nil
+}
+
+// syncAll makes the files durable together: on a journaling file system
+// fsyncs in flight at once share one journal commit, so the root's five
+// files cost about one device flush instead of five in a row (2026-11-04:
+// the provider's root worker spent most of its time in these syncs). It
+// returns the first error.
+func syncAll(files map[string]*os.File) error {
+	errs := make(chan error, len(files))
+	for _, f := range files {
+		go func() { errs <- f.Sync() }()
+	}
+	var first error
+	for range files {
+		if err := <-errs; err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
 }
 
 // inClosure reports whether obj is an object of a held root's closure, by
