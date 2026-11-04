@@ -104,8 +104,10 @@ back the pieces already held, once each, and continues as more arrive. A
 piece the store already held is read from the store, not taken from the
 request that sent it again. Leaves are kept for at most 1,024 pieces,
 walks for 64 roots (the least recently used dropped first), and each walk
-keeps at most 4 MiB of pieces that arrived ahead of it (others are read
-back from the store when the walk reaches them).
+keeps at most 4 MiB of pieces that arrived ahead of it. Besides, the
+pieces stored last, 64 MiB of them across all walks, are kept until their
+walk reads them, so pieces taken at once and out of order are not read
+back; others are read back from the store when the walk reaches them.
 
 A closure that fails is the writer's fault: every entry it fails is
 declined, and the reason recorded. One that is not complete yet is waited
