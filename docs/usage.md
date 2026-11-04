@@ -437,8 +437,10 @@ the file in place. A download is read in `-conc` ranges at once into the
 file. Over plain HTTP the SDK computes the checksum first, so measure
 over TLS. On completion: the bytes, the elapsed time, the rate in MB/s
 (decimal), the ETag and every checksum the gateway returned; `-json`
-prints the same as one object. `-ca FILE` trusts a PEM besides the
-system's, `-insecure` trusts anything. No progress bars, no recursive
+prints the same as one object. With `-` for the local side the object's
+bytes are standard output (or standard input) and the result goes to
+standard error, so a pipe carries the object alone. `-ca FILE` trusts a
+PEM besides the system's, `-insecure` trusts anything. No progress bars, no recursive
 sync: the AWS CLI does those.
 
 `bench put` sends `-n` objects of `-size` fresh random bytes one after

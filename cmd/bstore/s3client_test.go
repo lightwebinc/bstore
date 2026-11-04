@@ -340,6 +340,29 @@ func TestS3Client(t *testing.T) {
 		t.Fatalf("cp down printed:\n%s", out)
 	}
 
+	// To standard output: the object's bytes alone, the result on standard error.
+	var out2, errb bytes.Buffer
+	code = run(context.Background(), append([]string{"cp", "s3://photos/albums/big.bin", "-"}, s3...), strings.NewReader(""), &out2, &errb, os.Getenv)
+	if code != 0 || !bytes.Equal(out2.Bytes(), content) {
+		t.Fatalf("cp to -: exit %d, %d bytes on stdout, equal %v; stderr: %s", code, out2.Len(), bytes.Equal(out2.Bytes(), content), errb.String())
+	}
+	if !strings.Contains(errb.String(), "bytes    "+strconv.Itoa(len(content))) || !strings.Contains(errb.String(), "crc64nvme "+crc64b64(content)) {
+		t.Fatalf("cp to - printed on stderr:\n%s", errb.String())
+	}
+	out2.Reset()
+	errb.Reset()
+	code = run(context.Background(), append([]string{"cp", "s3://photos/albums/big.bin", "-", "-json"}, s3...), strings.NewReader(""), &out2, &errb, os.Getenv)
+	if code != 0 || !bytes.Equal(out2.Bytes(), content) || !strings.HasPrefix(errb.String(), `{"op":"get"`) {
+		t.Fatalf("cp to - -json: exit %d, equal %v; stderr: %s", code, bytes.Equal(out2.Bytes(), content), errb.String())
+	}
+	// From standard input: a stream, the result on standard error.
+	out2.Reset()
+	errb.Reset()
+	code = run(context.Background(), append([]string{"cp", "-", "s3://photos/albums/stdin.bin"}, s3...), bytes.NewReader(content[:6<<20]), &out2, &errb, os.Getenv)
+	if code != 0 || out2.Len() != 0 || !bytes.Equal(f.objects["photos/albums/stdin.bin"], content[:6<<20]) || !strings.Contains(errb.String(), "put s3://photos/albums/stdin.bin") {
+		t.Fatalf("cp from -: exit %d, %d bytes on stdout; stderr: %s", code, out2.Len(), errb.String())
+	}
+
 	// One put under the part size, as JSON.
 	small := filepath.Join(dir, "small.txt")
 	if err := os.WriteFile(small, []byte("hello, gateway\n"), 0o600); err != nil {
@@ -366,7 +389,7 @@ func TestS3Client(t *testing.T) {
 	for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
 		lines = append(lines, strings.Join(strings.Fields(l), " "))
 	}
-	if want := []string{strconv.Itoa(len(content)) + " 2026-11-04T00:00:00Z albums/big.bin", "15 2026-11-04T00:00:00Z albums/small.txt"}; strings.Join(lines, "|") != strings.Join(want, "|") {
+	if want := []string{strconv.Itoa(len(content)) + " 2026-11-04T00:00:00Z albums/big.bin", "15 2026-11-04T00:00:00Z albums/small.txt", "6291456 2026-11-04T00:00:00Z albums/stdin.bin"}; strings.Join(lines, "|") != strings.Join(want, "|") {
 		t.Fatalf("ls printed:\n%s", out)
 	}
 	if out, errs, code = cli("rm", "s3://photos/albums/big.bin"); code != 0 {

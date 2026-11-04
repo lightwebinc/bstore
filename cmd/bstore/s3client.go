@@ -31,6 +31,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
+
+	"github.com/lightwebinc/bcommon/termsafe"
 )
 
 // s3Target is an s3://bucket/key argument.
@@ -236,28 +238,38 @@ func (r *s3Result) sum(name string, v *string) {
 	}
 }
 
-func (r *s3Result) print(g *global, asJSON bool) error {
+// print writes the result to standard output, or to standard error when
+// the object's bytes are on standard output (cp with - for a side), so a
+// pipe carries the object alone.
+func (r *s3Result) print(g *global, asJSON, toStderr bool) error {
+	w := g.stdout
+	if toStderr {
+		w = g.stderr
+	}
 	if asJSON {
 		b, err := json.Marshal(r)
 		if err != nil {
 			return err
 		}
-		fmt.Fprintln(g.stdout, string(b))
+		fmt.Fprintln(w, string(b))
 		return nil
 	}
-	g.out("%s s3://%s/%s", r.Op, r.Bucket, r.Key)
-	g.out("bytes    %d", r.Bytes)
-	g.out("elapsed  %.3fs", r.Elapsed)
-	g.out("rate     %.1f MB/s", r.MBps)
+	line := func(format string, args ...any) {
+		fmt.Fprintln(w, termsafe.Text(fmt.Sprintf(format, args...)))
+	}
+	line("%s s3://%s/%s", r.Op, r.Bucket, r.Key)
+	line("bytes    %d", r.Bytes)
+	line("elapsed  %.3fs", r.Elapsed)
+	line("rate     %.1f MB/s", r.MBps)
 	if r.Multipart {
-		g.out("parts    %d bytes, %d at a time", r.Part, r.Conc)
+		line("parts    %d bytes, %d at a time", r.Part, r.Conc)
 	}
 	if r.ETag != "" {
-		g.out("etag     %s", r.ETag)
+		line("etag     %s", r.ETag)
 	}
 	for _, c := range r.Checksums {
 		name, v, _ := strings.Cut(c, ":")
-		g.out("%-8s %s", name, v)
+		line("%-8s %s", name, v)
 	}
 	return nil
 }
@@ -283,7 +295,8 @@ func s3Error(err error) error {
 const s3CpHelp = `usage: bstore cp SRC DST [S3 flags]
 
 Copy a local file to the gateway or an object back, one side a path (or -
-for standard input or output) and the other s3://bucket/key. An upload
+for standard input or output, the result then on standard error) and the
+other s3://bucket/key. An upload
 above one part is a multipart upload, its parts sent -conc at a time; a
 download is read in -conc ranges at once. The body is never hashed before
 it is sent: the request is signed with UNSIGNED-PAYLOAD and the checksum
@@ -319,22 +332,24 @@ func cmdS3Cp(ctx context.Context, g *global, args []string) error {
 	}
 	var r *s3Result
 	if dstS3 {
-		r, err = s3Upload(ctx, c, &f, pos[0], dst)
+		r, err = s3Upload(ctx, c, g.stdin, &f, pos[0], dst)
 	} else {
-		r, err = s3Download(ctx, c, &f, src, pos[1])
+		r, err = s3Download(ctx, c, g.stdout, &f, src, pos[1])
 	}
 	if err != nil {
 		return s3Error(err)
 	}
-	return r.print(g, f.json)
+	// With - for a side, standard output is the object (or standard input
+	// is, and a pipeline may read both): the result goes to standard error.
+	return r.print(g, f.json, pos[0] == "-" || pos[1] == "-")
 }
 
 // s3Upload sends a file (or standard input) as one object.
-func s3Upload(ctx context.Context, c *s3.Client, f *s3Flags, path string, t s3Target) (*s3Result, error) {
+func s3Upload(ctx context.Context, c *s3.Client, stdin io.Reader, f *s3Flags, path string, t s3Target) (*s3Result, error) {
 	var body io.Reader
 	var size int64 = -1
 	if path == "-" {
-		body = os.Stdin
+		body = stdin
 	} else {
 		file, err := os.Open(path)
 		if err != nil {
@@ -375,7 +390,7 @@ func s3Upload(ctx context.Context, c *s3.Client, f *s3Flags, path string, t s3Ta
 }
 
 // s3Download reads an object to a file, or whole to standard output.
-func s3Download(ctx context.Context, c *s3.Client, f *s3Flags, t s3Target, path string) (*s3Result, error) {
+func s3Download(ctx context.Context, c *s3.Client, stdout io.Writer, f *s3Flags, t s3Target, path string) (*s3Result, error) {
 	in := &s3.GetObjectInput{Bucket: aws.String(t.bucket), Key: aws.String(t.key)}
 	start := time.Now()
 	if path == "-" {
@@ -384,7 +399,7 @@ func s3Download(ctx context.Context, c *s3.Client, f *s3Flags, t s3Target, path 
 			return nil, err
 		}
 		defer out.Body.Close()
-		n, err := io.Copy(os.Stdout, out.Body)
+		n, err := io.Copy(stdout, out.Body)
 		if err != nil {
 			return nil, err
 		}
@@ -517,7 +532,7 @@ func cmdS3Rm(ctx context.Context, g *global, args []string) error {
 		return s3Error(err)
 	}
 	if f.json {
-		return newResult("rm", t, 0, time.Since(start), &f).print(g, true)
+		return newResult("rm", t, 0, time.Since(start), &f).print(g, true, false)
 	}
 	g.out("rm s3://%s/%s", t.bucket, t.key)
 	return nil
@@ -580,13 +595,13 @@ func cmdBench(ctx context.Context, g *global, args []string) error {
 			return s3Error(err)
 		}
 		total += r.Bytes
-		if err := r.print(g, f.json); err != nil {
+		if err := r.print(g, f.json, false); err != nil {
 			return err
 		}
 	}
 	agg := newResult("bench "+op, t, total, time.Since(start), &f)
 	agg.Multipart = int64(size) > int64(f.part)
-	if err := agg.print(g, f.json); err != nil {
+	if err := agg.print(g, f.json, false); err != nil {
 		return err
 	}
 	if op == "put" && !*keep {
