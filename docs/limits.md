@@ -28,7 +28,7 @@ Each number below is one of three kinds, said in its row:
 | Pieces of an object | one per blob, plus the root node, plus a branch node per 256 blobs above 256: a 100 MiB object is 25 blobs and a 1,077-byte root, 26 pieces; a 20 MiB object 5 blobs and a 257-byte root, 6 pieces; 1 TiB is 263,173 pieces | contract (the 100 MiB and 20 MiB roots measured: a provider's store held exactly the content plus 6,976 bytes for six 100 MiB and two 20 MiB objects) |
 | A piece carrier | 4,259,840 bytes of BEEF at most: the blob, its record and the funding tree's path | contract |
 | A key, an entry's `meta` | 1,024 bytes, 2,048 bytes; an entry 8,192 bytes | contract |
-| `bstore put` | `-max`, default 2^43 bytes; one 4 MiB blob and one segment in memory while it streams | set |
+| `bstore put` | `-max`, default 2^43 bytes; a few 4 MiB blobs and one segment in memory while it streams | set |
 | S3 `PutObject`; a multipart object | 5 GiB; 100 GiB, 10,000 parts | set (`limits.max_object`, `limits.max_upload`) |
 | What a provider takes | `policy.max_object`, default 1 GiB | set |
 
