@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/lightwebinc/bstore/storerec"
 )
@@ -81,10 +82,15 @@ func BenchmarkSubmitPiece(b *testing.B) {
 			b.SetBytes(total / int64(len(o.Pieces)))
 			b.ReportAllocs()
 			i := len(order)
+			// cpu-ns/op is the process's CPU time while the timer runs, every
+			// thread's (the collector's included), per piece.
+			var cpu time.Duration
 			b.ResetTimer()
+			at := processCPU()
 			for range b.N {
 				if i == len(order) {
 					b.StopTimer()
+					cpu += processCPU() - at
 					reset()
 					for k := range order {
 						order[k] = k
@@ -94,11 +100,15 @@ func BenchmarkSubmitPiece(b *testing.B) {
 						rng.Shuffle(len(order)-1, func(x, y int) { order[x+1], order[y+1] = order[y+1], order[x+1] })
 					}
 					i = 0
+					at = processCPU()
 					b.StartTimer()
 				}
 				submit(o.Pieces[order[i]])
 				i++
 			}
+			b.StopTimer()
+			cpu += processCPU() - at
+			b.ReportMetric(float64(cpu.Nanoseconds())/float64(b.N), "cpu-ns/op")
 		})
 	}
 }
