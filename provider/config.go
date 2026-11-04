@@ -234,7 +234,7 @@ func (c *Config) defaults() {
 		c.Backend = "native"
 	}
 	if c.QuotaBytes == 0 {
-		c.QuotaBytes = 64 << 30
+		c.QuotaBytes = 128 << 30
 	}
 	if c.UnclaimedBytes == 0 {
 		c.UnclaimedBytes = c.QuotaBytes / 8
@@ -244,7 +244,7 @@ func (c *Config) defaults() {
 	}
 	p := &c.Policy
 	if p.MaxObject == 0 {
-		p.MaxObject = 1 << 30
+		p.MaxObject = 4 << 30
 	}
 	if p.MinDeadlineBlocks == 0 {
 		p.MinDeadlineBlocks = 6
@@ -290,8 +290,8 @@ func (c *Config) defaults() {
 	def(&l.ChallengeBurst, 6)
 	def(&l.FreePerWriterPerMin, 12)
 	def(&l.RenewalsPerRootPerHour, 4)
-	def(&l.SubmitsPerAddrPerSec, 64)
-	def(&l.SubmitBurst, 256)
+	def(&l.SubmitsPerAddrPerSec, 1024)
+	def(&l.SubmitBurst, 4096)
 	def(&l.ObjectReadsPerAddrPerSec, 50)
 	def(&l.ObjectReadBurst, 200)
 	if l.Sessions == 0 {
@@ -304,7 +304,7 @@ func (c *Config) defaults() {
 		l.ChallengeWorkers = 4
 	}
 	if l.InFlightPerAddr == 0 {
-		l.InFlightPerAddr = 4
+		l.InFlightPerAddr = 32
 	}
 	if l.VerifyWorkers == 0 {
 		l.VerifyWorkers = 4
@@ -319,7 +319,7 @@ func (c *Config) defaults() {
 		l.UploadSessionSeconds = 3600
 	}
 	if c.TreeCount == 0 {
-		c.TreeCount = 16
+		c.TreeCount = 1023
 	}
 	if c.TreeSats == 0 {
 		c.TreeSats = 200

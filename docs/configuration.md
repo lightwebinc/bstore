@@ -133,11 +133,11 @@ serves all three).
 | `quorum` | 1 | hosts that must take an entry when there is no facade |
 | `ca`, `fetch_private` | none, false | certificates trusted besides the system's; whether advertised URLs at loopback, private or link-local addresses are reached |
 | `bounty` | none | what a put asks for unless told otherwise: `satoshis`, `t`, `k`, `retention_seconds`, `deadline_blocks`, `check_c` |
-| `hold_ahead` | 8 | mined hold outputs of a bounty kept ready: the puts one block interval absorbs |
-| `hold_tree` | 16 | hold outputs one transaction carries (a hold tree), at most 1,024, what hosts admit of a mined transaction; raise it once every host runs a build that admits 1,024, for fewer transactions, coins and records a block |
+| `hold_ahead` | 16,384 | mined hold outputs of a bounty kept ready: the puts one block interval absorbs (27 a second on a ten-minute chain); each locks its bounty until its race ends, and a wallet too small fills what it can |
+| `hold_tree` | 1,024 | hold outputs one transaction carries (a hold tree), at most 1,024, what hosts admit of a mined transaction |
 | `race_window_seconds` | 3600 | the writer's race window |
 | `publish_outcomes` | true | publish failed settlement challenges and every challenge's outcome as outcome records |
-| `piece_tree`, `entry_tree` | 256, 16 | outputs of a new funding tree (outcome trees take `entry_tree`); trees are minted ahead, in the background, to keep `piece_ahead` and `entry_ahead` outputs ready, so a put of up to `piece_tree` pieces never waits for a block |
+| `piece_tree`, `entry_tree` | 256, 1,023 | outputs of a new funding tree (outcome trees take `entry_tree`); trees are minted ahead, in the background, to keep `piece_ahead` and `entry_ahead` outputs ready, so a put of up to `piece_tree` pieces never waits for a block |
 | `fee` | 100 satoshis per 1000 bytes, floor 100, cap 100/1000 | the miner fee policy ([the fee block](#the-fee-block)); `fee_sat_per_byte` and `fee_floor` are its older keys |
 | `refuse_unmined` | false | `fund -beef` takes mined payments only |
 | `accept_threshold_sats` | 25000000 | a settlement whose largest payout is at or below it is remitted once arcade says the network took it and the chain view shows its inputs spent by it alone, before it mines (race state `remitted`); above it, remitted once mined. Needs settle through arcade or ARC |

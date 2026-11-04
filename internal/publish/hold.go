@@ -36,13 +36,32 @@ import (
 
 // ErrNoHold is a put that asked for a bounty when no mined hold output of
 // that value was ready within HoldWait; minting more is under way.
+// The funding a gateway keeps ready, by default. Every output is minted and
+// mined before a put spends it, and what is minted to replace it is usable
+// from the next block, so one identity's sustained puts per block interval
+// are bounded by these. They are sized for a busy writer, not a trickle:
+// 16,384 holds carry about 27 puts a second on a ten-minute chain and 270
+// on a one-minute one. A wallet too small for them fills what it can and
+// says so; a hold locks its bounty until the race settles or lapses, so a
+// gateway paying large bounties may want fewer.
+const (
+	DefaultHoldAhead = 16384
+	// DefaultEntryTree is the largest funding tree a host takes.
+	DefaultEntryTree = 1023
+	// DefaultTreesAhead is the entry and piece trees kept ready ahead.
+	DefaultTreesAhead = 16
+	// DefaultPieceWorkers is the piece carriers a put mints and sends at
+	// once; providers admit 32 from one address by default.
+	DefaultPieceWorkers = 16
+)
+
 var ErrNoHold = errors.New("publish: no mined hold output is ready for the bounty yet")
 
 const (
 	// defaultHoldTree is the hold outputs one transaction carries unless
-	// Config.HoldTree says otherwise: the bound hosts admitted before
-	// 2026-11-01, so a gateway ahead of its hosts still mints what they take.
-	defaultHoldTree = 16
+	// Config.HoldTree says otherwise: the most hosts admit in one mined
+	// transaction since 2026-11-01.
+	defaultHoldTree = storerec.MaxAdsPerTx
 	// maxHoldChange is how many change coins one hold transaction leaves
 	// at most, for the transactions still owed.
 	maxHoldChange = 8

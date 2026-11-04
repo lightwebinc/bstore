@@ -285,20 +285,20 @@ func Open(ctx context.Context, cfg Config) (*Publisher, error) {
 	}
 	cfg.PieceTree, cfg.EntryTree = min(cfg.PieceTree, mint.MaxFundingOutputs), min(cfg.EntryTree, mint.MaxFundingOutputs)
 	if cfg.PieceAhead <= 0 {
-		cfg.PieceAhead = cfg.PieceTree
+		cfg.PieceAhead = DefaultTreesAhead * cfg.PieceTree
 	}
 	if cfg.EntryAhead <= 0 {
-		cfg.EntryAhead = max(cfg.EntryTree/2, 1)
+		cfg.EntryAhead = DefaultTreesAhead * cfg.EntryTree
 	}
 	if cfg.PieceWorkers <= 0 {
-		cfg.PieceWorkers = 4
+		cfg.PieceWorkers = DefaultPieceWorkers
 	}
 	cfg.PieceWorkers = min(cfg.PieceWorkers, 32)
 	if cfg.Poll <= 0 {
 		cfg.Poll = time.Second
 	}
 	if cfg.HoldAhead <= 0 {
-		cfg.HoldAhead = 8
+		cfg.HoldAhead = DefaultHoldAhead
 	}
 	if cfg.HoldTree <= 0 {
 		cfg.HoldTree = defaultHoldTree
