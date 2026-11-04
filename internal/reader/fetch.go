@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"net/http"
 	"sort"
@@ -283,6 +282,12 @@ var ErrContentHash = errors.New("reader: the content does not hash to the entry'
 // written (spec section 15.2). A whole read (off 0, n the size) also holds
 // the content to its hash, checked before the last blob is written, so a
 // whole object whose content hash fails is never released complete.
+//
+// Blobs are fetched ReadAhead ahead of the one being written, each on a
+// goroutine of its own, and the content hash runs on another, so reading,
+// hashing and sending overlap; what reaches w, and when an error stops it,
+// is what one blob at a time would give. Memory is about ReadAhead + 3
+// blobs.
 func (o *Object) WriteRange(ctx context.Context, w io.Writer, off, n uint64) error {
 	if n == 0 {
 		return nil
@@ -291,27 +296,84 @@ func (o *Object) WriteRange(ctx context.Context, w io.Writer, off, n uint64) err
 		return errors.New("reader: a range past the object")
 	}
 	whole := off == 0 && n == o.entry.Size
-	var ch hash.Hash
-	if whole {
-		ch = sha256.New()
-	}
 	first, last := off/storerec.BlobSize, (off+n-1)/storerec.BlobSize
-	for i := first; i <= last; i++ {
-		if err := ctx.Err(); err != nil {
-			return err
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// Each blob's fetch answers on its own channel. room bounds the blobs
+	// fetched or waiting to be written to ReadAhead+1.
+	type fetched struct {
+		b   []byte
+		err error
+	}
+	count := last - first + 1
+	got := make([]chan fetched, count)
+	for k := range got {
+		got[k] = make(chan fetched, 1)
+	}
+	ahead := max(ReadAhead, 0)
+	room := make(chan struct{}, ahead+1)
+	go func() {
+		for k := uint64(0); k < count; k++ {
+			select {
+			case room <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			go func(k uint64) {
+				c := o.blobs[first+k]
+				b, err := o.fetch(ctx, c.Hash, c.Length)
+				got[k] <- fetched{b, err}
+			}(k)
 		}
-		c := o.blobs[i]
-		b, err := o.fetch(ctx, c.Hash, c.Length)
-		if err != nil {
-			return err
+	}()
+
+	// The content hash of a whole read runs beside the writes, in order.
+	var hashIn chan []byte
+	var hashOut chan [32]byte
+	if whole {
+		hashIn, hashOut = make(chan []byte, 1), make(chan [32]byte, 1)
+		go func() {
+			ch := sha256.New()
+			for b := range hashIn {
+				ch.Write(b)
+			}
+			hashOut <- [32]byte(ch.Sum(nil))
+		}()
+		defer func() {
+			if hashIn != nil {
+				close(hashIn)
+			}
+		}()
+	}
+	for k := uint64(0); k < count; k++ {
+		i := first + k
+		var f fetched
+		select {
+		case f = <-got[k]:
+		case <-ctx.Done():
+			return ctx.Err()
 		}
+		<-room
+		if f.err != nil {
+			return f.err
+		}
+		b, c := f.b, o.blobs[i]
 		if uint64(len(b)) != c.Length {
 			return fmt.Errorf("%w: a blob of the wrong length", ErrRefused)
 		}
-		if ch != nil {
-			ch.Write(b)
-			if i == last && [32]byte(ch.Sum(nil)) != o.entry.ContentHash {
-				return ErrContentHash
+		if hashIn != nil {
+			select {
+			case hashIn <- b:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			if i == last {
+				close(hashIn)
+				hashIn = nil
+				if <-hashOut != o.entry.ContentHash {
+					return ErrContentHash
+				}
 			}
 		}
 		start := uint64(0)
@@ -328,6 +390,10 @@ func (o *Object) WriteRange(ctx context.Context, w io.Writer, off, n uint64) err
 	}
 	return nil
 }
+
+// ReadAhead is how many blobs WriteRange fetches ahead of the one it
+// writes.
+var ReadAhead = 2
 
 // adCache keeps a root's sources for a short while.
 type adCache struct {
