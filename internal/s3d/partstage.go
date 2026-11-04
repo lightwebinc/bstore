@@ -30,7 +30,11 @@ import (
 // is kept in one file, unhashed, as every part was before.
 
 // partWorkers is how many of one part's blobs are hashed and written at
-// once; a part holds at most partWorkers + 1 blob buffers.
+// once; a part holds at most partWorkers + 1 blob buffers. Writing back to
+// the drive is the gateway's writer slots (limits.part_writers): a blob
+// written waits for one and is written back in it, so the drive sees that
+// many streams however many parts are in flight (a DRAM-less NVMe wrote
+// 2 GB/s to one sequential writer and 820 MB/s to four).
 const partWorkers = 2
 
 var blobBufs = sync.Pool{New: func() any {
@@ -39,23 +43,27 @@ var blobBufs = sync.Pool{New: func() any {
 }}
 
 // partSink is where a part's bytes go as they arrive: finish waits for
-// them to be written, syncs make them durable.
+// them to be written, syncs make them durable, state is the content hash
+// taken on over them, when it was (runHash).
 type partSink interface {
 	io.Writer
 	finish() (hashes, segs [][32]byte, err error)
 	syncs() []func() error
+	state() []byte
 	abort()
 }
 
 // partWriter cuts a part into blob files under dir as it is written and
 // hashes each blob as completion will need it.
 type partWriter struct {
-	dir  string
-	cur  []byte
-	work chan blobJob
-	free chan []byte
-	made int
-	wg   sync.WaitGroup
+	dir     string
+	writers chan struct{} // the gateway's writer slots; nil is unbounded
+	run     hash.Hash     // the content hash taken on inline; nil when not
+	cur     []byte
+	work    chan blobJob
+	free    chan []byte
+	made    int
+	wg      sync.WaitGroup
 
 	mu     sync.Mutex
 	hashes [][32]byte
@@ -68,11 +76,11 @@ type blobJob struct {
 	b []byte
 }
 
-func newPartWriter(dir string) (*partWriter, error) {
+func newPartWriter(dir string, writers chan struct{}, run hash.Hash) (*partWriter, error) {
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		return nil, err
 	}
-	w := &partWriter{dir: dir, work: make(chan blobJob, partWorkers), free: make(chan []byte, partWorkers+1)}
+	w := &partWriter{dir: dir, writers: writers, run: run, work: make(chan blobJob, partWorkers), free: make(chan []byte, partWorkers+1)}
 	w.wg.Add(partWorkers)
 	for range partWorkers {
 		go w.worker()
@@ -94,7 +102,7 @@ func (w *partWriter) worker() {
 		if w.failed() == nil {
 			h, seg, err := publish.HashBlob(j.b)
 			if err == nil {
-				err = writeBlob(blobFile(w.dir, j.i), j.b)
+				err = w.writeBlob(blobFile(w.dir, j.i), j.b)
 			}
 			w.mu.Lock()
 			if err != nil && w.err == nil {
@@ -107,18 +115,28 @@ func (w *partWriter) worker() {
 	}
 }
 
-// writeBlob writes a blob file; it is synced with the rest of its part in
-// finish.
-func writeBlob(path string, b []byte) error {
+// writeBlob writes a blob file and, in one of the writer slots, writes it
+// back to the drive (writeback): the blob reaches the drive as one stream
+// among at most that many. It is made durable with the rest of its part in
+// finish (syncs).
+func (w *partWriter) writeBlob(path string, b []byte) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
-	if _, err := f.Write(b); err != nil {
-		f.Close()
-		return err
+	if _, err = f.Write(b); err == nil {
+		if w.writers != nil {
+			w.writers <- struct{}{}
+		}
+		err = writeback(f)
+		if w.writers != nil {
+			<-w.writers
+		}
 	}
-	return f.Close()
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 func (w *partWriter) buffer() []byte {
@@ -149,6 +167,9 @@ func (w *partWriter) Write(p []byte) (int, error) {
 		return 0, err
 	}
 	n := len(p)
+	if w.run != nil {
+		w.run.Write(p)
+	}
 	for len(p) > 0 {
 		if w.cur == nil {
 			w.cur = w.buffer()
@@ -191,7 +212,8 @@ func (w *partWriter) finish() (hashes, segs [][32]byte, err error) {
 }
 
 // syncs make the part durable once finish returned: a sync of each blob
-// file and of the directory, to run at once with each other (parallel).
+// file (its data written back already, where writeback is) and of the
+// directory, to run at once with each other (parallel).
 func (w *partWriter) syncs() []func() error {
 	out := []func() error{func() error { return syncDir(w.dir) }}
 	for i := range w.hashes {
@@ -205,6 +227,19 @@ func (w *partWriter) syncs() []func() error {
 		})
 	}
 	return out
+}
+
+// state is the content hash's state after the part, when the part was
+// hashed inline, once finish returned.
+func (w *partWriter) state() []byte {
+	if w.run == nil {
+		return nil
+	}
+	st, err := w.run.(encoding.BinaryMarshaler).MarshalBinary()
+	if err != nil {
+		return nil
+	}
+	return st
 }
 
 // partFile keeps a part the object cannot be linked through
@@ -226,6 +261,8 @@ func newPartFile(path string) (*partFile, error) {
 func (p *partFile) Write(b []byte) (int, error) { return p.f.Write(b) }
 
 func (p *partFile) finish() (hashes, segs [][32]byte, err error) { return nil, nil, p.f.Close() }
+
+func (p *partFile) state() []byte { return nil }
 
 func (p *partFile) syncs() []func() error {
 	return []func() error{func() error {
@@ -322,7 +359,11 @@ func (up *upload) worthHashing(n int, size int64) bool {
 
 // openPart begins part n of size bytes: the record to fill and where the
 // bytes go, blob files when the object may be linked through the part, one
-// file otherwise. closed is called once the part is kept or given up.
+// file otherwise. When the content hash covers parts 1 to n-1 and is not
+// running, the part takes it on inline as its bytes pass, and its state
+// goes with the record (keep); otherwise the hash reads the part back
+// once it is held (advance). closed is called once the part is kept or
+// given up.
 func (up *upload) openPart(n int, size int64) (part partRecord, sink partSink, closed func(), err error) {
 	var rnd [6]byte
 	_, _ = rand.Read(rnd[:])
@@ -333,15 +374,32 @@ func (up *upload) openPart(n int, size int64) (part partRecord, sink partSink, c
 		up.arriving = map[int]int64{}
 	}
 	up.arriving[n] = size
+	var run hash.Hash
+	if hashed && !up.run.busy && !up.completing && len(up.run.states) == n-1 {
+		var base []byte
+		if n > 1 {
+			base = up.run.states[n-2]
+		}
+		if run, _ = restore(base); run != nil {
+			up.run.busy, up.run.inline = true, true
+		}
+	}
 	up.mu.Unlock()
 	closed = func() {
 		up.mu.Lock()
 		delete(up.arriving, n)
+		if run != nil {
+			// The state was kept with the part, or the part was not; a
+			// part landed beyond is read back.
+			up.run.busy, up.run.inline = false, false
+			up.idleCond().Broadcast()
+			up.kick()
+		}
 		up.mu.Unlock()
 	}
 	if hashed {
 		part.Dir = name
-		sink, err = newPartWriter(filepath.Join(up.dir, name))
+		sink, err = newPartWriter(filepath.Join(up.dir, name), up.writers, run)
 	} else {
 		part.File = name
 		sink, err = newPartFile(filepath.Join(up.dir, name))
@@ -394,19 +452,24 @@ func (up *upload) linked(p partRecord) ([]publish.LinkedBlob, error) {
 }
 
 // The content hash, SHA-256 over the whole object, runs while the parts
-// land: whenever part k+1 is held and the hash covers parts 1 to k, one
-// goroutine of the upload's reads the part's files and takes the hash on
-// over it, keeping the hash's state after every part. A part replaced
-// drops the states from it on. Completion waits for the goroutine, takes
-// the state after the longest run of the parts it names that starts at
-// part 1 and is hashed, and hashes the rest itself. The run stops at a
-// part the object cannot be linked through (worthHashing).
+// land. A part that begins when the hash covers parts 1 to n-1 and is idle
+// takes it on inline as its bytes pass (openPart), so parts sent one after
+// another are never read back. Parts sent at once cannot: the state before
+// each is not known until those before it have landed, so whenever part
+// k+1 is held and the hash covers parts 1 to k, one goroutine of the
+// upload's reads the part's files and takes the hash on over it (advance),
+// keeping the hash's state after every part. A part replaced drops the
+// states from it on. Completion waits for the goroutine, takes the state
+// after the longest run of the parts it names that starts at part 1 and is
+// hashed, and hashes the rest itself. The run stops at a part the object
+// cannot be linked through (worthHashing).
 
 // runHash is an upload's content hash so far; its fields are guarded by
 // the upload's mu.
 type runHash struct {
 	states [][]byte // states[k] is the state after parts 1 to k+1
-	busy   bool
+	busy   bool     // a goroutine (advance) or a part (inline) takes it on
+	inline bool
 	idle   *sync.Cond
 }
 
@@ -417,9 +480,15 @@ func (up *upload) dropFrom(n int) {
 	}
 }
 
-// kick starts the hash goroutine unless it runs; the caller holds up.mu.
+// kick starts the hash goroutine unless it runs, or a part takes the hash
+// on inline, or the upload is closing; the caller holds up.mu.
 func (up *upload) kick() {
-	if up.run.busy || up.gone {
+	if up.run.busy || up.gone || up.completing || up.done != nil {
+		return
+	}
+	if _, held := up.parts[len(up.run.states)+1]; !held {
+		// Nothing to take the hash on over yet: the next part takes it on
+		// inline as it arrives.
 		return
 	}
 	up.run.busy = true
@@ -470,10 +539,11 @@ func (up *upload) idleCond() *sync.Cond {
 
 // contentHash is SHA-256 over the parts named, in order, from the states
 // kept where they apply. The caller has marked the upload completing, so
-// no part changes under it.
+// no part changes under it: a part still streaming in with the hash
+// inline is refused when it ends, and is not waited for.
 func (up *upload) contentHash(names []int, recs []partRecord) ([32]byte, error) {
 	up.mu.Lock()
-	for up.run.busy {
+	for up.run.busy && !up.run.inline {
 		up.idleCond().Wait()
 	}
 	k := 0
