@@ -241,18 +241,18 @@ func (l *Limits) defaults() {
 	seti(&l.UploadSeconds, 86400)
 	// 64: an S3 client's default concurrency (10 for the aws CLI, more for
 	// SDK transfer managers) is not refused at the door.
-	seti(&l.Writes, 64)
-	seti(&l.PartWrites, 32)
+	seti(&l.Writes, 256)
+	seti(&l.PartWrites, 64)
 	seti(&l.Reads, 32)
-	seti(&l.Stages, 32)
+	seti(&l.Stages, 64)
 	seti(&l.Lookups, 64)
 	set(&l.MinRate, 16<<10)
 	if l.RequestsPerSec <= 0 {
-		l.RequestsPerSec = 200
+		l.RequestsPerSec = 500
 	}
 	seti(&l.ReplayPerKey, int(math.Ceil(l.RequestsPerSec*maxSkew.Seconds())))
 	if l.Burst <= 0 {
-		l.Burst = 400
+		l.Burst = 1000
 	}
 	seti(&l.IdleSeconds, 60)
 	seti(&l.DeleteKeys, 1000)
@@ -401,7 +401,7 @@ func (c *Config) Check() error {
 		}
 	}
 	if c.HoldAhead <= 0 {
-		c.HoldAhead = 8
+		c.HoldAhead = publish.DefaultHoldAhead
 	}
 	if c.PieceTree < 0 || c.EntryTree < 0 || c.PieceAhead < 0 || c.EntryAhead < 0 || c.PieceWorkers < 0 {
 		return errors.New("piece_tree, entry_tree, piece_ahead, entry_ahead and piece_workers are not negative")
@@ -432,13 +432,13 @@ func (c *Config) Check() error {
 		c.PieceTree = min(max(publish.PiecesFor(uint64(c.Limits.MaxObject)), 64), 1023)
 	}
 	if c.EntryTree == 0 {
-		c.EntryTree = 16
+		c.EntryTree = publish.DefaultEntryTree
 	}
 	if c.PieceAhead == 0 {
-		c.PieceAhead = c.PieceTree
+		c.PieceAhead = publish.DefaultTreesAhead * c.PieceTree
 	}
 	if c.PieceWorkers == 0 {
-		c.PieceWorkers = 4
+		c.PieceWorkers = publish.DefaultPieceWorkers
 	}
 	return nil
 }

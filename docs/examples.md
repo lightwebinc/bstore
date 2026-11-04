@@ -48,7 +48,7 @@ floor; change under 100 satoshis goes to the fee. Sizes from
 | A challenge, a renewal | not mined by you | the provider's price: 40 at `c = 30` on terms of 10 + 1; a renewal's minimum, often 500 |
 
 100,000 satoshis (0.001 BSV) is ample to make a bucket and put objects
-without a bounty. A bounty locks `hold_ahead` (8) hold outputs of its size
+without a bounty. A bounty locks `hold_ahead` (16,384 by default, as the wallet allows) hold outputs of its size
 ahead of time; set `hold_ahead` lower or fund more.
 
 ## Set up a home and fund it

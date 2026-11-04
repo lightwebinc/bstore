@@ -287,7 +287,7 @@ func TestPieceTreeMintedAhead(t *testing.T) {
 	var logs []string
 	var mu sync.Mutex
 	p, err := Open(ctx, Config{Dir: filepath.Join(dir, "id"), Chain: nodeChain(cs.URL), Tip: nodeTip(cs.URL), Settler: &bpub.RPCSettler{RPC: &nodeapi.RPC{URL: cs.URL + "/rpc", ID: "t"}},
-		Fees: mint.DefaultFees, PieceTree: 8, EntryTree: 4, Store: store, Delivery: &Delivery{Hosts: []string{host.srv.URL}, Providers: []string{host.srv.URL}},
+		Fees: mint.DefaultFees, PieceTree: 8, PieceAhead: 8, EntryTree: 4, EntryAhead: 2, Store: store, Delivery: &Delivery{Hosts: []string{host.srv.URL}, Providers: []string{host.srv.URL}},
 		Logf: func(f string, a ...any) {
 			mu.Lock()
 			logs = append(logs, f)

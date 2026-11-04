@@ -112,8 +112,8 @@ func TestConfigRefusals(t *testing.T) {
 	if err := main.Check(); err != nil || main.Chain != "woc:main" || main.Settle != "arcade:main" || main.Headers != "woc:main" {
 		t.Fatalf("mainnet defaults: %v: chain %q settle %q headers %q", err, main.Chain, main.Settle, main.Headers)
 	}
-	// Four submissions or uploads in flight from one address unless set.
-	for set, want := range map[int]int{0: 4, 32: 32} {
+	// Thirty-two submissions or uploads in flight from one address unless set.
+	for set, want := range map[int]int{0: 32, 4: 4} {
 		c := good()
 		c.Limits.InFlightPerAddr = set
 		if err := c.Check(); err != nil {

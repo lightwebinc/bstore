@@ -519,10 +519,10 @@ GorillaPool's public arcade.
 | `buckets` | required | `{"bucket": <identifier>, "writers": [<66 hex>, ...]}`; with `writers`, only those writers' pieces and entries are taken |
 | `backend` | `native` | the hold backend: `native`, or `bridge` when a bridge runs the provider as a front (see The backend) |
 | `export` | none | the read-only export directory |
-| `quota_bytes` | 64 GiB | the store's bound |
+| `quota_bytes` | 128 GiB | the store's bound |
 | `unclaimed_bytes` | an eighth of the quota | unclaimed pieces' share |
 | `unclaimed_seconds` | 3600 | how long an unclaimed piece is kept |
-| `policy.max_object` | 1 GiB | the largest object taken |
+| `policy.max_object` | 4 GiB | the largest object taken |
 | `policy.min_deadline_blocks` | 6 | how far ahead a deadline must be to race |
 | `policy.max_retention_seconds` | 31 days | the longest retention taken |
 | `policy.hold_unbountied`, `policy.unbountied_seconds` | off, 1 day | hold without a bounty, for this long |
@@ -533,8 +533,8 @@ GorillaPool's public arcade.
 | `terms.min_age` | 0 | 0 to 1008 blocks |
 | `terms.renew_per_gib_day`, `terms.renew_minimum` | 250, 500 | this provider's price, for a renewal and for what an even share of a bounty must cover; a renewal's minimum, at least the fee floor |
 | `terms.max_renew_seconds` | 366 days | the furthest a renewal runs |
-| `limits.*` | as the table above | `handshakes_per_sec` 32, `handshake_burst` 64, `handshakes_per_addr_per_sec` 1, `handshake_addr_burst` 4, `responses_per_sec` 5, `response_burst` 20, `sessions` 10000, `session_ttl_seconds` 600, `challenges_per_buyer_per_min` 6, `challenge_burst` 6, `free_per_writer_per_min` 12, `challenge_workers` 4, `verify_workers` 4, `renewals_per_root_per_hour` 4, `submits_per_addr_per_sec` 64, `submit_burst` 256, `in_flight_per_addr` 4, `object_readers` 32, `object_reads_per_addr_per_sec` 50, `object_read_burst` 200, `upload_sessions` 64, `upload_session_seconds` 3600 |
-| `tree_count`, `tree_sats` | 16, 200 | the funding trees; `tree_sats` at least twice the fee floor, and past that only what an advertisement overpays; a provider taking many new roots a second wants `tree_count` 1023 |
+| `limits.*` | as the table above | `handshakes_per_sec` 32, `handshake_burst` 64, `handshakes_per_addr_per_sec` 1, `handshake_addr_burst` 4, `responses_per_sec` 5, `response_burst` 20, `sessions` 10000, `session_ttl_seconds` 600, `challenges_per_buyer_per_min` 6, `challenge_burst` 6, `free_per_writer_per_min` 12, `challenge_workers` 4, `verify_workers` 4, `renewals_per_root_per_hour` 4, `submits_per_addr_per_sec` 1024, `submit_burst` 4096, `in_flight_per_addr` 32, `object_readers` 32, `object_reads_per_addr_per_sec` 50, `object_read_burst` 200, `upload_sessions` 64, `upload_session_seconds` 3600 |
+| `tree_count`, `tree_sats` | 1023, 200 | the funding trees; `tree_sats` at least twice the fee floor, and past that only what an advertisement overpays |
 | `fee` | 100 satoshis per 1000 bytes, floor 100, cap 100/1000 | the miner fee policy ([the fee block](configuration.md#the-fee-block)); `source: arc` follows the broadcaster's published rate |
 | `fee_sat_per_byte`, `fee_floor` | none | the older fee keys, still read as `fee.rate {n, 1}` and `fee.floor`, the rate capped at `fee.max_rate` |
 | `mainnet` | false | mainnet addresses, and the mainnet services by default |
@@ -568,9 +568,9 @@ fetched from the chain view). Every output of it paying the fund address
 that the pool does not hold and the chain view does not show spent goes
 into the pool, its proof checked against the header source. Set `mainnet: true` on mainnet; with `false`
 the fund address is in the testnet form. Every advertisement and renewal
-is a mined transaction the provider pays for: 50,000 satoshis covers a
-funding tree (`tree_count` 16 outputs of `tree_sats` 200) and its fees
-with room to spare. One coin pays for each tree, so the pool needs a coin of
+is a mined transaction the provider pays for: 300,000 satoshis covers a
+funding tree (`tree_count` 1023 outputs of `tree_sats` 200, 204,600
+satoshis, about a thousand advertisements) and its fees with room to spare. One coin pays for each tree, so the pool needs a coin of
 `tree_count` x `tree_sats` plus the tree's fee.
 
 `rescan -from H` and `fund -blocks N` are **coinbase: only on a regtest

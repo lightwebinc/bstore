@@ -14,13 +14,13 @@ func minimalConfig() *Config {
 }
 
 // The defaults: a piece tree that holds the largest PutObject's pieces (at
-// most 1,023), one tree always ready, four workers, the race on.
+// most 1,023), sixteen trees ready, sixteen workers, the race on.
 func TestConfigDefaults(t *testing.T) {
 	c := minimalConfig()
 	if err := c.Check(); err != nil {
 		t.Fatal(err)
 	}
-	if c.PieceTree != 1023 || c.PieceAhead != 1023 || c.PieceWorkers != 4 || c.EntryTree != 16 {
+	if c.PieceTree != 1023 || c.PieceAhead != 16*1023 || c.PieceWorkers != 16 || c.EntryTree != 1023 || c.HoldAhead != 16384 {
 		t.Fatalf("piece_tree %d piece_ahead %d piece_workers %d entry_tree %d", c.PieceTree, c.PieceAhead, c.PieceWorkers, c.EntryTree)
 	}
 	if c.Race.Off || c.Race.WindowSeconds != 3600 || c.Race.TickSeconds != 10 {
