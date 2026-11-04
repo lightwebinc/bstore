@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"errors"
 	"math/rand/v2"
@@ -164,5 +165,75 @@ func TestIncrementalWalksBounded(t *testing.T) {
 	p.inc.forget(root(0), nil)
 	if len(p.inc.wfifo) != maxRoots-1 {
 		t.Fatal("forget left the walk in the order")
+	}
+}
+
+// A piece that reaches its walk ahead of the one the walk waits for, with
+// the walk's own buffer full, is served to the walk from the pieces kept
+// for it, not read back from the store; the kept pieces stay within their
+// bound and go when the root is decided.
+func TestIncrementalKeepsPiecesAheadOfTheWalk(t *testing.T) {
+	content := make([]byte, 4*storerec.BlobSize)
+	for i := range content {
+		content[i] = byte(i / storerec.BlobSize)
+	}
+	b, err := storerec.Build(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := backend.OpenNative(t.TempDir(), "http://x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &Provider{store: st, inc: newIncremental(), cfg: &Config{Data: t.TempDir()}}
+	objs := b.Objects() // the root, then the four blobs
+	if len(objs) != 5 {
+		t.Fatalf("%d objects", len(objs))
+	}
+	put := func(o []byte) [32]byte {
+		h := sha256.Sum256(o)
+		if err := st.Put(h, o); err != nil {
+			t.Fatal(err)
+		}
+		p.arrived(h, o, b.RootHash, true)
+		return h
+	}
+	put(objs[0])
+	put(objs[4]) // the walk's own buffer takes it
+	put(objs[3])
+	h2 := put(objs[2])
+	// Gone from the store: only the pieces kept can serve them now.
+	for _, o := range objs[2:4] {
+		if err := st.Delete(sha256.Sum256(o)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if p.inc.recentLen == 0 || p.inc.recentLen > recentBytes {
+		t.Fatalf("%d bytes kept", p.inc.recentLen)
+	}
+	put(objs[1])
+	c, err := p.walk(b.RootHash, false).inc.Result()
+	if err != nil || c == nil {
+		t.Fatalf("the walk did not finish from the pieces kept: %v", err)
+	}
+	if _, ok := p.inc.recent[h2]; ok {
+		t.Fatal("a piece the walk read is still kept")
+	}
+	p.inc.mu.Lock()
+	p.inc.keepRecent(sha256.Sum256([]byte("x")), b.RootHash, []byte("x"))
+	p.inc.mu.Unlock()
+	p.inc.forget(b.RootHash, c.Blobs)
+	if len(p.inc.recent) != 0 || len(p.inc.rfifo) != 0 || p.inc.recentLen != 0 {
+		t.Fatalf("forget left %d pieces, %d bytes", len(p.inc.recent), p.inc.recentLen)
+	}
+	// The bound: kept pieces no walk reads are dropped oldest first.
+	for i := range 40 {
+		o := bytes.Repeat([]byte{byte(i)}, storerec.BlobSize)
+		p.inc.mu.Lock()
+		p.inc.keepRecent(sha256.Sum256(o), b.RootHash, o)
+		p.inc.mu.Unlock()
+		if p.inc.recentLen > recentBytes || len(p.inc.rfifo) != len(p.inc.recent) {
+			t.Fatalf("%d bytes, %d in order, %d kept", p.inc.recentLen, len(p.inc.rfifo), len(p.inc.recent))
+		}
 	}
 }
