@@ -65,17 +65,20 @@ type completedRec struct {
 	SHA256   string `json:"sha256"`
 }
 
-// partRecord is a part held. Dir names the directory its blob files are
-// in, Blobs and Segs their hashes and segment subtree roots (hex); File
-// names the one file a part no object can be linked through is kept in; a
-// record with neither is a part kept at partPath, as before blobs.
+// partRecord is a part held. MD5 or SHA256 is the ETag it was given (hex;
+// MD5 with etag_md5, and in every record written before SHA-256 ETags).
+// Dir names the directory its blob files are in, Blobs and Segs their
+// hashes and segment subtree roots (hex); File names the one file a part
+// no object can be linked through is kept in; a record with neither is a
+// part kept at partPath, as before blobs.
 type partRecord struct {
-	Size  int64    `json:"size"`
-	MD5   string   `json:"md5"`
-	Dir   string   `json:"dir,omitempty"`
-	File  string   `json:"file,omitempty"`
-	Blobs []string `json:"blobs,omitempty"`
-	Segs  []string `json:"segs,omitempty"`
+	Size   int64    `json:"size"`
+	MD5    string   `json:"md5,omitempty"`
+	SHA256 string   `json:"sha256,omitempty"`
+	Dir    string   `json:"dir,omitempty"`
+	File   string   `json:"file,omitempty"`
+	Blobs  []string `json:"blobs,omitempty"`
+	Segs   []string `json:"segs,omitempty"`
 
 	gen   uint64 // which record of the part this is, in this process
 	fresh bool   // its blobs were hashed by this process
@@ -325,6 +328,9 @@ func (s *Server) uploadPart(ctx context.Context, w http.ResponseWriter, r *http.
 		return e
 	}
 	defer bd.hashes.sync()
+	if !s.cfg.ETagMD5 {
+		bd.hashes.needSHA256()
+	}
 	part, pw, closed, err := up.openPart(n, bd.length)
 	if err != nil {
 		return errNoSuchUpload
@@ -348,8 +354,11 @@ func (s *Server) uploadPart(ctx context.Context, w http.ResponseWriter, r *http.
 	if e := bd.check(); e != nil {
 		return e
 	}
-	md5h := bd.hashes.md5Hex()
-	part.fill(bd.hashes.n, md5h, hashes, segs)
+	if s.cfg.ETagMD5 {
+		part.fill(bd.hashes.n, bd.hashes.md5Hex(), "", hashes, segs)
+	} else {
+		part.fill(bd.hashes.n, "", bd.hashes.sha256Hex(), hashes, segs)
+	}
 	// From here keep owns the part's files.
 	kept = true
 	if e := up.keep(n, part, pw.syncs(), s.cfg.Limits.MaxUpload); e != nil {
@@ -357,7 +366,7 @@ func (s *Server) uploadPart(ctx context.Context, w http.ResponseWriter, r *http.
 	}
 	s.metrics.add("bstore_s3d_part_bytes_total", bd.hashes.n)
 	bd.hashes.responseHeaders(w.Header())
-	w.Header().Set("ETag", `"`+md5h+`"`)
+	w.Header().Set("ETag", `"`+part.etag()+`"`)
 	w.WriteHeader(http.StatusOK)
 	return nil
 }
@@ -515,32 +524,13 @@ func (s *Server) completeUpload(ctx context.Context, w http.ResponseWriter, r *h
 			up.mu.Unlock()
 		}
 	}()
-	var md5s [][]byte
-	var names []int
-	var recs []partRecord
-	var total int64
-	prev := 0
 	up.mu.Lock()
 	up.loadParts()
 	held := maps.Clone(up.parts)
 	up.mu.Unlock()
-	for i, p := range req.Parts {
-		if p.PartNumber <= prev {
-			return &s3Error{"InvalidPartOrder", "The list of parts was not in ascending order. The parts list must be specified in order by part number.", http.StatusBadRequest}
-		}
-		prev = p.PartNumber
-		rec, ok := held[p.PartNumber]
-		if !ok || strings.Trim(p.ETag, `"`) != rec.MD5 {
-			return &s3Error{"InvalidPart", "One or more of the specified parts could not be found. The part may not have been uploaded, or the specified entity tag may not match the part's entity tag.", http.StatusBadRequest}
-		}
-		if i < len(req.Parts)-1 && rec.Size < minPart {
-			return &s3Error{"EntityTooSmall", "Your proposed upload is smaller than the minimum allowed object size.", http.StatusBadRequest}
-		}
-		m, _ := hex.DecodeString(rec.MD5)
-		md5s = append(md5s, m)
-		names = append(names, p.PartNumber)
-		recs = append(recs, rec)
-		total += rec.Size
+	names, recs, total, e := pickParts(req.Parts, held)
+	if e != nil {
+		return e
 	}
 	if total > s.cfg.Limits.MaxUpload {
 		return errTooLarge
@@ -603,7 +593,7 @@ func (s *Server) completeUpload(ctx context.Context, w http.ResponseWriter, r *h
 	if staged.Size != uint64(total) {
 		return fail(&s3Error{"InvalidPart", "A part changed on disk.", http.StatusBadRequest})
 	}
-	etag := partETag(md5s)
+	etag := uploadETag(s.cfg.ETagMD5, recs, staged.ContentHash)
 	rec, e := s.publishPut(ctx, a, b, key, up.ContentType, up.Meta, &etag, publish.Object{Root: staged.Root, Size: staged.Size,
 		ContentHash: staged.ContentHash, ProofRoot: staged.ProofRoot, Closure: publish.StoreClosure{Store: s.store, Manifest: staged.Manifest, Staged: true}})
 	scheme := "http"
@@ -634,6 +624,29 @@ func (s *Server) completeUpload(ctx context.Context, w http.ResponseWriter, r *h
 	finish(completeResult{NS: s3NS, Location: location, Bucket: b.name, Key: key,
 		ETag: `"` + etag + `"`, ChecksumSHA256: base64Std(rec.Entry.ContentHash[:]), ChecksumType: "FULL_OBJECT"})
 	return nil
+}
+
+// pickParts matches a completion's parts, in order, to the parts held by
+// the ETags they were given: their numbers, records and total size.
+func pickParts(parts []completePart, held map[int]partRecord) (names []int, recs []partRecord, total int64, e *s3Error) {
+	prev := 0
+	for i, p := range parts {
+		if p.PartNumber <= prev {
+			return nil, nil, 0, &s3Error{"InvalidPartOrder", "The list of parts was not in ascending order. The parts list must be specified in order by part number.", http.StatusBadRequest}
+		}
+		prev = p.PartNumber
+		rec, ok := held[p.PartNumber]
+		if !ok || strings.Trim(p.ETag, `"`) != rec.etag() {
+			return nil, nil, 0, &s3Error{"InvalidPart", "One or more of the specified parts could not be found. The part may not have been uploaded, or the specified entity tag may not match the part's entity tag.", http.StatusBadRequest}
+		}
+		if i < len(parts)-1 && rec.Size < minPart {
+			return nil, nil, 0, &s3Error{"EntityTooSmall", "Your proposed upload is smaller than the minimum allowed object size.", http.StatusBadRequest}
+		}
+		names = append(names, p.PartNumber)
+		recs = append(recs, rec)
+		total += rec.Size
+	}
+	return names, recs, total, nil
 }
 
 // assemble stages the parts named, in order, as one object: from the

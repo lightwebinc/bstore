@@ -41,11 +41,15 @@ type bodyHashes struct {
 	synced  bool
 }
 
-// newBodyHashes computes MD5 (the ETag), SHA-256 when the payload hash is
-// signed, and each flexible checksum the request declares in a header, in
-// x-amz-trailer, or by x-amz-sdk-checksum-algorithm.
-func newBodyHashes(h http.Header, trailer string) *bodyHashes {
-	b := &bodyHashes{md5: md5.New(), sums: map[string]hash.Hash{}}
+// newBodyHashes computes MD5 when wantMD5 (an MD5 ETag, or a Content-MD5
+// to check), SHA-256 when the payload hash is signed, and each flexible
+// checksum the request declares in a header, in x-amz-trailer, or by
+// x-amz-sdk-checksum-algorithm.
+func newBodyHashes(h http.Header, trailer string, wantMD5 bool) *bodyHashes {
+	b := &bodyHashes{sums: map[string]hash.Hash{}}
+	if wantMD5 {
+		b.md5 = md5.New()
+	}
 	want := func(name string) {
 		name = strings.ToLower(strings.TrimSpace(name))
 		if f, ok := checksumAlgos[name]; ok && b.sums[name] == nil {
@@ -100,11 +104,7 @@ func (b *bodyHashes) Write(p []byte) (int, error) {
 
 // newSums computes only the flexible checksums h declares: a completed
 // upload's whole-object checksums, where no MD5 is needed.
-func newSums(h http.Header) *bodyHashes {
-	b := newBodyHashes(h, "")
-	b.md5 = nil
-	return b
-}
+func newSums(h http.Header) *bodyHashes { return newBodyHashes(h, "", false) }
 
 // any reports whether there is a digest to compute.
 func (b *bodyHashes) any() bool { return len(b.all()) > 0 }
@@ -147,6 +147,24 @@ func (b *bodyHashes) reader(r io.Reader) io.Reader { return io.TeeReader(r, b) }
 
 func (b *bodyHashes) md5Hex() string { b.sync(); return hex.EncodeToString(b.md5.Sum(nil)) }
 
+// needSHA256 adds a SHA-256 of the body when none is computed already (a
+// part's ETag when there is no MD5). Before the first write.
+func (b *bodyHashes) needSHA256() {
+	if b.sha256 == nil && b.sums["sha256"] == nil {
+		b.sha256 = sha256.New()
+	}
+}
+
+// sha256Hex is the body's SHA-256, after needSHA256.
+func (b *bodyHashes) sha256Hex() string {
+	b.sync()
+	h := b.sha256
+	if h == nil {
+		h = b.sums["sha256"]
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 // check holds each declared checksum, from the headers or the trailers, to
 // the body: nil, or the S3 error.
 func (b *bodyHashes) check(h http.Header, trailers map[string]string) *s3Error {
@@ -177,14 +195,22 @@ func (b *bodyHashes) responseHeaders(w http.Header) {
 	}
 }
 
-// partETag is S3's multipart ETag: the MD5 of the parts' MD5s, a hyphen
-// and the number of parts.
-func partETag(md5s [][]byte) string {
+// uploadETag is a completed upload's ETag: with MD5 ETags, S3's multipart
+// ETag, the MD5 of the parts' MD5s, a hyphen and the number of parts;
+// otherwise, or when a part was kept without an MD5, the content hash.
+func uploadETag(etagMD5 bool, recs []partRecord, contentHash [32]byte) string {
+	if !etagMD5 {
+		return hex.EncodeToString(contentHash[:])
+	}
 	h := md5.New()
-	for _, m := range md5s {
+	for _, rec := range recs {
+		m, err := hex.DecodeString(rec.MD5)
+		if err != nil || len(m) != md5.Size {
+			return hex.EncodeToString(contentHash[:])
+		}
 		h.Write(m)
 	}
-	return hex.EncodeToString(h.Sum(nil)) + "-" + itoa(len(md5s))
+	return hex.EncodeToString(h.Sum(nil)) + "-" + itoa(len(recs))
 }
 
 func itoa(n int) string {

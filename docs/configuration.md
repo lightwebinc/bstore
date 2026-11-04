@@ -196,7 +196,7 @@ time.
 | `run` | `-config FILE` |
 
 The configuration's keys: `data`, `listen`, `tls_cert`, `tls_key`,
-`region`, `domain`, `chain`, `node`, `settle`, `rpc_user`, `rpc_pass`,
+`etag_md5`, `region`, `domain`, `chain`, `node`, `settle`, `rpc_user`, `rpc_pass`,
 `arcade_key`, `headers`, `headers_token`, `woc_key`, `woc_rate`, `hosts`,
 `facade`, `providers`, `quorum`, `ca`, `fetch_private`, `identities`,
 `access_keys`, `buckets`, `bounty`, `hold_ahead`, `limits.*`,
