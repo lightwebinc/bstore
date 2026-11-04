@@ -34,6 +34,11 @@ type Config struct {
 	Listen  string `json:"listen"`
 	TLSCert string `json:"tls_cert,omitempty"`
 	TLSKey  string `json:"tls_key,omitempty"`
+	// ETagMD5 makes ETags S3's MD5s (a part's MD5; the MD5 of the parts'
+	// MD5s for a multipart upload), at the cost of an MD5 over every body.
+	// Off, an object's ETag is its content hash (its SHA-256, what
+	// x-amz-checksum-sha256 carries) and a part's its SHA-256.
+	ETagMD5 bool `json:"etag_md5,omitempty"`
 	// Region is the SigV4 region clients sign for; Domain, when set, also
 	// serves virtual-host addressing (<bucket>.<domain>).
 	Region string `json:"region"`

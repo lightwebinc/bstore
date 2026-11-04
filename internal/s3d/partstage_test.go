@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/md5"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -63,8 +64,15 @@ func (r *mpRig) create() *upload {
 	return up
 }
 
-// put sends part n as uploadPart keeps it, written in uneven pieces.
+// put sends part n as uploadPart keeps it, written in uneven pieces, with
+// an MD5 ETag.
 func (r *mpRig) put(up *upload, n int, content []byte) {
+	r.t.Helper()
+	r.putETag(up, n, content, true)
+}
+
+// putETag is put with the ETag of either mode: the MD5 or the SHA-256.
+func (r *mpRig) putETag(up *upload, n int, content []byte, etagMD5 bool) {
 	r.t.Helper()
 	part, pw, closed, err := up.openPart(n, int64(len(content)))
 	if err != nil {
@@ -82,8 +90,13 @@ func (r *mpRig) put(up *upload, n int, content []byte) {
 	if err != nil {
 		r.t.Fatal(err)
 	}
-	sum := md5.Sum(content)
-	part.fill(int64(len(content)), hex.EncodeToString(sum[:]), hashes, segs)
+	if etagMD5 {
+		sum := md5.Sum(content)
+		part.fill(int64(len(content)), hex.EncodeToString(sum[:]), "", hashes, segs)
+	} else {
+		sum := sha256.Sum256(content)
+		part.fill(int64(len(content)), "", hex.EncodeToString(sum[:]), hashes, segs)
+	}
 	if e := up.keep(n, part, pw, 1<<40); e != nil {
 		r.t.Fatal(e)
 	}
@@ -600,7 +613,7 @@ func (r *mpRig) end(up *upload, n int, content []byte, part partRecord, pw partS
 		r.t.Fatal(err)
 	}
 	sum := md5.Sum(content)
-	part.fill(int64(len(content)), hex.EncodeToString(sum[:]), hashes, segs)
+	part.fill(int64(len(content)), hex.EncodeToString(sum[:]), "", hashes, segs)
 	if e := up.keep(n, part, pw, 1<<40); e != nil {
 		r.t.Fatal(e)
 	}

@@ -166,11 +166,13 @@ type initiateMultipart struct {
 }
 
 type completeMultipart struct {
-	XMLName xml.Name `xml:"CompleteMultipartUpload"`
-	Parts   []struct {
-		PartNumber int    `xml:"PartNumber"`
-		ETag       string `xml:"ETag"`
-	} `xml:"Part"`
+	XMLName xml.Name       `xml:"CompleteMultipartUpload"`
+	Parts   []completePart `xml:"Part"`
+}
+
+type completePart struct {
+	PartNumber int    `xml:"PartNumber"`
+	ETag       string `xml:"ETag"`
 }
 
 type completeResult struct {

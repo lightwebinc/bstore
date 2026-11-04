@@ -411,13 +411,23 @@ func (up *upload) openPart(n int, size int64) (part partRecord, sink partSink, c
 	return part, sink, closed, nil
 }
 
-// fill completes a part's record once its bytes are written.
-func (p *partRecord) fill(size int64, md5h string, hashes, segs [][32]byte) {
-	p.Size, p.MD5 = size, md5h
+// fill completes a part's record once its bytes are written: its size,
+// the digest its ETag is (md5h or sha), its blobs.
+func (p *partRecord) fill(size int64, md5h, sha string, hashes, segs [][32]byte) {
+	p.Size, p.MD5, p.SHA256 = size, md5h, sha
 	for i := range hashes {
 		p.Blobs = append(p.Blobs, hex.EncodeToString(hashes[i][:]))
 		p.Segs = append(p.Segs, hex.EncodeToString(segs[i][:]))
 	}
+}
+
+// etag is the ETag the part was given: its MD5 when one was computed,
+// else its SHA-256.
+func (p partRecord) etag() string {
+	if p.MD5 != "" {
+		return p.MD5
+	}
+	return p.SHA256
 }
 
 // discard removes a part's files.

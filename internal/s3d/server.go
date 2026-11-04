@@ -686,7 +686,7 @@ func (s *Server) objectOp(ctx context.Context, w http.ResponseWriter, r *http.Re
 			}
 			// Not replay-cached: a part publishes nothing, and a part sent
 			// again only rewrites itself (a completion names each part's
-			// MD5, so a part swapped by a replay is refused there).
+			// ETag, so a part swapped by a replay is refused there).
 			return "UploadPart", s.uploadPart(ctx, w, r, a, b, key)
 		}
 		if e := checkSub(r, nil); e != nil {

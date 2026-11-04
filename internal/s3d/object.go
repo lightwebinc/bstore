@@ -462,7 +462,8 @@ func (s *Server) openBody(r *http.Request, a *Auth, max int64) (*body, *s3Error)
 			return nil, invalidArgument("x-amz-sdk-checksum-algorithm is not one this gateway checks")
 		}
 	}
-	bd.hashes = newBodyHashes(r.Header, trailer)
+	bd.hashes = newBodyHashes(r.Header, trailer, s.cfg.ETagMD5 || md5want != nil)
+	payloadSigned := false
 	if chunked {
 		signed := a.Payload == streamSigned || a.Payload == streamSignedT
 		withTrailer := a.Payload == streamSignedT || a.Payload == streamUnsignT
@@ -478,7 +479,7 @@ func (s *Server) openBody(r *http.Request, a *Auth, max int64) (*body, *s3Error)
 		raw = bd.chunks
 	} else {
 		raw = io.LimitReader(raw, length)
-		if a.Payload != unsigned {
+		if payloadSigned = a.Payload != unsigned; payloadSigned {
 			bd.hashes.sha256 = sha256.New()
 		}
 	}
@@ -497,7 +498,7 @@ func (s *Server) openBody(r *http.Request, a *Auth, max int64) (*body, *s3Error)
 				}
 			}
 		}
-		if bd.hashes.sha256 != nil && hex.EncodeToString(bd.hashes.sha256.Sum(nil)) != a.Payload {
+		if payloadSigned && hex.EncodeToString(bd.hashes.sha256.Sum(nil)) != a.Payload {
 			return errSHA256Mismatch
 		}
 		if md5want != nil && !bytes.Equal(md5want, bd.hashes.md5.Sum(nil)) {
@@ -570,7 +571,10 @@ func (s *Server) putObject(ctx context.Context, w http.ResponseWriter, r *http.R
 	if e := bd.check(); e != nil {
 		return e
 	}
-	etag := bd.hashes.md5Hex()
+	etag := hex.EncodeToString(staged.ContentHash[:])
+	if s.cfg.ETagMD5 {
+		etag = bd.hashes.md5Hex()
+	}
 	k := writeKey(b.name, a.Key.Identity, key, ct, meta, etag, staged.Root, staged.Size)
 	entry, e := s.oneWrite(ctx, k, func() (*storerec.Entry, *s3Error) {
 		release, e := acquire(s.writes)
