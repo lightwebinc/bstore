@@ -83,7 +83,7 @@ func CheckPieceCarrier(ctx context.Context, beef []byte, bucket string, headers 
 	}
 	// 3. the record's own rules.
 	rec, _ := pushdrop.FirstPush(*out.LockingScript)
-	p, err := DecodePiece(rec)
+	p, err := decodePieceInPlace(rec)
 	if err != nil {
 		return nil, err
 	}
