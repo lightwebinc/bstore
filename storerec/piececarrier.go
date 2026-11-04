@@ -81,7 +81,12 @@ func CheckPieceCarrier(ctx context.Context, beef []byte, bucket string, headers 
 	if err != nil {
 		return nil, err
 	}
-	// 3. the record's own rules.
+	// The funding tree's txid, which ReadWire hashed from its bytes, cached
+	// the same way for the proof check (Mined), which would otherwise
+	// serialize and hash the tree again.
+	tree.Tx.SetTxHash(&tree.Txid)
+	// 3. the record's own rules. The record is read in place: the piece is
+	// a slice of the locking script, not a copy (decodePieceInPlace).
 	rec, _ := pushdrop.FirstPush(*out.LockingScript)
 	p, err := decodePieceInPlace(rec)
 	if err != nil {
