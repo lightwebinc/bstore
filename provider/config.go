@@ -167,6 +167,10 @@ type Terms struct {
 	MaxRenewSeconds uint64 `json:"max_renew_seconds"`
 }
 
+// maxVerifyWorkers bounds limits.verify_workers: each verification reads
+// one 4 MiB blob at a time and its walk keeps at most 4 MiB ahead.
+const maxVerifyWorkers = 64
+
 // Limits are the routes' hardening; zero takes the default.
 type Limits struct {
 	HandshakesPerSec        float64 `json:"handshakes_per_sec"`
@@ -185,6 +189,9 @@ type Limits struct {
 	FreePerWriterPerMin      float64 `json:"free_per_writer_per_min"`
 	// ChallengeWorkers bounds the challenges answered at once.
 	ChallengeWorkers int `json:"challenge_workers"`
+	// VerifyWorkers bounds the closures verified at once for entries; the
+	// decisions stay one root at a time, in arrival order.
+	VerifyWorkers int `json:"verify_workers"`
 	// RenewalsPerRootPerHour bounds paid renewals of one root.
 	RenewalsPerRootPerHour float64 `json:"renewals_per_root_per_hour"`
 	// SubmitsPerAddrPerSec and SubmitBurst bound submissions from one
@@ -293,6 +300,9 @@ func (c *Config) defaults() {
 	if l.ChallengeWorkers == 0 {
 		l.ChallengeWorkers = 4
 	}
+	if l.VerifyWorkers == 0 {
+		l.VerifyWorkers = 4
+	}
 	if l.ObjectReaders == 0 {
 		l.ObjectReaders = 32
 	}
@@ -395,6 +405,9 @@ func (c *Config) Check() error {
 	}
 	if c.Policy.MaxObject > storerec.MaxSize {
 		return errors.New("policy.max_object is above 2^43")
+	}
+	if c.Limits.VerifyWorkers < 1 || c.Limits.VerifyWorkers > maxVerifyWorkers {
+		return fmt.Errorf("limits.verify_workers is 1 to %d", maxVerifyWorkers)
 	}
 	t := c.Terms
 	if t.FreeC < 30 || t.FreeC > storerec.MaxC {
