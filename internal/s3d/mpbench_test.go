@@ -72,7 +72,7 @@ func TestMultipartThroughput(t *testing.T) {
 		sem <- struct{}{}
 		wg.Go(func() {
 			defer func() { <-sem }()
-			bh := newBodyHashes(trailer, "x-amz-checksum-crc64nvme")
+			bh := newBodyHashes(trailer, "x-amz-checksum-crc64nvme", true)
 			src := bh.reader(bytes.NewReader(parts[i]))
 			if legacy {
 				legacyPart(t, up, i+1, src, bh)
@@ -127,7 +127,7 @@ func (r *mpRig) putFrom(up *upload, n int, size int64, src io.Reader, bh *bodyHa
 	if err != nil {
 		r.t.Fatal(err)
 	}
-	part.fill(bh.n, bh.md5Hex(), hashes, segs)
+	part.fill(bh.n, bh.md5Hex(), "", hashes, segs)
 	if e := up.keep(n, part, pw.syncs(), 1<<40); e != nil {
 		r.t.Fatal(e)
 	}
@@ -177,7 +177,7 @@ func legacyComplete(t *testing.T, r *mpRig, up *upload, names []int, total uint6
 	for _, n := range names {
 		files = append(files, up.partPath(n))
 	}
-	sums := newBodyHashes(http.Header{}, "")
+	sums := newBodyHashes(http.Header{}, "", false)
 	defer sums.sync()
 	staged, err := r.s.store.Stage(context.Background(), sums.reader(&partsReader{files: files}), total)
 	if err != nil {
