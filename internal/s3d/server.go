@@ -137,6 +137,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Server, error) {
 	}
 	d := &publish.Delivery{Facade: cfg.Facade, Hosts: cfg.Hosts, Providers: cfg.Providers, HTTP: hostHTTP, Quorum: cfg.Quorum,
 		Observe: s.metrics.observe}
+	publish.ObserveCommits(s.metrics.observe)
 	for _, name := range cfg.Identities {
 		p, err := publish.Open(ctx, publish.Config{Dir: cfg.IdentityDir(name), OutboxMax: cfg.OutboxBytes,
 			Chain: v.Chain, Known: v.Known, Tip: v.Tip, Settler: v.Settler, Accept: cfg.AcceptPolicy(), Status: status,
@@ -291,7 +292,10 @@ func (s *Server) Start(ctx context.Context) error {
 	}()
 	if s.cfg.MetricsListen != "" {
 		mux := http.NewServeMux()
-		mux.HandleFunc("/metrics", s.metrics.serve)
+		mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+			s.commitCounts()
+			s.metrics.serve(w, r)
+		})
 		s.msrv = &http.Server{Addr: s.cfg.MetricsListen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 		mln, err := net.Listen("tcp", s.cfg.MetricsListen)
 		if err != nil {
@@ -764,4 +768,14 @@ func (s *Server) remittedAlarm() {
 	}
 	s.metrics.set("bstore_s3d_races_remitted_stale", int64(n))
 	s.metrics.set("bstore_s3d_race_remitted_oldest_seconds", int64(oldest.Seconds()))
+}
+
+// commitCounts sets the counters of the synced writes' commits: how many,
+// and the files and device syncs they covered (files over commits is the
+// files a commit shares; syncs over puts the syncs a put costs).
+func (s *Server) commitCounts() {
+	c := publish.Commits()
+	s.metrics.set("bstore_publish_commits_total", c.Commits)
+	s.metrics.set("bstore_publish_commit_files_total", c.Files)
+	s.metrics.set("bstore_publish_commit_syncs_total", c.Syncs)
 }
