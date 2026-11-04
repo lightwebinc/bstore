@@ -141,7 +141,7 @@ func (s *Server) replayed(w http.ResponseWriter, r *http.Request, a *Auth, f fun
 	e, done, busy := s.replay.begin(a.Seed, a.Key.ID, until)
 	switch {
 	case e == nil:
-		return errSlowDown
+		return errSlowReplay
 	case busy:
 		return &s3Error{"OperationAborted", "A request with this signature is in progress.", http.StatusConflict}
 	case done:

@@ -98,6 +98,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Server, error) {
 		reads: make(chan struct{}, cfg.Limits.Reads), stages: make(chan struct{}, cfg.Limits.Stages),
 		lookups: make(chan struct{}, cfg.Limits.Lookups)}
 	s.limits = newKeyLimits(cfg.Limits.RequestsPerSec, cfg.Limits.Burst, opts.Now)
+	nameSlots(s)
 	if err := os.MkdirAll(cfg.Data, 0o700); err != nil {
 		return nil, err
 	}
@@ -452,6 +453,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 	fail := func(e *s3Error) {
 		status = e.Status
+		if e.Code == "SlowDown" {
+			s.metrics.add(fmt.Sprintf("bstore_s3d_slowdown_total{reason=%q}", slowReason(e)), 1)
+		}
 		writeError(w, r, e, reqID)
 	}
 	if r.URL.Path == "/healthz" && r.Method == http.MethodGet && r.URL.RawQuery == "" {
@@ -475,7 +479,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.limits.allow(a.Key.ID) {
-		fail(errSlowDown)
+		fail(errSlowKeyRate)
 		return
 	}
 	rw := &statusWriter{ResponseWriter: w}
@@ -721,14 +725,30 @@ func (s *Server) objectOp(ctx context.Context, w http.ResponseWriter, r *http.Re
 }
 
 // acquire takes a slot of sem or answers SlowDown at once: a full gateway
-// sheds load rather than queueing it.
+// sheds load rather than queueing it. The SlowDown names the bound (see
+// semErrors).
 func acquire(sem chan struct{}) (func(), *s3Error) {
 	select {
 	case sem <- struct{}{}:
 		return func() { <-sem }, nil
 	default:
+		if e, ok := semErrors.Load(sem); ok {
+			return nil, e.(*s3Error)
+		}
 		return nil, errSlowDown
 	}
+}
+
+// semErrors maps each server's slot channels to the SlowDown that names
+// them, set when the server is made.
+var semErrors sync.Map
+
+func nameSlots(s *Server) {
+	semErrors.Store(s.writes, errSlowWrites)
+	semErrors.Store(s.parts, errSlowParts)
+	semErrors.Store(s.reads, errSlowReads)
+	semErrors.Store(s.stages, errSlowStages)
+	semErrors.Store(s.lookups, errSlowLookups)
 }
 
 // remittedAlarm sets the gauges of races remitted before mining whose
