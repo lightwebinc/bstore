@@ -191,6 +191,9 @@ type Limits struct {
 	// address (the plane's listener, or a writer's unicast).
 	SubmitsPerAddrPerSec float64 `json:"submits_per_addr_per_sec"`
 	SubmitBurst          float64 `json:"submit_burst"`
+	// InFlightPerAddr bounds the submissions and uploads one address has
+	// read or processed at once (a feeder skips it, as it skips the rate).
+	InFlightPerAddr int `json:"in_flight_per_addr"`
 	// ObjectReaders bounds the object reads served at once;
 	// ObjectReadsPerAddrPerSec and ObjectReadBurst one address's reads.
 	ObjectReaders            int     `json:"object_readers"`
@@ -292,6 +295,9 @@ func (c *Config) defaults() {
 	}
 	if l.ChallengeWorkers == 0 {
 		l.ChallengeWorkers = 4
+	}
+	if l.InFlightPerAddr == 0 {
+		l.InFlightPerAddr = 4
 	}
 	if l.ObjectReaders == 0 {
 		l.ObjectReaders = 32
@@ -432,6 +438,9 @@ func (c *Config) Check() error {
 		if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
 			return fmt.Errorf("feed_listen: %q is not a loopback address: submissions there skip the per-address budgets (name a remote bridge in feeders instead)", c.FeedListen)
 		}
+	}
+	if c.Limits.InFlightPerAddr < 1 {
+		return errors.New("limits.in_flight_per_addr is at least 1")
 	}
 	if c.TreeCount < 1 || c.TreeCount > 1023 {
 		return errors.New("tree_count is 1 to 1023")
