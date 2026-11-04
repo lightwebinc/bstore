@@ -415,7 +415,7 @@ elapsed  3.912s
 rate     1097.9 MB/s
 parts    67108864 bytes, 16 at a time
 etag     "9b...-64"
-crc64nvme Zm9vYmFyYmF6
+crc32c   Zm9vYg==
 $ bstore cp s3://example-photos-hmqzvtkwrx/albums/big.bin ./big.bin -endpoint https://s3.example.com -json
 {"op":"get","bucket":"example-photos-hmqzvtkwrx","key":"albums/big.bin","bytes":4294967296,...}
 $ bstore ls s3://example-photos-hmqzvtkwrx/albums/ -endpoint https://s3.example.com
@@ -430,8 +430,10 @@ path-style addressing, Signature Version 4, credentials from
 `~/.aws`, the endpoint from `-endpoint` or `AWS_ENDPOINT_URL`. The point
 is speed with timings: the body is never hashed before it moves. A request
 is signed with `UNSIGNED-PAYLOAD`, the checksum the gateway verifies
-(`-checksum crc64`, the cheap one; `sha256`; `none`) rides as a trailer
-over TLS, and a file above one part (`-part`, default 64 MiB) is a
+(`-checksum crc32c` by default: the SSE4.2 instruction on both ends, no
+visible cost; `crc64`, table-driven in Go, costs the gateway about 9% of
+its ingest CPU at 1.1 GB/s; `sha256`; `none`) rides as a trailer over
+TLS, and a file above one part (`-part`, default 64 MiB) is a
 multipart upload with `-conc` (default 16) parts in flight, each read from
 the file in place. A download is read in `-conc` ranges at once into the
 file. Over plain HTTP the SDK computes the checksum first, so measure

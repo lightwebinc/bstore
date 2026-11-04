@@ -12,6 +12,7 @@ import (
 	"encoding/pem"
 	"encoding/xml"
 	"fmt"
+	"hash/crc32"
 	"hash/crc64"
 	"io"
 	"net/http"
@@ -27,8 +28,8 @@ import (
 
 // fakeS3 is enough of S3 for the client: objects and multipart uploads in
 // memory, over TLS so the SDK sends its checksums as trailers, every body
-// decoded from aws-chunked and its CRC-64/NVME checked as the gateway
-// checks it. It records what it saw of each request's signing.
+// decoded from aws-chunked and its CRC32C (or CRC-64/NVME) checked as the
+// gateway checks it. It records what it saw of each request's signing.
 type fakeS3 struct {
 	t  *testing.T
 	mu sync.Mutex
@@ -40,12 +41,13 @@ type fakeS3 struct {
 	payloadHashes []string
 	trailers      int
 	partPuts      int
+	algorithms    map[string]int // bodies checked, by checksum algorithm
 }
 
 var crc64NVME = crc64.MakeTable(0x9a6c9329ac4bc9b5)
 
 func newFakeS3(t *testing.T) (*fakeS3, *httptest.Server, string) {
-	f := &fakeS3{t: t, objects: map[string][]byte{}, parts: map[string][]byte{}}
+	f := &fakeS3{t: t, objects: map[string][]byte{}, parts: map[string][]byte{}, algorithms: map[string]int{}}
 	srv := httptest.NewTLSServer(f)
 	t.Cleanup(srv.Close)
 	ca := filepath.Join(t.TempDir(), "ca.pem")
@@ -64,7 +66,13 @@ func (f *fakeS3) body(r *http.Request) ([]byte, error) {
 	if !strings.HasPrefix(r.Header.Get("Authorization"), "AWS4-HMAC-SHA256 ") {
 		return nil, fmt.Errorf("unsigned request")
 	}
-	want := r.Header.Get("x-amz-checksum-crc64nvme")
+	// The checksum: "crc32c" or "crc64nvme", from the header or the trailer.
+	alg, want := "", ""
+	for _, a := range []string{"crc32c", "crc64nvme"} {
+		if v := r.Header.Get("x-amz-checksum-" + a); v != "" {
+			alg, want = a, v
+		}
+	}
 	var data []byte
 	if strings.Contains(r.Header.Get("Content-Encoding"), "aws-chunked") {
 		br := bufio.NewReader(r.Body)
@@ -100,8 +108,8 @@ func (f *fakeS3) body(r *http.Request) ([]byte, error) {
 				break
 			}
 			k, v, _ := strings.Cut(line, ":")
-			if strings.EqualFold(k, "x-amz-checksum-crc64nvme") {
-				want = strings.TrimSpace(v)
+			if a, ok := strings.CutPrefix(strings.ToLower(k), "x-amz-checksum-"); ok && (a == "crc32c" || a == "crc64nvme") {
+				alg, want = a, strings.TrimSpace(v)
 				f.mu.Lock()
 				f.trailers++
 				f.mu.Unlock()
@@ -114,12 +122,24 @@ func (f *fakeS3) body(r *http.Request) ([]byte, error) {
 		}
 	}
 	if want == "" {
-		return nil, fmt.Errorf("no crc64nvme checksum on %s %s", r.Method, r.URL)
+		return nil, fmt.Errorf("no crc32c or crc64nvme checksum on %s %s", r.Method, r.URL)
 	}
-	if got := crc64b64(data); got != want {
-		return nil, fmt.Errorf("BadDigest: crc64nvme %s, want %s", got, want)
+	got := crc32cb64(data)
+	if alg == "crc64nvme" {
+		got = crc64b64(data)
 	}
+	if got != want {
+		return nil, fmt.Errorf("BadDigest: %s %s, want %s", alg, got, want)
+	}
+	f.mu.Lock()
+	f.algorithms[alg]++
+	f.mu.Unlock()
 	return data, nil
+}
+
+func crc32cb64(b []byte) string {
+	sum := crc32.Checksum(b, crc32.MakeTable(crc32.Castagnoli))
+	return base64.StdEncoding.EncodeToString([]byte{byte(sum >> 24), byte(sum >> 16), byte(sum >> 8), byte(sum)})
 }
 
 func crc64b64(b []byte) string {
@@ -157,7 +177,7 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.partPuts++
 		f.mu.Unlock()
 		w.Header().Set("ETag", etag(data))
-		w.Header().Set("x-amz-checksum-crc64nvme", crc64b64(data))
+		w.Header().Set("x-amz-checksum-crc32c", crc32cb64(data))
 		w.WriteHeader(200)
 	case r.Method == "PUT" && key != "":
 		data, err := f.body(r)
@@ -170,7 +190,7 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.objects[name] = data
 		f.mu.Unlock()
 		w.Header().Set("ETag", etag(data))
-		w.Header().Set("x-amz-checksum-crc64nvme", crc64b64(data))
+		w.Header().Set("x-amz-checksum-crc32c", crc32cb64(data))
 		w.Header().Set("x-amz-checksum-type", "FULL_OBJECT")
 		w.WriteHeader(200)
 	case r.Method == "POST" && q.Has("uploads"):
@@ -209,10 +229,10 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.mu.Unlock()
 		s := md5.Sum(md5s)
 		tag := fmt.Sprintf(`"%s-%d"`, hex.EncodeToString(s[:]), len(req.Parts))
-		w.Header().Set("x-amz-checksum-crc64nvme", crc64b64(whole))
+		w.Header().Set("x-amz-checksum-crc32c", crc32cb64(whole))
 		w.Header().Set("x-amz-checksum-type", "FULL_OBJECT")
-		fmt.Fprintf(w, `<CompleteMultipartUploadResult><Bucket>%s</Bucket><Key>%s</Key><ETag>%s</ETag><ChecksumCRC64NVME>%s</ChecksumCRC64NVME><ChecksumType>FULL_OBJECT</ChecksumType></CompleteMultipartUploadResult>`,
-			bucket, key, html(tag), crc64b64(whole))
+		fmt.Fprintf(w, `<CompleteMultipartUploadResult><Bucket>%s</Bucket><Key>%s</Key><ETag>%s</ETag><ChecksumCRC32C>%s</ChecksumCRC32C><ChecksumType>FULL_OBJECT</ChecksumType></CompleteMultipartUploadResult>`,
+			bucket, key, html(tag), crc32cb64(whole))
 	case (r.Method == "GET" || r.Method == "HEAD") && key != "":
 		f.mu.Lock()
 		data, ok := f.objects[name]
@@ -240,7 +260,7 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		w.Header().Set("x-amz-checksum-crc64nvme", crc64b64(data))
+		w.Header().Set("x-amz-checksum-crc32c", crc32cb64(data))
 		w.Header().Set("x-amz-checksum-type", "FULL_OBJECT")
 		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 		w.WriteHeader(200)
@@ -311,14 +331,14 @@ func TestS3Client(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("cp up: exit %d: %s%s", code, out, errs)
 	}
-	if !strings.Contains(out, "parts    5242880 bytes, 3 at a time") || !strings.Contains(out, "etag     \"") || !strings.Contains(out, "crc64nvme "+crc64b64(content)) {
+	if !strings.Contains(out, "parts    5242880 bytes, 3 at a time") || !strings.Contains(out, "etag     \"") || !strings.Contains(out, "crc32c   "+crc32cb64(content)) {
 		t.Fatalf("cp up printed:\n%s", out)
 	}
 	if !bytes.Equal(f.objects["photos/albums/big.bin"], content) {
 		t.Fatal("the object is not the file")
 	}
-	if f.partPuts != 3 || f.trailers != 3 {
-		t.Fatalf("%d parts put, %d trailers; want 3 and 3", f.partPuts, f.trailers)
+	if f.partPuts != 3 || f.trailers != 3 || f.algorithms["crc32c"] != 3 {
+		t.Fatalf("%d parts put, %d trailers, %v; want 3, 3 and crc32c", f.partPuts, f.trailers, f.algorithms)
 	}
 	for _, h := range f.payloadHashes {
 		if h != "UNSIGNED-PAYLOAD" && h != "STREAMING-UNSIGNED-PAYLOAD-TRAILER" {
@@ -336,7 +356,7 @@ func TestS3Client(t *testing.T) {
 	if err != nil || !bytes.Equal(got, content) {
 		t.Fatalf("downloaded %d bytes, equal %v (%v)", len(got), bytes.Equal(got, content), err)
 	}
-	if !strings.Contains(out, "bytes    "+strconv.Itoa(len(content))) || !strings.Contains(out, "crc64nvme "+crc64b64(content)) {
+	if !strings.Contains(out, "bytes    "+strconv.Itoa(len(content))) || !strings.Contains(out, "crc32c   "+crc32cb64(content)) {
 		t.Fatalf("cp down printed:\n%s", out)
 	}
 
@@ -346,7 +366,7 @@ func TestS3Client(t *testing.T) {
 	if code != 0 || !bytes.Equal(out2.Bytes(), content) {
 		t.Fatalf("cp to -: exit %d, %d bytes on stdout, equal %v; stderr: %s", code, out2.Len(), bytes.Equal(out2.Bytes(), content), errb.String())
 	}
-	if !strings.Contains(errb.String(), "bytes    "+strconv.Itoa(len(content))) || !strings.Contains(errb.String(), "crc64nvme "+crc64b64(content)) {
+	if !strings.Contains(errb.String(), "bytes    "+strconv.Itoa(len(content))) || !strings.Contains(errb.String(), "crc32c   "+crc32cb64(content)) {
 		t.Fatalf("cp to - printed on stderr:\n%s", errb.String())
 	}
 	out2.Reset()
@@ -380,6 +400,11 @@ func TestS3Client(t *testing.T) {
 		t.Fatalf("json result: %+v", res)
 	}
 
+	// -checksum crc64 still rides and verifies.
+	if out, errs, code = cli("cp", small, "s3://photos/albums/small64.txt", "-checksum", "crc64"); code != 0 || f.algorithms["crc64nvme"] != 1 {
+		t.Fatalf("cp -checksum crc64: exit %d, %v: %s%s", code, f.algorithms, out, errs)
+	}
+
 	// ls, rm, and the key gone.
 	out, errs, code = cli("ls", "s3://photos/albums/")
 	if code != 0 {
@@ -389,7 +414,7 @@ func TestS3Client(t *testing.T) {
 	for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
 		lines = append(lines, strings.Join(strings.Fields(l), " "))
 	}
-	if want := []string{strconv.Itoa(len(content)) + " 2026-11-04T00:00:00Z albums/big.bin", "15 2026-11-04T00:00:00Z albums/small.txt", "6291456 2026-11-04T00:00:00Z albums/stdin.bin"}; strings.Join(lines, "|") != strings.Join(want, "|") {
+	if want := []string{strconv.Itoa(len(content)) + " 2026-11-04T00:00:00Z albums/big.bin", "15 2026-11-04T00:00:00Z albums/small.txt", "15 2026-11-04T00:00:00Z albums/small64.txt", "6291456 2026-11-04T00:00:00Z albums/stdin.bin"}; strings.Join(lines, "|") != strings.Join(want, "|") {
 		t.Fatalf("ls printed:\n%s", out)
 	}
 	if out, errs, code = cli("rm", "s3://photos/albums/big.bin"); code != 0 {

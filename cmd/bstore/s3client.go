@@ -77,7 +77,9 @@ S3 flags:
   -insecure         trust any certificate
   -part SIZE        the part size (default 64MiB; K, M, G, Ki, Mi, Gi suffixes)
   -conc N           parts in flight at once (default 16)
-  -checksum ALG     crc64, sha256 or none (default crc64)
+  -checksum ALG     crc32c, crc64, sha256 or none (default crc32c: the SSE4.2
+                    instruction on both ends; crc64 is table-driven and costs
+                    the gateway about 9% of its ingest CPU)
   -json             the result as one JSON object on standard output
 
 Credentials: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, AWS_PROFILE, or
@@ -91,7 +93,7 @@ func (f *s3Flags) bind(fs *flag.FlagSet) {
 	fs.BoolVar(&f.insecure, "insecure", false, "trust any certificate")
 	fs.Var(&f.part, "part", "the part size")
 	fs.IntVar(&f.conc, "conc", 16, "parts in flight at once")
-	fs.StringVar(&f.checksum, "checksum", "crc64", "crc64, sha256 or none")
+	fs.StringVar(&f.checksum, "checksum", "crc32c", "crc32c, crc64, sha256 or none")
 	fs.BoolVar(&f.json, "json", false, "the result as JSON")
 }
 
@@ -144,6 +146,8 @@ func parseSize(v string) (int64, error) {
 // algorithm is the SDK's checksum algorithm for -checksum, "" for none.
 func (f *s3Flags) algorithm() (types.ChecksumAlgorithm, error) {
 	switch strings.ToLower(f.checksum) {
+	case "crc32c":
+		return types.ChecksumAlgorithmCrc32c, nil
 	case "crc64", "crc64nvme":
 		return types.ChecksumAlgorithmCrc64nvme, nil
 	case "sha256":
@@ -151,7 +155,7 @@ func (f *s3Flags) algorithm() (types.ChecksumAlgorithm, error) {
 	case "none", "":
 		return "", nil
 	}
-	return "", usage("-checksum %q: crc64, sha256 or none", f.checksum)
+	return "", usage("-checksum %q: crc32c, crc64, sha256 or none", f.checksum)
 }
 
 // client opens the S3 client: path style at -endpoint, SigV4 in -region,
@@ -221,7 +225,7 @@ type s3Result struct {
 	Conc      int      `json:"conc,omitempty"`
 	Multipart bool     `json:"multipart,omitempty"`
 	ETag      string   `json:"etag,omitempty"`
-	Checksums []string `json:"checksums,omitempty"` // "crc64nvme:<base64>"
+	Checksums []string `json:"checksums,omitempty"` // "crc32c:<base64>"
 }
 
 func newResult(op string, t s3Target, n int64, d time.Duration, f *s3Flags) *s3Result {
@@ -300,7 +304,8 @@ other s3://bucket/key. An upload
 above one part is a multipart upload, its parts sent -conc at a time; a
 download is read in -conc ranges at once. The body is never hashed before
 it is sent: the request is signed with UNSIGNED-PAYLOAD and the checksum
-(-checksum) rides as a trailer over TLS, checked by the gateway. Prints the
+(-checksum, CRC32C by default) rides as a trailer over TLS, checked by the
+gateway. Prints the
 bytes, the elapsed time, the rate, the ETag and the checksums the gateway
 returned.` + s3FlagsHelp
 
@@ -384,6 +389,7 @@ func s3Upload(ctx context.Context, c *s3.Client, stdin io.Reader, f *s3Flags, pa
 	r := newResult("put", t, size, time.Since(start), f)
 	r.Multipart = out.UploadID != ""
 	r.ETag = aws.ToString(out.ETag)
+	r.sum("crc32c", out.ChecksumCRC32C)
 	r.sum("crc64nvme", out.ChecksumCRC64NVME)
 	r.sum("sha256", out.ChecksumSHA256)
 	return r, nil
@@ -405,6 +411,7 @@ func s3Download(ctx context.Context, c *s3.Client, stdout io.Writer, f *s3Flags,
 		}
 		r := newResult("get", t, n, time.Since(start), f)
 		r.ETag = aws.ToString(out.ETag)
+		r.sum("crc32c", out.ChecksumCRC32C)
 		r.sum("crc64nvme", out.ChecksumCRC64NVME)
 		r.sum("sha256", out.ChecksumSHA256)
 		return r, nil
@@ -430,6 +437,7 @@ func s3Download(ctx context.Context, c *s3.Client, stdout io.Writer, f *s3Flags,
 	// ranged answers carry none.
 	if h, err := c.HeadObject(ctx, &s3.HeadObjectInput{Bucket: in.Bucket, Key: in.Key}); err == nil {
 		r.ETag = aws.ToString(h.ETag)
+		r.sum("crc32c", h.ChecksumCRC32C)
 		r.sum("crc64nvme", h.ChecksumCRC64NVME)
 		r.sum("sha256", h.ChecksumSHA256)
 	}
@@ -654,6 +662,7 @@ func benchPut(ctx context.Context, c *s3.Client, f *s3Flags, t s3Target, size in
 	r := newResult("put", t, size, time.Since(start), f)
 	r.Multipart = out.UploadID != ""
 	r.ETag = aws.ToString(out.ETag)
+	r.sum("crc32c", out.ChecksumCRC32C)
 	r.sum("crc64nvme", out.ChecksumCRC64NVME)
 	r.sum("sha256", out.ChecksumSHA256)
 	return r, nil
