@@ -241,8 +241,11 @@ type Provider struct {
 	fsrv    *http.Server
 	proxies []*net.IPNet
 	feeders []*net.IPNet
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
+	// ctx is the run, cancelled by Close; wg holds every goroutine of the
+	// run, so that Close returns once nothing of it is still writing.
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 // Init creates a provider's wallet under data and returns its identity
@@ -445,7 +448,7 @@ func (p *Provider) NewPayer() *producer.Payer { return p.newPayer() }
 // background work. It returns once the routes are served.
 func (p *Provider) Start(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
-	p.cancel = cancel
+	p.ctx, p.cancel = ctx, cancel
 	if err := p.recover(ctx); err != nil {
 		cancel()
 		return err
@@ -542,6 +545,22 @@ func (p *Provider) Start(ctx context.Context) error {
 		p.enqueue(r)
 	}
 	return nil
+}
+
+// spawn runs f on the run's context as a goroutine of the run: Close
+// cancels it and waits for it, as it does the worker and the background
+// pass. Work that writes under the data directory runs here, never on a
+// bare go statement, so that nothing is still writing after Close returns.
+func (p *Provider) spawn(f func(ctx context.Context)) {
+	ctx := p.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	p.wg.Add(1)
+	go func() {
+		defer p.wg.Done()
+		f(ctx)
+	}()
 }
 
 // Addr is the address the routes are served on.

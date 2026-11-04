@@ -124,7 +124,7 @@ func (p *Provider) frontAdvertise(ctx context.Context, root [32]byte, until uint
 		what = "renewal"
 	}
 	p.logf("root %s: the advertiser's %s %s adopted, expiry %d; published to the records topic", short(rootHex), what, short(rec.Txid), rec.Expiry)
-	go p.publishOutbox(context.Background())
+	p.spawn(p.publishOutbox)
 	return &backend.Advert{Txid: rec.Txid, Vout: rec.Vout, Expiry: rec.Expiry, BEEF: beef}, nil
 }
 
