@@ -203,6 +203,11 @@ type Limits struct {
 	Writes     int `json:"writes"`
 	PartWrites int `json:"part_writes"`
 	Reads      int `json:"reads"`
+	// PartWriters is how many part blobs are written to the disk at once,
+	// across every upload: parts in flight are hashed as they stream in
+	// and queue for a writer, so the drive sees this many streams, not one
+	// per part. Default 2.
+	PartWriters int `json:"part_writers"`
 	// Stages are put and copy bodies streaming in at once; Lookups the
 	// heads, gets and listings asking hosts at once.
 	Stages  int `json:"stages"`
@@ -248,6 +253,7 @@ func (l *Limits) defaults() {
 	// SDK transfer managers) is not refused at the door.
 	seti(&l.Writes, 256)
 	seti(&l.PartWrites, 64)
+	seti(&l.PartWriters, 2)
 	seti(&l.Reads, 32)
 	seti(&l.Stages, 64)
 	seti(&l.Lookups, 64)

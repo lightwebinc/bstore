@@ -26,8 +26,8 @@ import (
 // BSTORE_MP_BENCH_MODE "legacy" keeps each part in one file and stages the
 // object at completion by reading it, as the gateway did before parts were
 // kept as blobs; anything else is the gateway's path. BSTORE_MP_BENCH_SIZE
-// and BSTORE_MP_BENCH_PART (bytes) and BSTORE_MP_BENCH_CONC change the
-// shape.
+// and BSTORE_MP_BENCH_PART (bytes), BSTORE_MP_BENCH_CONC and
+// BSTORE_MP_BENCH_WRITERS (limits.part_writers) change the shape.
 func TestMultipartThroughput(t *testing.T) {
 	dir := os.Getenv("BSTORE_MP_BENCH_DIR")
 	if dir == "" {
@@ -51,7 +51,7 @@ func TestMultipartThroughput(t *testing.T) {
 	_, _ = rng.Read(content)
 
 	r := &mpRig{t: t}
-	r.ups, err = openUploads(filepath.Join(work, "uploads"), time.Now)
+	r.ups, err = openUploads(filepath.Join(work, "uploads"), time.Now, env("BSTORE_MP_BENCH_WRITERS", 2))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func (r *mpRig) putFrom(up *upload, n int, size int64, src io.Reader, bh *bodyHa
 		r.t.Fatal(err)
 	}
 	part.fill(bh.n, bh.md5Hex(), "", hashes, segs)
-	if e := up.keep(n, part, pw.syncs(), 1<<40); e != nil {
+	if e := up.keep(n, part, pw, 1<<40); e != nil {
 		r.t.Fatal(e)
 	}
 }

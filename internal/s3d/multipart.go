@@ -31,10 +31,11 @@ import (
 const minPart = 5 << 20
 
 type uploads struct {
-	dir string
-	now func() time.Time
-	mu  sync.Mutex
-	m   map[string]*upload
+	dir     string
+	now     func() time.Time
+	writers chan struct{} // the slots part blobs are written in (limits.part_writers)
+	mu      sync.Mutex
+	m       map[string]*upload
 }
 
 type upload struct {
@@ -52,6 +53,7 @@ type upload struct {
 	parts      map[int]partRecord // read from disk once
 	done       *completedRec      // the result, once its entry was made
 	dir        string
+	writers    chan struct{} // uploads.writers
 	gens       uint64        // numbers each part record held, in turn
 	arriving   map[int]int64 // the parts streaming in, by number: their sizes
 	run        runHash
@@ -82,13 +84,16 @@ type partRecord struct {
 
 	gen   uint64 // which record of the part this is, in this process
 	fresh bool   // its blobs were hashed by this process
+	state []byte // the content hash's state after the part, taken inline
 }
 
-func openUploads(dir string, now func() time.Time) (*uploads, error) {
+// openUploads reopens the uploads under dir; writers is how many part
+// blobs are written at once.
+func openUploads(dir string, now func() time.Time, writers int) (*uploads, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	u := &uploads{dir: dir, now: now, m: map[string]*upload{}}
+	u := &uploads{dir: dir, now: now, writers: make(chan struct{}, max(writers, 1)), m: map[string]*upload{}}
 	ents, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -105,6 +110,7 @@ func openUploads(dir string, now func() time.Time) (*uploads, error) {
 			continue
 		}
 		up.dir = filepath.Join(dir, up.ID)
+		up.writers = u.writers
 		if raw, err := os.ReadFile(filepath.Join(up.dir, "completed.json")); err == nil {
 			var c completedRec
 			if json.Unmarshal(raw, &c) == nil {
@@ -283,6 +289,7 @@ func (s *Server) createUpload(w http.ResponseWriter, r *http.Request, a *Auth, b
 	up := &upload{ID: hex.EncodeToString(idb[:]), Bucket: b.name, Key: key, AccessKey: a.Key.ID, ContentType: ct, Meta: meta,
 		Created: s.opts.Now()}
 	up.dir = filepath.Join(s.uploads.dir, up.ID)
+	up.writers = s.uploads.writers
 	s.uploads.m[up.ID] = up
 	s.uploads.mu.Unlock()
 	if err := os.MkdirAll(up.dir, 0o700); err != nil {
@@ -361,7 +368,7 @@ func (s *Server) uploadPart(ctx context.Context, w http.ResponseWriter, r *http.
 	}
 	// From here keep owns the part's files.
 	kept = true
-	if e := up.keep(n, part, pw.syncs(), s.cfg.Limits.MaxUpload); e != nil {
+	if e := up.keep(n, part, pw, s.cfg.Limits.MaxUpload); e != nil {
 		return e
 	}
 	s.metrics.add("bstore_s3d_part_bytes_total", bd.hashes.n)
@@ -371,22 +378,25 @@ func (s *Server) uploadPart(ctx context.Context, w http.ResponseWriter, r *http.
 	return nil
 }
 
-// keep records part n, its blob files written, in place of any part n
+// keep records part n, its files written to sink, in place of any part n
 // held before, unless the upload is closing or the part would take it past
-// max bytes; a part refused is removed. syncs make the blob files durable.
+// max bytes; a part refused is removed. The sink's syncs make the files
+// durable, and its state is the content hash's after the part, when the
+// part took the hash on inline.
 //
 // The record is written to a temporary file and synced at once with the
 // syncs, before the lock is taken, and renamed into place under it: parts
 // landing together do not wait on each other's syncs, nor the content
 // hash on theirs.
-func (up *upload) keep(n int, part partRecord, syncs []func() error, max int64) *s3Error {
+func (up *upload) keep(n int, part partRecord, sink partSink, max int64) *s3Error {
 	refuse := func(e *s3Error) *s3Error {
 		up.discard(n, part)
 		return e
 	}
+	part.state = sink.state()
 	raw, _ := json.Marshal(part)
 	var tmp string
-	err := parallel(16, append(syncs, func() error {
+	err := parallel(16, append(sink.syncs(), func() error {
 		var err error
 		tmp, err = writeSyncedTemp(up.dir, raw)
 		return err
@@ -417,6 +427,12 @@ func (up *upload) keep(n int, part partRecord, syncs []func() error, max int64) 
 	part.gen, part.fresh = up.gens, true
 	up.parts[n] = part
 	up.dropFrom(n)
+	// The content hash the part took on inline follows parts 1 to n-1 as
+	// they stand: nothing below was replaced while it ran, or the states
+	// were dropped and the goroutine reads the part back.
+	if part.state != nil && len(up.run.states) == n-1 {
+		up.run.states = append(up.run.states, part.state)
+	}
 	up.kick()
 	up.mu.Unlock()
 	// The record's new name, and the part's directory, are durable before
@@ -535,11 +551,14 @@ func (s *Server) completeUpload(ctx context.Context, w http.ResponseWriter, r *h
 	if total > s.cfg.Limits.MaxUpload {
 		return errTooLarge
 	}
-	release, e := acquire(s.writes)
+	// The object is assembled under a stage slot and published under a
+	// write slot, as a put is staged and published.
+	stageSlot, e := acquire(s.stages)
 	if e != nil {
 		return e
 	}
-	defer release()
+	stageDone := sync.OnceFunc(stageSlot)
+	defer stageDone()
 
 	// From here the answer is a 200 kept alive.
 	var wmu sync.Mutex
@@ -593,6 +612,12 @@ func (s *Server) completeUpload(ctx context.Context, w http.ResponseWriter, r *h
 	if staged.Size != uint64(total) {
 		return fail(&s3Error{"InvalidPart", "A part changed on disk.", http.StatusBadRequest})
 	}
+	stageDone()
+	release, e := acquire(s.writes)
+	if e != nil {
+		return fail(e)
+	}
+	defer release()
 	etag := uploadETag(s.cfg.ETagMD5, recs, staged.ContentHash)
 	rec, e := s.publishPut(ctx, a, b, key, up.ContentType, up.Meta, &etag, publish.Object{Root: staged.Root, Size: staged.Size,
 		ContentHash: staged.ContentHash, ProofRoot: staged.ProofRoot, Closure: publish.StoreClosure{Store: s.store, Manifest: staged.Manifest, Staged: true}})

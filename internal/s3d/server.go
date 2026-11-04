@@ -109,7 +109,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Server, error) {
 	if s.store, err = publish.OpenStore(filepath.Join(cfg.Data, "store")); err != nil {
 		return nil, err
 	}
-	if s.uploads, err = openUploads(filepath.Join(cfg.Data, "uploads"), opts.Now); err != nil {
+	if s.uploads, err = openUploads(filepath.Join(cfg.Data, "uploads"), opts.Now, cfg.Limits.PartWriters); err != nil {
 		return nil, err
 	}
 	pool, err := certPool(cfg.CA)
