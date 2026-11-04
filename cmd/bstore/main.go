@@ -1,7 +1,8 @@
 // Command bstore is bstore's command line: the publisher client (spec
 // sections 9 and 14), the bucket owner's tooling (sections 3.4 to 3.6 and
-// 4.4), a verified reader (section 15) and the S3 gateway (`bstore s3d`,
-// section 16). docs/usage.md is the reference.
+// 4.4), a verified reader (section 15), the S3 gateway (`bstore s3d`,
+// section 16) and an S3 client (`bstore cp` with an s3:// side).
+// docs/usage.md is the reference.
 //
 // A home (-home, default ~/.bstore) holds one identity: its wallet, its
 // funding trees, its outbox, its races, the chains it owns and the local
@@ -101,6 +102,14 @@ a host's payee (a host's BSTORE_PAYEE_KEY is this home's identity):
 the S3 gateway:
   s3d <command> -config FILE  (bstore s3d -h)
 
+an S3 client, at the gateway's speed (-endpoint URL, AWS credentials):
+  cp FILE s3://B/K             upload: multipart above one part, the body never hashed first
+  cp s3://B/K FILE             download in -conc ranges
+  ls s3://B[/PREFIX]           list keys
+  rm s3://B/K                  delete an object
+  bench put|get s3://B/PREFIX -n N -size SIZE
+                              N objects through the gateway; per-object and aggregate rates
+
   version                     print the version
 
 global flags:
@@ -183,6 +192,7 @@ var commands map[string]command
 func init() {
 	commands = map[string]command{
 		"anchor":    cmdAnchor,
+		"bench":     cmdBench,
 		"bucket":    cmdBucket,
 		"challenge": cmdChallenge,
 		"cp":        cmdCp,

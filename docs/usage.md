@@ -2,7 +2,8 @@
 
 `bstore` is the publisher client, the bucket owner's tooling and a verified
 reader ([spec.md](spec.md) sections 3, 9, 14 and 15); `bstore s3d` is the S3
-gateway ([s3.md](s3.md)). This page covers everything but the gateway.
+gateway ([s3.md](s3.md)), and `bstore cp` with an `s3://` side is an S3
+client for it. This page covers everything but the gateway.
 
 ```console
 $ go build -o bstore ./cmd/bstore
@@ -402,6 +403,49 @@ the sweep. It is irreversible, and the identity publishes nothing after it.
 Keys a token anchored stay anchored (a delete entry and the owner's next
 token remove a key, not a sweep), hold outputs are left to `reclaim`, and a
 copy anyone kept stays a copy.
+
+## An S3 client
+
+```console
+$ export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...
+$ bstore cp ./big.bin s3://example-photos-hmqzvtkwrx/albums/big.bin -endpoint https://s3.example.com
+put s3://example-photos-hmqzvtkwrx/albums/big.bin
+bytes    4294967296
+elapsed  3.912s
+rate     1097.9 MB/s
+parts    67108864 bytes, 16 at a time
+etag     "9b...-64"
+crc64nvme Zm9vYmFyYmF6
+$ bstore cp s3://example-photos-hmqzvtkwrx/albums/big.bin ./big.bin -endpoint https://s3.example.com -json
+{"op":"get","bucket":"example-photos-hmqzvtkwrx","key":"albums/big.bin","bytes":4294967296,...}
+$ bstore ls s3://example-photos-hmqzvtkwrx/albums/ -endpoint https://s3.example.com
+$ bstore rm s3://example-photos-hmqzvtkwrx/albums/big.bin -endpoint https://s3.example.com
+$ bstore bench put s3://example-photos-hmqzvtkwrx/bench -n 4 -size 1GiB -endpoint https://s3.example.com
+```
+
+`cp`, `ls` and `rm` with an `s3://bucket/key` argument speak S3 to the
+gateway ([s3.md](s3.md)), or to any S3, through the AWS SDK for Go v2:
+path-style addressing, Signature Version 4, credentials from
+`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, `AWS_PROFILE` or
+`~/.aws`, the endpoint from `-endpoint` or `AWS_ENDPOINT_URL`. The point
+is speed with timings: the body is never hashed before it moves. A request
+is signed with `UNSIGNED-PAYLOAD`, the checksum the gateway verifies
+(`-checksum crc64`, the cheap one; `sha256`; `none`) rides as a trailer
+over TLS, and a file above one part (`-part`, default 64 MiB) is a
+multipart upload with `-conc` (default 16) parts in flight, each read from
+the file in place. A download is read in `-conc` ranges at once into the
+file. Over plain HTTP the SDK computes the checksum first, so measure
+over TLS. On completion: the bytes, the elapsed time, the rate in MB/s
+(decimal), the ETag and every checksum the gateway returned; `-json`
+prints the same as one object. `-ca FILE` trusts a PEM besides the
+system's, `-insecure` trusts anything. No progress bars, no recursive
+sync: the AWS CLI does those.
+
+`bench put` sends `-n` objects of `-size` fresh random bytes one after
+another under the prefix, prints each object's result and the aggregate,
+then deletes them (`-keep` leaves them); `bench get` reads the objects
+`bench put -keep` left, in ranges, and discards the bytes. Every S3 flag
+applies.
 
 ## Exit codes
 
