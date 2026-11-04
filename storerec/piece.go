@@ -144,6 +144,104 @@ func DecodePiece(raw []byte) (*Piece, error) {
 	return p, nil
 }
 
+// decodePieceInPlace is DecodePiece for a record a piece carrier holds,
+// without copying the piece: when rec is the one encoding Encode writes of a
+// piece without Extra, the Piece returned is a slice of rec (its Bucket,
+// Writer and Root are copies), and rec must not change while it is used.
+// Any other record, including every one DecodePiece refuses, is decoded by
+// DecodePiece, so the verdict and the reason are always DecodePiece's.
+func decodePieceInPlace(rec []byte) (*Piece, error) {
+	if p := pieceInPlace(rec); p != nil {
+		return p, nil
+	}
+	return DecodePiece(rec)
+}
+
+// pieceInPlace reads rec as the five keys Encode writes in order, each with
+// its value, the piece's bytes ending the record, and returns the piece only
+// when Encode would write exactly rec for it: every head in rec is the one
+// encode writes for the value read, and the value meets encode's rules. A
+// record that does not is nil, for DecodePiece to read.
+func pieceInPlace(rec []byte) *Piece {
+	if len(rec) > MaxPieceRecord {
+		return nil
+	}
+	r := rec
+	// next reads a CBOR head of major type mt and the n bytes it declares
+	// when string is true.
+	next := func(mt byte, str bool) (uint64, []byte, bool) {
+		if len(r) == 0 || r[0]>>5 != mt {
+			return 0, nil, false
+		}
+		ai, n, w := r[0]&31, uint64(0), 1
+		switch {
+		case ai < 24:
+			n = uint64(ai)
+		case ai <= 27:
+			w += 1 << (ai - 24)
+			if len(r) < w {
+				return 0, nil, false
+			}
+			for _, c := range r[1:w] {
+				n = n<<8 | uint64(c)
+			}
+		default:
+			return 0, nil, false
+		}
+		r = r[w:]
+		if !str {
+			return n, nil, true
+		}
+		if n > uint64(len(r)) {
+			return 0, nil, false
+		}
+		v := r[:n]
+		r = r[n:]
+		return n, v, true
+	}
+	var vals [5][]byte
+	if n, _, ok := next(5, false); !ok || n != 5 {
+		return nil
+	}
+	for k := range uint64(5) {
+		if n, _, ok := next(0, false); !ok || n != k {
+			return nil
+		}
+		mt := byte(2)
+		if k == PKBucket {
+			mt = 3
+		}
+		_, v, ok := next(mt, true)
+		if !ok {
+			return nil
+		}
+		vals[k] = v
+	}
+	if len(r) != 0 || !bytes.Equal(vals[PKMagic], MagicPiece) || len(vals[PKRoot]) != 32 {
+		return nil
+	}
+	p := &Piece{Bucket: string(vals[PKBucket]), Writer: bytes.Clone(vals[PKWriter]), Root: [32]byte(vals[PKRoot]), Piece: vals[PKPiece]}
+	// encode's rules, in its order, and its heads: the shortest of each.
+	if !utf8.ValidString(p.Bucket) || CheckBucket(p.Bucket) != nil || len(p.Piece) < 1 || len(p.Piece) > MaxPiece {
+		return nil
+	}
+	if _, err := CheckKey(p.Writer); err != nil {
+		return nil
+	}
+	at := len(rec) - len(p.Piece)
+	var head [96]byte
+	h := appendHead(head[:0], 5, 5)
+	h = append(appendHead(appendHead(h, 0, PKMagic), 2, uint64(len(MagicPiece))), MagicPiece...)
+	h = append(appendHead(appendHead(h, 0, PKBucket), 3, uint64(len(p.Bucket))), p.Bucket...)
+	h = append(appendHead(appendHead(h, 0, PKWriter), 2, uint64(len(p.Writer))), p.Writer...)
+	h = append(appendHead(appendHead(h, 0, PKRoot), 2, 32), p.Root[:]...)
+	h = appendHead(appendHead(h, 0, PKPiece), 2, uint64(len(p.Piece)))
+	if !bytes.Equal(rec[:at], h) {
+		return nil
+	}
+	return p
+}
+
 // Front is the front statement (magic stf 0x01).
 type Front struct {
 	Bucket     string

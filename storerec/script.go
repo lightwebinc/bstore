@@ -4,6 +4,7 @@ import (
 	"bytes"
 
 	ec "github.com/bsv-blockchain/go-sdk/primitives/ec"
+	"github.com/bsv-blockchain/go-sdk/script"
 
 	"github.com/lightwebinc/bcommon/guard"
 	"github.com/lightwebinc/bcommon/pushdrop"
@@ -101,4 +102,80 @@ func mustLockingKey(d pushdrop.Derivation, identity []byte) *ec.PublicKey {
 		panic(err) // the record's key rule already held the identity to a canonical key
 	}
 	return k
+}
+
+// isLock reports whether s is exactly pushdrop.Script(key, fields, sig),
+// read in place: the key's push and OP_CHECKSIG, each field and then the
+// signature in the push pushdrop's template writes for it, and the drops
+// that clear them, with nothing after. Rebuilding the script to compare it
+// copies every field twice, which for a piece carrier is 8 MiB.
+func isLock(s []byte, key *ec.PublicKey, fields [][]byte, sig []byte) bool {
+	if len(s) < 35 || s[0] != 33 || !bytes.Equal(s[1:34], key.Compressed()) || s[34] != script.OpCHECKSIG {
+		return false
+	}
+	s = s[35:]
+	n := len(fields)
+	var ok bool
+	for _, f := range fields {
+		if s, ok = cutPush(s, f); !ok {
+			return false
+		}
+	}
+	if sig != nil {
+		if s, ok = cutPush(s, sig); !ok {
+			return false
+		}
+		n++
+	}
+	for ; n > 1; n -= 2 {
+		if s, ok = cutOp(s, script.Op2DROP); !ok {
+			return false
+		}
+	}
+	if n == 1 {
+		if s, ok = cutOp(s, script.OpDROP); !ok {
+			return false
+		}
+	}
+	return len(s) == 0
+}
+
+// cutPush cuts d's push from the front of s, as pushdrop's template writes
+// it (go-sdk pushdrop.CreateMinimallyEncodedScriptChunk): OP_0 for no bytes
+// or a zero byte, OP_1 to OP_16 and OP_1NEGATE for those single bytes, then
+// a direct push up to 75 bytes and OP_PUSHDATA1, 2 or 4 by length.
+func cutPush(s, d []byte) ([]byte, bool) {
+	n := len(d)
+	var head [5]byte
+	var h []byte
+	switch {
+	case n == 0 || (n == 1 && d[0] == 0):
+		return cutOp(s, script.Op0)
+	case n == 1 && d[0] >= 1 && d[0] <= 16:
+		return cutOp(s, script.Op1-1+d[0])
+	case n == 1 && d[0] == 0x81:
+		return cutOp(s, script.Op1NEGATE)
+	case n <= 75:
+		h = append(head[:0], byte(n))
+	case n <= 0xff:
+		h = append(head[:0], script.OpPUSHDATA1, byte(n))
+	case n <= 0xffff:
+		h = append(head[:0], script.OpPUSHDATA2, byte(n), byte(n>>8))
+	case uint64(n) <= 0xffffffff:
+		h = append(head[:0], script.OpPUSHDATA4, byte(n), byte(n>>8), byte(n>>16), byte(n>>24))
+	default:
+		return nil, false
+	}
+	if len(s) < len(h)+n || !bytes.Equal(s[:len(h)], h) || !bytes.Equal(s[len(h):len(h)+n], d) {
+		return nil, false
+	}
+	return s[len(h)+n:], true
+}
+
+// cutOp cuts the one opcode op from the front of s.
+func cutOp(s []byte, op byte) ([]byte, bool) {
+	if len(s) == 0 || s[0] != op {
+		return nil, false
+	}
+	return s[1:], true
 }
