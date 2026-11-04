@@ -103,6 +103,13 @@ func (r *rig) start(cfg *Config, fund bool) *Provider {
 // startWith is start with options (a front's, say).
 func (r *rig) startWith(cfg *Config, fund bool, opts Options) *Provider {
 	r.t.Helper()
+	return r.startHooked(cfg, fund, opts, nil)
+}
+
+// startHooked is startWith with before run on the provider before it
+// starts (to set its hooks).
+func (r *rig) startHooked(cfg *Config, fund bool, opts Options, before func(*Provider)) *Provider {
+	r.t.Helper()
 	if err := cfg.Check(); err != nil {
 		r.t.Fatal(err)
 	}
@@ -122,6 +129,9 @@ func (r *rig) startWith(cfg *Config, fund bool, opts Options) *Provider {
 		if _, _, err := fundProvider(ctx, p, &nodeapi.RPC{URL: r.srv.URL + "/rpc", ID: "p"}, asset); err != nil {
 			r.t.Fatal(err)
 		}
+	}
+	if before != nil {
+		before(p)
 	}
 	if err := p.Start(ctx); err != nil {
 		r.t.Fatal(err)
