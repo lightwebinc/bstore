@@ -422,7 +422,7 @@ Every bound, what each operation costs and the known limits are in
 
 | What | Bound |
 | --- | --- |
-| An object | `put -max`, at most 2^43 bytes; one 4 MiB blob and one segment in memory while it streams |
+| An object | `put -max`, at most 2^43 bytes; a few 4 MiB blobs and one segment in memory while it streams |
 | A race | candidates without bound; at most three free answers asked of one candidate that gives no signed answer; 64 `ads` pages a host a look |
 | A settlement | `K` paid ranks; payouts sum to the hold output exactly |
 | Anchoring | 16,384 `unanchored` pages a writer and host a run; 1,048,576 keys in a map (a put past it waits) |

@@ -379,34 +379,8 @@ func parseHash(s string) ([32]byte, error) {
 }
 
 // writeFileSync writes b to path through a temporary file in tmp, synced,
-// then renamed into place, and syncs the directory.
+// then renamed into place, the rename synced: one write of a group commit
+// (commit.go).
 func writeFileSync(tmp, path string, b []byte) error {
-	f, err := os.CreateTemp(tmp, "w-*")
-	if err != nil {
-		return err
-	}
-	name := f.Name()
-	if _, err := f.Write(b); err != nil {
-		f.Close()
-		os.Remove(name)
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		os.Remove(name)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(name)
-		return err
-	}
-	if err := os.Rename(name, path); err != nil {
-		os.Remove(name)
-		return err
-	}
-	if d, err := os.Open(filepath.Dir(path)); err == nil {
-		_ = d.Sync()
-		d.Close()
-	}
-	return nil
+	return commits.write(tmp, path, b)
 }

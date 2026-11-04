@@ -42,7 +42,7 @@ type routeLimits struct {
 	settles   *auth104.Keyed // remittances per address
 	objects   *auth104.Keyed // object reads per address
 	uploads   *auth104.Keyed // upload sessions opened per address
-	inflight  *perAddr       // submissions and uploads read at once, per address
+	inflight  *perAddr       // submissions and uploads read at once, per address (InFlightPerAddr)
 	work      chan struct{}  // challenges answered at once
 	readers   chan struct{}  // object reads at once
 	ingest    chan struct{}  // submissions and uploads read at once
@@ -56,7 +56,7 @@ type routeLimits struct {
 func newRouteLimits(c *Config, now func() time.Time) (*routeLimits, error) {
 	l := c.Limits
 	var err error
-	r := &routeLimits{inflight: &perAddr{max: 4, n: map[string]int{}}, work: make(chan struct{}, l.ChallengeWorkers), readers: make(chan struct{}, l.ObjectReaders),
+	r := &routeLimits{inflight: &perAddr{max: l.InFlightPerAddr, n: map[string]int{}}, work: make(chan struct{}, l.ChallengeWorkers), readers: make(chan struct{}, l.ObjectReaders),
 		ingest: make(chan struct{}, 16), verifyMu: make(chan struct{}, l.VerifyWorkers), commits: make(chan struct{}, 1), bodies: make(chan struct{}, maxBodies),
 		takes: make(chan struct{}, maxTakes)}
 	if r.buyers, err = auth104.NewKeyed(auth104.Budget{Rate: l.ChallengesPerBuyerPerMin / 60, Burst: l.ChallengeBurst}, 100000, now); err != nil {

@@ -92,6 +92,7 @@ serves all three).
 | Variable | Meaning |
 | --- | --- |
 | `BSTORE_HOME` | the home when `-home` is not given |
+| `BSTORE_COMMIT` | how synced writes reach the disk: `auto` (default) group-commits them on XFS (Linux), where that measured faster, and syncs each alone elsewhere; `group` group-commits them everywhere (one `syncfs` per group on Linux, an `fsync` per file and directory elsewhere); `direct` syncs each alone |
 
 ### Command flags
 

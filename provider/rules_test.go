@@ -112,6 +112,21 @@ func TestConfigRefusals(t *testing.T) {
 	if err := main.Check(); err != nil || main.Chain != "woc:main" || main.Settle != "arcade:main" || main.Headers != "woc:main" {
 		t.Fatalf("mainnet defaults: %v: chain %q settle %q headers %q", err, main.Chain, main.Settle, main.Headers)
 	}
+	// Four submissions or uploads in flight from one address unless set.
+	for set, want := range map[int]int{0: 4, 32: 32} {
+		c := good()
+		c.Limits.InFlightPerAddr = set
+		if err := c.Check(); err != nil {
+			t.Fatal(err)
+		}
+		l, err := newRouteLimits(c, time.Now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.Limits.InFlightPerAddr != want || l.inflight.max != want {
+			t.Fatalf("in_flight_per_addr %d: %d, routes %d", set, c.Limits.InFlightPerAddr, l.inflight.max)
+		}
+	}
 	// A node key stays the chain view: chain is not filled beside it.
 	if n := good(); n.Check() != nil || n.Chain != "" {
 		t.Fatalf("node: chain %q", n.Chain)
@@ -136,6 +151,7 @@ func TestConfigRefusals(t *testing.T) {
 		"backend":        func(c *Config) { c.Backend = "s3" },
 		"unclaimed":      func(c *Config) { c.QuotaBytes, c.UnclaimedBytes = 10, 11 },
 		"writer share":   func(c *Config) { c.UnclaimedBytes, c.Policy.MaxObject = 4<<20, 2<<20 },
+		"in flight":      func(c *Config) { c.Limits.InFlightPerAddr = -1 },
 		"verify workers": func(c *Config) { c.Limits.VerifyWorkers = maxVerifyWorkers + 1 },
 		"no verifiers":   func(c *Config) { c.Limits.VerifyWorkers = -1 },
 	} {

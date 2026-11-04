@@ -265,6 +265,10 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			h = d + "/.bstore"
 		}
 	}
+	if err := publish.SetCommitMode(getenv("BSTORE_COMMIT")); err != nil {
+		fmt.Fprintln(stderr, "bstore:", termsafe.Text(err.Error()))
+		return exitUsage
+	}
 	g := &global{home: h, bucket: *bucket, hosts: *hosts, verbose: *verbose, stdin: stdin, stdout: stdout, stderr: stderr, getenv: getenv}
 	err := cmd(ctx, g, rest[1:])
 	if err == nil {

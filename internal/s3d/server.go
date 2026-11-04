@@ -98,6 +98,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Server, error) {
 		reads: make(chan struct{}, cfg.Limits.Reads), stages: make(chan struct{}, cfg.Limits.Stages),
 		lookups: make(chan struct{}, cfg.Limits.Lookups)}
 	s.limits = newKeyLimits(cfg.Limits.RequestsPerSec, cfg.Limits.Burst, opts.Now)
+	nameSlots(s)
 	if err := os.MkdirAll(cfg.Data, 0o700); err != nil {
 		return nil, err
 	}
@@ -136,6 +137,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Server, error) {
 	}
 	d := &publish.Delivery{Facade: cfg.Facade, Hosts: cfg.Hosts, Providers: cfg.Providers, HTTP: hostHTTP, Quorum: cfg.Quorum,
 		Observe: s.metrics.observe}
+	publish.ObserveCommits(s.metrics.observe)
 	for _, name := range cfg.Identities {
 		p, err := publish.Open(ctx, publish.Config{Dir: cfg.IdentityDir(name), OutboxMax: cfg.OutboxBytes,
 			Chain: v.Chain, Known: v.Known, Tip: v.Tip, Settler: v.Settler, Accept: cfg.AcceptPolicy(), Status: status,
@@ -290,7 +292,10 @@ func (s *Server) Start(ctx context.Context) error {
 	}()
 	if s.cfg.MetricsListen != "" {
 		mux := http.NewServeMux()
-		mux.HandleFunc("/metrics", s.metrics.serve)
+		mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+			s.commitCounts()
+			s.metrics.serve(w, r)
+		})
 		s.msrv = &http.Server{Addr: s.cfg.MetricsListen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 		mln, err := net.Listen("tcp", s.cfg.MetricsListen)
 		if err != nil {
@@ -452,6 +457,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 	fail := func(e *s3Error) {
 		status = e.Status
+		if e.Code == "SlowDown" {
+			s.metrics.add(fmt.Sprintf("bstore_s3d_slowdown_total{reason=%q}", slowReason(e)), 1)
+		}
 		writeError(w, r, e, reqID)
 	}
 	if r.URL.Path == "/healthz" && r.Method == http.MethodGet && r.URL.RawQuery == "" {
@@ -475,7 +483,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.limits.allow(a.Key.ID) {
-		fail(errSlowDown)
+		fail(errSlowKeyRate)
 		return
 	}
 	rw := &statusWriter{ResponseWriter: w}
@@ -721,14 +729,30 @@ func (s *Server) objectOp(ctx context.Context, w http.ResponseWriter, r *http.Re
 }
 
 // acquire takes a slot of sem or answers SlowDown at once: a full gateway
-// sheds load rather than queueing it.
+// sheds load rather than queueing it. The SlowDown names the bound (see
+// semErrors).
 func acquire(sem chan struct{}) (func(), *s3Error) {
 	select {
 	case sem <- struct{}{}:
 		return func() { <-sem }, nil
 	default:
+		if e, ok := semErrors.Load(sem); ok {
+			return nil, e.(*s3Error)
+		}
 		return nil, errSlowDown
 	}
+}
+
+// semErrors maps each server's slot channels to the SlowDown that names
+// them, set when the server is made.
+var semErrors sync.Map
+
+func nameSlots(s *Server) {
+	semErrors.Store(s.writes, errSlowWrites)
+	semErrors.Store(s.parts, errSlowParts)
+	semErrors.Store(s.reads, errSlowReads)
+	semErrors.Store(s.stages, errSlowStages)
+	semErrors.Store(s.lookups, errSlowLookups)
 }
 
 // remittedAlarm sets the gauges of races remitted before mining whose
@@ -744,4 +768,14 @@ func (s *Server) remittedAlarm() {
 	}
 	s.metrics.set("bstore_s3d_races_remitted_stale", int64(n))
 	s.metrics.set("bstore_s3d_race_remitted_oldest_seconds", int64(oldest.Seconds()))
+}
+
+// commitCounts sets the counters of the synced writes' commits: how many,
+// and the files and device syncs they covered (files over commits is the
+// files a commit shares; syncs over puts the syncs a put costs).
+func (s *Server) commitCounts() {
+	c := publish.Commits()
+	s.metrics.set("bstore_publish_commits_total", c.Commits)
+	s.metrics.set("bstore_publish_commit_files_total", c.Files)
+	s.metrics.set("bstore_publish_commit_syncs_total", c.Syncs)
 }

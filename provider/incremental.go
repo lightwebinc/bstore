@@ -26,10 +26,18 @@ import (
 // rootBuffer the bytes each walk keeps of pieces that arrived ahead of it (a
 // piece not kept is read back from the store when the walk reaches it): at
 // most 64 x 4 MiB, besides the piece each walk waits for.
+//
+// recentBytes bounds the pieces this provider has just stored that are kept
+// for their walks besides (see recent): pieces taken at once reach their
+// walk out of order, and one that finds its walk's buffer full is otherwise
+// read back from the store when the walk reaches it, and hashed twice, by
+// the fetch's check and by the walk. About the pieces in flight at once: a
+// feeder's takes (maxTakes) and the submissions processed (16).
 const (
-	maxPre     = 1024
-	maxRoots   = 64
-	rootBuffer = chirp.ChunkSize
+	maxPre      = 1024
+	maxRoots    = 64
+	rootBuffer  = chirp.ChunkSize
+	recentBytes = 16 * chirp.ChunkSize
 )
 
 type preBlob struct {
@@ -50,10 +58,60 @@ type incremental struct {
 	fifo  [][32]byte
 	walks map[[32]byte]*closureWalk
 	wfifo [][32]byte
+
+	// recent are pieces this provider has just stored, by hash, kept for
+	// their roots' walks: the bytes it hashed to name the piece and wrote to
+	// the store, so a walk's fetch serves them without reading the store or
+	// checking their hash again. Each is dropped when a walk reads it, when
+	// its root is decided, or oldest first past recentBytes.
+	recent    map[[32]byte]recentPiece
+	rfifo     [][32]byte
+	recentLen int
+}
+
+type recentPiece struct {
+	root [32]byte
+	b    []byte
 }
 
 func newIncremental() *incremental {
-	return &incremental{pre: map[[32]byte]*preBlob{}, walks: map[[32]byte]*closureWalk{}}
+	return &incremental{pre: map[[32]byte]*preBlob{}, walks: map[[32]byte]*closureWalk{}, recent: map[[32]byte]recentPiece{}}
+}
+
+// keepRecent keeps a piece just stored for root's walk; in.mu is held.
+func (in *incremental) keepRecent(h, root [32]byte, b []byte) {
+	if _, ok := in.recent[h]; ok || len(b) > recentBytes {
+		return
+	}
+	in.recent[h] = recentPiece{root: root, b: b}
+	in.rfifo = append(in.rfifo, h)
+	in.recentLen += len(b)
+	for in.recentLen > recentBytes && len(in.rfifo) > 0 {
+		in.dropRecent(in.rfifo[0])
+	}
+}
+
+// dropRecent drops a kept piece; in.mu is held.
+func (in *incremental) dropRecent(h [32]byte) {
+	r, ok := in.recent[h]
+	if !ok {
+		return
+	}
+	delete(in.recent, h)
+	in.recentLen -= len(r.b)
+	in.rfifo = slices.DeleteFunc(in.rfifo, func(x [32]byte) bool { return x == h })
+}
+
+// takeRecent hands a kept piece to the walk that reads it, and drops it.
+func (in *incremental) takeRecent(h [32]byte) []byte {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	r, ok := in.recent[h]
+	if !ok {
+		return nil
+	}
+	in.dropRecent(h)
+	return r.b
 }
 
 func (in *incremental) blob(h [32]byte) *preBlob {
@@ -75,7 +133,16 @@ func (p *Provider) walk(root [32]byte, create bool) *closureWalk {
 	if !create {
 		return nil
 	}
-	fetch, wrong := storerec.CheckedFetch(p.fetch)
+	checked, wrong := storerec.CheckedFetch(p.fetch)
+	// A piece kept in recent is served as it is: it is the bytes this
+	// provider hashed to the name asked for, so the check would pass, and
+	// the walk hashes what it fetches anyway.
+	fetch := func(h [32]byte) ([]byte, error) {
+		if b := in.takeRecent(h); b != nil {
+			return b, nil
+		}
+		return checked(h)
+	}
 	w := &closureWalk{inc: chirp.NewIncremental(root, fetch, storerec.ClosureLimits, rootBuffer), wrong: wrong}
 	in.walks[root] = w
 	in.wfifo = append(in.wfifo, root)
@@ -145,6 +212,13 @@ func (p *Provider) arrived(h [32]byte, data []byte, root [32]byte, stored bool) 
 		in.mu.Unlock()
 	}
 	if w := p.walk(root, h == root); w != nil {
+		// The walk keeps the piece it waits for; any other is kept for it
+		// here too, in case its own buffer has no room (see recent).
+		if want, ok := w.inc.Waiting(); !ok || want != h {
+			in.mu.Lock()
+			in.keepRecent(h, root, data)
+			in.mu.Unlock()
+		}
 		w.inc.AddHashed(h, data)
 	}
 }
@@ -159,6 +233,11 @@ func (in *incremental) forget(root [32]byte, blobs []chirp.Child) {
 	}
 	for _, b := range blobs {
 		delete(in.pre, b.Hash)
+	}
+	for _, h := range slices.Clone(in.rfifo) {
+		if in.recent[h].root == root {
+			in.dropRecent(h)
+		}
 	}
 }
 

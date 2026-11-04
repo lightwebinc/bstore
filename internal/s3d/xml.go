@@ -29,11 +29,21 @@ func errorf(status int, code, format string, args ...any) *s3Error {
 }
 
 var (
-	errNoSuchKey      = &s3Error{"NoSuchKey", "The specified key does not exist.", http.StatusNotFound}
-	errNoSuchBucket   = &s3Error{"NoSuchBucket", "The specified bucket does not exist.", http.StatusNotFound}
-	errNoSuchUpload   = &s3Error{"NoSuchUpload", "The specified multipart upload does not exist.", http.StatusNotFound}
-	errAccessDenied   = &s3Error{"AccessDenied", "Access Denied", http.StatusForbidden}
-	errSlowDown       = &s3Error{"SlowDown", "Please reduce your request rate.", http.StatusServiceUnavailable}
+	errNoSuchKey    = &s3Error{"NoSuchKey", "The specified key does not exist.", http.StatusNotFound}
+	errNoSuchBucket = &s3Error{"NoSuchBucket", "The specified bucket does not exist.", http.StatusNotFound}
+	errNoSuchUpload = &s3Error{"NoSuchUpload", "The specified multipart upload does not exist.", http.StatusNotFound}
+	errAccessDenied = &s3Error{"AccessDenied", "Access Denied", http.StatusForbidden}
+	errSlowDown     = &s3Error{"SlowDown", "Please reduce your request rate.", http.StatusServiceUnavailable}
+	// Each SlowDown says which bound refused the request, so an operator
+	// reading a client's error, or bstore_s3d_slowdown_total, knows which
+	// limit to look at.
+	errSlowKeyRate    = &s3Error{"SlowDown", "This access key is over its request rate (limits.requests_per_sec); retry shortly.", http.StatusServiceUnavailable}
+	errSlowReplay     = &s3Error{"SlowDown", "This access key signed more writes in the last 15 minutes than the gateway keeps against replay (limits.replay_per_key); retry shortly.", http.StatusServiceUnavailable}
+	errSlowWrites     = &s3Error{"SlowDown", "The gateway has its most writes in progress (limits.writes); retry shortly.", http.StatusServiceUnavailable}
+	errSlowParts      = &s3Error{"SlowDown", "The gateway has its most part uploads in progress (limits.part_writes); retry shortly.", http.StatusServiceUnavailable}
+	errSlowReads      = &s3Error{"SlowDown", "The gateway has its most object reads in progress (limits.reads); retry shortly.", http.StatusServiceUnavailable}
+	errSlowStages     = &s3Error{"SlowDown", "The gateway has its most bodies streaming in (limits.stages); retry shortly.", http.StatusServiceUnavailable}
+	errSlowLookups    = &s3Error{"SlowDown", "The gateway has its most lookups in progress (limits.lookups); retry shortly.", http.StatusServiceUnavailable}
 	errInternal       = &s3Error{"InternalError", "We encountered an internal error. Please try again.", http.StatusInternalServerError}
 	errConditional    = &s3Error{"NotImplemented", "Conditional writes (If-Match, If-None-Match) are not supported by this gateway; it holds no lock.", http.StatusNotImplemented}
 	errMethod         = &s3Error{"MethodNotAllowed", "The specified method is not allowed against this resource.", http.StatusMethodNotAllowed}
@@ -222,4 +232,25 @@ func httpTime(ms uint64) string { return time.UnixMilli(int64(ms)).UTC().Format(
 // with unquote_plus).
 func urlEncodeKey(s string) string {
 	return strings.ReplaceAll(url.QueryEscape(s), "%2F", "/")
+}
+
+// slowReason names the bound behind a SlowDown, for the metric.
+func slowReason(e *s3Error) string {
+	switch e {
+	case errSlowKeyRate:
+		return "requests_per_sec"
+	case errSlowReplay:
+		return "replay_per_key"
+	case errSlowWrites:
+		return "writes"
+	case errSlowParts:
+		return "part_writes"
+	case errSlowReads:
+		return "reads"
+	case errSlowStages:
+		return "stages"
+	case errSlowLookups:
+		return "lookups"
+	}
+	return "other"
 }
