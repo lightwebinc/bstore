@@ -39,7 +39,7 @@ func newMPRig(t *testing.T) *mpRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ups, err := openUploads(filepath.Join(data, "uploads"), time.Now)
+	ups, err := openUploads(filepath.Join(data, "uploads"), time.Now, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,6 +51,7 @@ func (r *mpRig) create() *upload {
 	_, _ = rand.Read(idb[:])
 	up := &upload{ID: hex.EncodeToString(idb[:]), Bucket: "b", Key: "k", Created: time.Now()}
 	up.dir = filepath.Join(r.ups.dir, up.ID)
+	up.writers = r.ups.writers
 	if err := os.MkdirAll(up.dir, 0o700); err != nil {
 		r.t.Fatal(err)
 	}
@@ -96,7 +97,7 @@ func (r *mpRig) putETag(up *upload, n int, content []byte, etagMD5 bool) {
 		sum := sha256.Sum256(content)
 		part.fill(int64(len(content)), "", hex.EncodeToString(sum[:]), hashes, segs)
 	}
-	if e := up.keep(n, part, pw.syncs(), 1<<40); e != nil {
+	if e := up.keep(n, part, pw, 1<<40); e != nil {
 		r.t.Fatal(e)
 	}
 }
@@ -376,7 +377,7 @@ func TestMultipartStagedAfterRestart(t *testing.T) {
 	}
 	sum := md5.Sum(p[3])
 	_ = writeSynced(filepath.Join(up.dir, "part-00004.json"), []byte(fmt.Sprintf(`{"size":%d,"md5":%q}`, len(p[3]), hex.EncodeToString(sum[:]))))
-	ups, err := openUploads(r.ups.dir, time.Now)
+	ups, err := openUploads(r.ups.dir, time.Now, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,6 +386,9 @@ func TestMultipartStagedAfterRestart(t *testing.T) {
 	up2 := ups.get(up.ID)
 	if up2 == nil {
 		t.Fatal("upload not reopened")
+	}
+	if up2.writers != ups.writers {
+		t.Fatal("a reopened upload writes outside the writer slots")
 	}
 	if _, err := os.Stat(filepath.Join(up.dir, "part-00002.0000aaaa")); !os.IsNotExist(err) {
 		t.Fatal("an unnamed part directory survived the restart")
@@ -478,7 +482,7 @@ func TestMultipartUnlinkablePartsInOneFile(t *testing.T) {
 	if hashed > 1 {
 		t.Fatalf("the content hash ran over %d parts of an upload no object can be linked through", hashed)
 	}
-	ups, err := openUploads(r.ups.dir, time.Now)
+	ups, err := openUploads(r.ups.dir, time.Now, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -557,7 +561,7 @@ func TestMultipartPartRaceAndRefusal(t *testing.T) {
 	// A part refused (over the bound, or the upload closing) leaves
 	// nothing behind.
 	for _, closing := range []bool{false, true} {
-		pw, err := newPartWriter(filepath.Join(up.dir, "part-00003.refused"))
+		pw, err := newPartWriter(filepath.Join(up.dir, "part-00003.refused"), up.writers, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -574,7 +578,7 @@ func TestMultipartPartRaceAndRefusal(t *testing.T) {
 			max = 1
 		}
 		part := partRecord{Size: c, MD5: "00", Dir: "part-00003.refused"}
-		if e := up.keep(3, part, pw.syncs(), max); e == nil {
+		if e := up.keep(3, part, pw, max); e == nil {
 			t.Fatal("kept")
 		}
 		up.mu.Lock()
@@ -585,6 +589,129 @@ func TestMultipartPartRaceAndRefusal(t *testing.T) {
 			t.Fatal("a refused part was left behind")
 		}
 	}
+}
+
+// begin opens part n and streams content into it, keeping the part open;
+// end keeps it.
+func (r *mpRig) begin(up *upload, n int, content []byte) (partRecord, partSink, func()) {
+	r.t.Helper()
+	part, pw, closed, err := up.openPart(n, int64(len(content)))
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	if _, err := pw.Write(content); err != nil {
+		r.t.Fatal(err)
+	}
+	return part, pw, closed
+}
+
+func (r *mpRig) end(up *upload, n int, content []byte, part partRecord, pw partSink, closed func()) {
+	r.t.Helper()
+	defer closed()
+	hashes, segs, err := pw.finish()
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	sum := md5.Sum(content)
+	part.fill(int64(len(content)), hex.EncodeToString(sum[:]), "", hashes, segs)
+	if e := up.keep(n, part, pw, 1<<40); e != nil {
+		r.t.Fatal(e)
+	}
+}
+
+// TestMultipartInlineHash: parts sent one after another take the content
+// hash on as they stream in, with no part read back; a part sent while
+// another streams, or one whose predecessor was replaced under it, is read
+// back by the hash goroutine instead.
+func TestMultipartInlineHash(t *testing.T) {
+	const c = chirp.ChunkSize
+	r := newMPRig(t)
+	up := r.create()
+	p := [][]byte{randBytes(2 * c), randBytes(c), randBytes(2 * c), randBytes(c + 7)}
+	inline := func(pw partSink) bool { return pw.(*partWriter).run != nil }
+	hashed := func() (int, bool) {
+		up.mu.Lock()
+		defer up.mu.Unlock()
+		return len(up.run.states), up.run.busy
+	}
+	for i := range 2 {
+		part, pw, closed := r.begin(up, i+1, p[i])
+		if !inline(pw) {
+			t.Fatalf("part %d sent alone was not hashed inline", i+1)
+		}
+		r.end(up, i+1, p[i], part, pw, closed)
+		if n, busy := hashed(); n != i+1 || busy {
+			t.Fatalf("after part %d: %d parts hashed, busy %v", i+1, n, busy)
+		}
+	}
+	// Part 3 streams in with the hash inline; part 2 is replaced under it:
+	// the state part 3 took on is dropped, and both are read back.
+	part3, pw3, closed3 := r.begin(up, 3, p[2])
+	if !inline(pw3) {
+		t.Fatal("part 3 was not hashed inline")
+	}
+	p[1] = randBytes(c)
+	part2, pw2, closed2 := r.begin(up, 2, p[1])
+	if inline(pw2) {
+		t.Fatal("a part sent while another streams was hashed inline")
+	}
+	r.end(up, 2, p[1], part2, pw2, closed2)
+	if n, _ := hashed(); n != 1 {
+		t.Fatalf("after replacing part 2: %d parts hashed", n)
+	}
+	r.end(up, 3, p[2], part3, pw3, closed3)
+	up.mu.Lock()
+	for up.run.busy {
+		up.idleCond().Wait()
+	}
+	n := len(up.run.states)
+	up.mu.Unlock()
+	if n != 3 {
+		t.Fatalf("after part 3: %d parts hashed", n)
+	}
+	// The last part, not a whole blob, is hashed inline as well.
+	part4, pw4, closed4 := r.begin(up, 4, p[3])
+	if !inline(pw4) {
+		t.Fatal("the last part was not hashed inline")
+	}
+	r.end(up, 4, p[3], part4, pw4, closed4)
+	got, bad, linked := r.complete(up, []int{1, 2, 3, 4}, nil)
+	if bad != nil || !linked {
+		t.Fatal(bad, linked)
+	}
+	defer got.Release()
+	r.same(got, cat(p...))
+}
+
+// TestMultipartOneWriter: parts sent at once are written in the writer
+// slots, one here, and assemble the same object.
+func TestMultipartOneWriter(t *testing.T) {
+	r := newMPRig(t)
+	ups, err := openUploads(r.ups.dir, time.Now, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.ups, r.s.uploads = ups, ups
+	up := r.create()
+	parts := make([][]byte, 12)
+	for i := range parts {
+		parts[i] = randBytes(2 * chirp.ChunkSize)
+	}
+	var wg sync.WaitGroup
+	for i := range parts {
+		wg.Go(func() { r.put(up, i+1, parts[i]) })
+	}
+	wg.Wait()
+	var names []int
+	for i := range parts {
+		names = append(names, i+1)
+	}
+	got, bad, linked := r.complete(up, names, nil)
+	if bad != nil || !linked {
+		t.Fatal(bad, linked)
+	}
+	defer got.Release()
+	r.same(got, cat(parts...))
 }
 
 // TestMultipartStagedRandomShapes uploads random aligned and unaligned
