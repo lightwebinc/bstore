@@ -65,13 +65,11 @@ func (r *mpRig) create() *upload {
 // put sends part n as uploadPart keeps it, written in uneven pieces.
 func (r *mpRig) put(up *upload, n int, content []byte) {
 	r.t.Helper()
-	var rnd [6]byte
-	_, _ = rand.Read(rnd[:])
-	name := fmt.Sprintf("part-%05d.%s", n, hex.EncodeToString(rnd[:]))
-	pw, err := newPartWriter(filepath.Join(up.dir, name))
+	part, pw, closed, err := up.openPart(n, int64(len(content)))
 	if err != nil {
 		r.t.Fatal(err)
 	}
+	defer closed()
 	for rest, step := content, 1; len(rest) > 0; step = (step*7 + 13) % (300 << 10) {
 		k := min(len(rest), step+1)
 		if _, err := pw.Write(rest[:k]); err != nil {
@@ -84,11 +82,7 @@ func (r *mpRig) put(up *upload, n int, content []byte) {
 		r.t.Fatal(err)
 	}
 	sum := md5.Sum(content)
-	part := partRecord{Size: int64(len(content)), MD5: hex.EncodeToString(sum[:]), Dir: name}
-	for i := range hashes {
-		part.Blobs = append(part.Blobs, hex.EncodeToString(hashes[i][:]))
-		part.Segs = append(part.Segs, hex.EncodeToString(segs[i][:]))
-	}
+	part.fill(int64(len(content)), hex.EncodeToString(sum[:]), hashes, segs)
 	if e := up.keep(n, part, pw.syncs(), 1<<40); e != nil {
 		r.t.Fatal(e)
 	}
@@ -443,6 +437,45 @@ func TestMultipartWholeChecksum(t *testing.T) {
 		}
 		got.Release()
 	}
+}
+
+// TestMultipartUnlinkablePartsInOneFile checks that once an upload cannot
+// be linked (two parts that are not whole blobs), its parts are kept in one
+// file each and not hashed, and that a restart keeps them.
+func TestMultipartUnlinkablePartsInOneFile(t *testing.T) {
+	r := newMPRig(t)
+	up := r.create()
+	p := [][]byte{randBytes(6000000), randBytes(6000000), randBytes(6000000), randBytes(777)}
+	for i := range p {
+		r.put(up, i+1, p[i])
+	}
+	up.mu.Lock()
+	first, rest := up.parts[1], []partRecord{up.parts[2], up.parts[3], up.parts[4]}
+	hashed := len(up.run.states)
+	up.mu.Unlock()
+	if first.Dir == "" || len(first.Blobs) != 2 {
+		t.Fatalf("part 1, alone when it arrived, is not kept as blobs: %+v", first.Dir)
+	}
+	for i, rec := range rest {
+		if rec.File == "" || rec.Dir != "" || len(rec.Blobs) != 0 {
+			t.Fatalf("part %d is not kept in one file", i+2)
+		}
+	}
+	// Part 1 may have been hashed while it was the only part.
+	if hashed > 1 {
+		t.Fatalf("the content hash ran over %d parts of an upload no object can be linked through", hashed)
+	}
+	ups, err := openUploads(r.ups.dir, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	up2 := ups.get(up.ID)
+	got, bad, linked := r.complete(up2, []int{1, 2, 3, 4}, nil)
+	if bad != nil || linked {
+		t.Fatal(bad, linked)
+	}
+	r.same(got, cat(p...))
+	got.Release()
 }
 
 func TestMultipartAbortRemovesParts(t *testing.T) {

@@ -1,6 +1,7 @@
 package s3d
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding"
 	"encoding/hex"
@@ -24,7 +25,9 @@ import (
 // are exactly the parts' blobs in order, and completion links them into
 // the store and builds the closure from the recorded hashes without
 // reading the content again (publish.StageLinked). Otherwise completion
-// reads the blob files in order and stages the content as a put does.
+// reads the parts in order and stages the content as a put does; a part
+// that already cannot be one the object is linked through (worthHashing)
+// is kept in one file, unhashed, as every part was before.
 
 // partWorkers is how many of one part's blobs are hashed and written at
 // once; a part holds at most partWorkers + 1 blob buffers.
@@ -35,7 +38,17 @@ var blobBufs = sync.Pool{New: func() any {
 	return &b
 }}
 
-// partWriter cuts a part into blob files under dir as it is written.
+// partSink is where a part's bytes go as they arrive: finish waits for
+// them to be written, syncs make them durable.
+type partSink interface {
+	io.Writer
+	finish() (hashes, segs [][32]byte, err error)
+	syncs() []func() error
+	abort()
+}
+
+// partWriter cuts a part into blob files under dir as it is written and
+// hashes each blob as completion will need it.
 type partWriter struct {
 	dir  string
 	cur  []byte
@@ -194,6 +207,42 @@ func (w *partWriter) syncs() []func() error {
 	return out
 }
 
+// partFile keeps a part the object cannot be linked through
+// (worthHashing) in one file, unhashed, as every part was kept before
+// blobs: completion reads it.
+type partFile struct {
+	path string
+	f    *os.File
+}
+
+func newPartFile(path string) (*partFile, error) {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	return &partFile{path: path, f: f}, nil
+}
+
+func (p *partFile) Write(b []byte) (int, error) { return p.f.Write(b) }
+
+func (p *partFile) finish() (hashes, segs [][32]byte, err error) { return nil, nil, p.f.Close() }
+
+func (p *partFile) syncs() []func() error {
+	return []func() error{func() error {
+		f, err := os.OpenFile(p.path, os.O_WRONLY, 0)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		return f.Sync()
+	}}
+}
+
+func (p *partFile) abort() {
+	p.f.Close()
+	_ = os.Remove(p.path)
+}
+
 // parallel runs fns, at most limit at once, and returns their errors.
 func parallel(limit int, fns []func() error) error {
 	sem := make(chan struct{}, limit)
@@ -224,25 +273,105 @@ func (w *partWriter) abort() {
 // files are the files a part's bytes are in, in order: its blob files, or
 // the one file a part was kept in before blobs were.
 func (up *upload) files(n int, p partRecord) []string {
+	if p.File != "" {
+		return []string{filepath.Join(up.dir, p.File)}
+	}
 	if p.Dir == "" {
 		return []string{up.partPath(n)}
 	}
 	dir := filepath.Join(up.dir, p.Dir)
-	out := make([]string, len(p.Blobs))
+	out := make([]string, (p.Size+chirp.ChunkSize-1)/chirp.ChunkSize)
 	for i := range out {
 		out[i] = blobFile(dir, i)
 	}
 	return out
 }
 
-// staged reports whether a part is kept as blobs that an object's blobs
-// can be made of: as a part before the last, it must be a whole number of
-// blobs.
+// staged reports whether a part is kept as hashed blobs that an object's
+// blobs can be made of: as a part before the last, it must be a whole
+// number of blobs.
 func (p partRecord) staged(last bool) bool {
 	if p.Dir == "" || len(p.Blobs) != len(p.Segs) || int64(len(p.Blobs)) != (p.Size+chirp.ChunkSize-1)/chirp.ChunkSize {
 		return false
 	}
 	return last || p.Size%chirp.ChunkSize == 0
+}
+
+// worthHashing reports whether part n, of size bytes, can still be one of
+// the parts an object is linked from. A part that is not a whole number of
+// blobs can only be the last: not with a higher part held or arriving, nor
+// beside another such part. The caller holds up.mu.
+func (up *upload) worthHashing(n int, size int64) bool {
+	if size%chirp.ChunkSize == 0 {
+		return true
+	}
+	up.loadParts()
+	doomed := func(k int, size int64) bool { return k > n || (k != n && size%chirp.ChunkSize != 0) }
+	for k, p := range up.parts {
+		if doomed(k, p.Size) {
+			return false
+		}
+	}
+	for k, size := range up.arriving {
+		if doomed(k, size) {
+			return false
+		}
+	}
+	return true
+}
+
+// openPart begins part n of size bytes: the record to fill and where the
+// bytes go, blob files when the object may be linked through the part, one
+// file otherwise. closed is called once the part is kept or given up.
+func (up *upload) openPart(n int, size int64) (part partRecord, sink partSink, closed func(), err error) {
+	var rnd [6]byte
+	_, _ = rand.Read(rnd[:])
+	name := fmt.Sprintf("part-%05d.%s", n, hex.EncodeToString(rnd[:]))
+	up.mu.Lock()
+	hashed := up.worthHashing(n, size)
+	if up.arriving == nil {
+		up.arriving = map[int]int64{}
+	}
+	up.arriving[n] = size
+	up.mu.Unlock()
+	closed = func() {
+		up.mu.Lock()
+		delete(up.arriving, n)
+		up.mu.Unlock()
+	}
+	if hashed {
+		part.Dir = name
+		sink, err = newPartWriter(filepath.Join(up.dir, name))
+	} else {
+		part.File = name
+		sink, err = newPartFile(filepath.Join(up.dir, name))
+	}
+	if err != nil {
+		closed()
+		return partRecord{}, nil, nil, err
+	}
+	return part, sink, closed, nil
+}
+
+// fill completes a part's record once its bytes are written.
+func (p *partRecord) fill(size int64, md5h string, hashes, segs [][32]byte) {
+	p.Size, p.MD5 = size, md5h
+	for i := range hashes {
+		p.Blobs = append(p.Blobs, hex.EncodeToString(hashes[i][:]))
+		p.Segs = append(p.Segs, hex.EncodeToString(segs[i][:]))
+	}
+}
+
+// discard removes a part's files.
+func (up *upload) discard(n int, p partRecord) {
+	switch {
+	case p.Dir != "":
+		_ = os.RemoveAll(filepath.Join(up.dir, p.Dir))
+	case p.File != "":
+		_ = os.Remove(filepath.Join(up.dir, p.File))
+	default:
+		_ = os.Remove(up.partPath(n))
+	}
 }
 
 // linked is a part's blobs as publish.StageLinked takes them.
@@ -270,7 +399,8 @@ func (up *upload) linked(p partRecord) ([]publish.LinkedBlob, error) {
 // over it, keeping the hash's state after every part. A part replaced
 // drops the states from it on. Completion waits for the goroutine, takes
 // the state after the longest run of the parts it names that starts at
-// part 1 and is hashed, and hashes the rest itself.
+// part 1 and is hashed, and hashes the rest itself. The run stops at a
+// part the object cannot be linked through (worthHashing).
 
 // runHash is an upload's content hash so far; its fields are guarded by
 // the upload's mu.
@@ -306,7 +436,9 @@ func (up *upload) advance() {
 	for !up.gone {
 		k := len(up.run.states) + 1
 		p, ok := up.parts[k]
-		if !ok {
+		// A part the object cannot be linked through ends the run: such
+		// an upload is read at completion, its content hash with it.
+		if !ok || !p.staged(true) || (p.Size%chirp.ChunkSize != 0 && !up.worthHashing(k, p.Size)) {
 			return
 		}
 		var base []byte

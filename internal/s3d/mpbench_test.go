@@ -3,9 +3,7 @@ package s3d
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"math/rand/v2"
 	"net/http"
@@ -79,7 +77,7 @@ func TestMultipartThroughput(t *testing.T) {
 			if legacy {
 				legacyPart(t, up, i+1, src, bh)
 			} else {
-				r.putFrom(up, i+1, src, bh)
+				r.putFrom(up, i+1, int64(len(parts[i])), src, bh)
 			}
 		})
 	}
@@ -115,13 +113,13 @@ func TestMultipartThroughput(t *testing.T) {
 }
 
 // putFrom is put of a part read from src through its body hashes.
-func (r *mpRig) putFrom(up *upload, n int, src io.Reader, bh *bodyHashes) {
+func (r *mpRig) putFrom(up *upload, n int, size int64, src io.Reader, bh *bodyHashes) {
 	r.t.Helper()
-	name := fmt.Sprintf("part-%05d.bench%d", n, n)
-	pw, err := newPartWriter(filepath.Join(up.dir, name))
+	part, pw, closed, err := up.openPart(n, size)
 	if err != nil {
 		r.t.Fatal(err)
 	}
+	defer closed()
 	if _, err := io.Copy(pw, src); err != nil {
 		r.t.Fatal(err)
 	}
@@ -129,11 +127,7 @@ func (r *mpRig) putFrom(up *upload, n int, src io.Reader, bh *bodyHashes) {
 	if err != nil {
 		r.t.Fatal(err)
 	}
-	part := partRecord{Size: bh.n, MD5: bh.md5Hex(), Dir: name}
-	for i := range hashes {
-		part.Blobs = append(part.Blobs, hex.EncodeToString(hashes[i][:]))
-		part.Segs = append(part.Segs, hex.EncodeToString(segs[i][:]))
-	}
+	part.fill(bh.n, bh.md5Hex(), hashes, segs)
 	if e := up.keep(n, part, pw.syncs(), 1<<40); e != nil {
 		r.t.Fatal(e)
 	}

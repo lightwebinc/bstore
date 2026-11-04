@@ -52,7 +52,8 @@ type upload struct {
 	parts      map[int]partRecord // read from disk once
 	done       *completedRec      // the result, once its entry was made
 	dir        string
-	gens       uint64 // numbers each part record held, in turn
+	gens       uint64        // numbers each part record held, in turn
+	arriving   map[int]int64 // the parts streaming in, by number: their sizes
 	run        runHash
 }
 
@@ -65,12 +66,14 @@ type completedRec struct {
 }
 
 // partRecord is a part held. Dir names the directory its blob files are
-// in, Blobs and Segs their hashes and segment subtree roots (hex); a
-// record without Dir is a part kept in one file at partPath.
+// in, Blobs and Segs their hashes and segment subtree roots (hex); File
+// names the one file a part no object can be linked through is kept in; a
+// record with neither is a part kept at partPath, as before blobs.
 type partRecord struct {
 	Size  int64    `json:"size"`
 	MD5   string   `json:"md5"`
 	Dir   string   `json:"dir,omitempty"`
+	File  string   `json:"file,omitempty"`
 	Blobs []string `json:"blobs,omitempty"`
 	Segs  []string `json:"segs,omitempty"`
 
@@ -218,9 +221,9 @@ func (up *upload) tidy() {
 		}
 		p, held := up.parts[k]
 		switch {
-		case dotted && (!held || p.Dir != name):
+		case dotted && (!held || (p.Dir != name && p.File != name)):
 			_ = os.RemoveAll(filepath.Join(up.dir, name))
-		case !dotted && held && p.Dir != "":
+		case !dotted && held && (p.Dir != "" || p.File != ""):
 			_ = os.Remove(filepath.Join(up.dir, name))
 		}
 	}
@@ -322,17 +325,15 @@ func (s *Server) uploadPart(ctx context.Context, w http.ResponseWriter, r *http.
 		return e
 	}
 	defer bd.hashes.sync()
-	var rnd [6]byte
-	_, _ = rand.Read(rnd[:])
-	name := fmt.Sprintf("part-%05d.%s", n, hex.EncodeToString(rnd[:]))
-	pw, err := newPartWriter(filepath.Join(up.dir, name))
+	part, pw, closed, err := up.openPart(n, bd.length)
 	if err != nil {
 		return errNoSuchUpload
 	}
+	defer closed()
 	kept := false
 	defer func() {
 		if !kept {
-			_ = os.RemoveAll(filepath.Join(up.dir, name))
+			up.discard(n, part)
 		}
 	}()
 	if _, err := io.Copy(pw, io.LimitReader(bd.r, bd.length+1)); err != nil {
@@ -348,12 +349,8 @@ func (s *Server) uploadPart(ctx context.Context, w http.ResponseWriter, r *http.
 		return e
 	}
 	md5h := bd.hashes.md5Hex()
-	part := partRecord{Size: bd.hashes.n, MD5: md5h, Dir: name}
-	for i := range hashes {
-		part.Blobs = append(part.Blobs, hex.EncodeToString(hashes[i][:]))
-		part.Segs = append(part.Segs, hex.EncodeToString(segs[i][:]))
-	}
-	// From here keep owns the part's directory.
+	part.fill(bd.hashes.n, md5h, hashes, segs)
+	// From here keep owns the part's files.
 	kept = true
 	if e := up.keep(n, part, pw.syncs(), s.cfg.Limits.MaxUpload); e != nil {
 		return e
@@ -375,7 +372,7 @@ func (s *Server) uploadPart(ctx context.Context, w http.ResponseWriter, r *http.
 // hash on theirs.
 func (up *upload) keep(n int, part partRecord, syncs []func() error, max int64) *s3Error {
 	refuse := func(e *s3Error) *s3Error {
-		_ = os.RemoveAll(filepath.Join(up.dir, part.Dir))
+		up.discard(n, part)
 		return e
 	}
 	raw, _ := json.Marshal(part)
@@ -420,11 +417,7 @@ func (up *upload) keep(n int, part partRecord, syncs []func() error, max int64) 
 	}
 	// The part this one replaced is no longer named.
 	if replaced {
-		if old.Dir != "" {
-			_ = os.RemoveAll(filepath.Join(up.dir, old.Dir))
-		} else {
-			_ = os.Remove(up.partPath(n))
-		}
+		up.discard(n, old)
 	}
 	return nil
 }
@@ -626,11 +619,7 @@ func (s *Server) completeUpload(ctx context.Context, w http.ResponseWriter, r *h
 		_ = writeSynced(filepath.Join(up.dir, "completed.json"), raw)
 		_ = os.RemoveAll(filepath.Join(up.dir, "parts"))
 		for i, n := range names {
-			if recs[i].Dir != "" {
-				_ = os.RemoveAll(filepath.Join(up.dir, recs[i].Dir))
-			} else {
-				_ = os.Remove(up.partPath(n))
-			}
+			up.discard(n, recs[i])
 		}
 		up.mu.Lock()
 		up.done, up.completing = c, false
