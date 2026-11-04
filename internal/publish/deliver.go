@@ -686,9 +686,10 @@ func (o *Outbox) newBatch() (*outBatch, error) {
 	if err != nil {
 		return nil, err
 	}
-	if d, err := os.Open(o.dir); err == nil {
-		_ = d.Sync()
-		d.Close()
+	if err := commits.syncDir(o.dir); err != nil {
+		f.Close()
+		os.Remove(path)
+		return nil, err
 	}
 	o.mu.Lock()
 	o.live[name] = true
@@ -770,7 +771,7 @@ func (b *outBatch) append(it *outItem) error {
 	}
 	upto, f := b.written, b.f
 	b.mu.Unlock()
-	if err := f.Sync(); err != nil {
+	if err := commits.syncFile(f); err != nil {
 		return err
 	}
 	b.mu.Lock()

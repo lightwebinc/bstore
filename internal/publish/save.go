@@ -181,7 +181,26 @@ func (s *saver) write(dir string, hot []byte) (int, error) {
 	if s.cold == nil {
 		s.cold = map[string]coldKey{}
 	}
+	// The cold files name nothing of each other: they are committed
+	// together, a bounded number at a time (their syncs at once, or one
+	// group's), and the hot part, which names them, follows after.
 	n, made := 0, false
+	var txids, paths []string
+	var bs [][]byte
+	flush := func() error {
+		if len(paths) == 0 {
+			return nil
+		}
+		if err := commits.writeAll(tmp, paths, bs); err != nil {
+			return err
+		}
+		for i, txid := range txids {
+			s.cold[txid] = s.refs[txid].key()
+			n += len(bs[i])
+		}
+		txids, paths, bs = txids[:0], paths[:0], bs[:0]
+		return nil
+	}
 	for txid, r := range s.refs {
 		k := r.key()
 		if have, ok := s.cold[txid]; ok && have == k {
@@ -201,11 +220,15 @@ func (s *saver) write(dir string, hot []byte) (int, error) {
 			}
 			made = true
 		}
-		if err := writeFileSync(tmp, path, b); err != nil {
-			return n, err
+		txids, paths, bs = append(txids, txid), append(paths, path), append(bs, b)
+		if len(paths) == coldPerCommit {
+			if err := flush(); err != nil {
+				return n, err
+			}
 		}
-		s.cold[txid] = k
-		n += len(b)
+	}
+	if err := flush(); err != nil {
+		return n, err
 	}
 	if err := writeFileSync(tmp, filepath.Join(dir, "publisher.json"), hot); err != nil {
 		return n, err
@@ -224,6 +247,9 @@ func (s *saver) write(dir string, hot []byte) (int, error) {
 	}
 	return n, nil
 }
+
+// coldPerCommit bounds the cold files one commit takes from a save.
+const coldPerCommit = 256
 
 // flushSaves writes any change not yet written and stops the saver; for
 // Close.
