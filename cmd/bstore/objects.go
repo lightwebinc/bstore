@@ -330,9 +330,13 @@ const lsHelp = `usage: bstore ls [PREFIX] [-after KEY] [-max N]
 List the keys of the bucket under PREFIX, each page proven complete
 against the chain's latest token (spec section 11.3); a key whose entry a
 host holds no copy of is read from another host, and is incomplete (exit
-3) when none does. Each line: size, created (the writer's claim), key.`
+3) when none does. Each line: size, created (the writer's claim), key. With
+an s3:// argument, ls is the S3 client instead (bstore ls s3://b -h).`
 
 func cmdLs(ctx context.Context, g *global, args []string) error {
+	if isS3(args) {
+		return cmdS3Ls(ctx, g, args)
+	}
 	fs := g.flagSet("ls", lsHelp)
 	after := fs.String("after", "", "list keys after this one")
 	maxN := fs.Int("max", 0, "the most keys listed (0: all)")
@@ -382,9 +386,13 @@ const rmHelp = `usage: bstore rm KEY
 
 Publish a delete entry for KEY. The key leaves the map at the owner's next
 token, as a removal; a delete of a key the map does not hold is named in
-that token's consumed, never applied again.`
+that token's consumed, never applied again. With an s3:// argument, rm is
+the S3 client instead (bstore rm s3://b/k -h).`
 
 func cmdRm(ctx context.Context, g *global, args []string) error {
+	if isS3(args) {
+		return cmdS3Rm(ctx, g, args)
+	}
 	fs := g.flagSet("rm", rmHelp)
 	pos, err := parse(fs, args)
 	if err != nil {
@@ -416,9 +424,13 @@ proof root, content type, ETag and metadata of SRC's anchored entry, read
 and checked as get reads it. Within one bucket nothing is published again;
 to another bucket (-to) the closure is published on its blob topic, from
 the home's store or from SRC's advertisers, every object held to its hash.
-A bounty may be set as on put.`
+A bounty may be set as on put. With an s3:// argument, cp is the S3 client
+instead (bstore cp s3://b/k -h).`
 
 func cmdCp(ctx context.Context, g *global, args []string) error {
+	if isS3(args) {
+		return cmdS3Cp(ctx, g, args)
+	}
 	fs := g.flagSet("cp", cpHelp)
 	to := fs.String("to", "", "the destination bucket (default the same)")
 	bf := bountyFlags(fs)
