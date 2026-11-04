@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -205,7 +206,11 @@ type Limits struct {
 	// averaged after its first IdleSeconds; slower is cut off.
 	MinRate int64 `json:"min_rate"`
 	// ReplayPerKey bounds the signatures one access key has remembered
-	// against replay; past it that key's writes wait.
+	// against replay; past it that key's writes are refused with SlowDown.
+	// A signature is remembered for the 15 minutes it could be replayed,
+	// so this bounds a key's sustained writes to ReplayPerKey / 900 a
+	// second. The default is one replay window at RequestsPerSec, so the
+	// request rate, not this, is what holds a key back.
 	ReplayPerKey int `json:"replay_per_key"`
 	// RequestsPerSec and Burst bound the requests of one access key.
 	RequestsPerSec float64 `json:"requests_per_sec"`
@@ -234,16 +239,18 @@ func (l *Limits) defaults() {
 	seti(&l.Uploads, 1000)
 	seti(&l.UploadsPerKey, 100)
 	seti(&l.UploadSeconds, 86400)
-	seti(&l.Writes, 8)
+	// 64: an S3 client's default concurrency (10 for the aws CLI, more for
+	// SDK transfer managers) is not refused at the door.
+	seti(&l.Writes, 64)
 	seti(&l.PartWrites, 32)
 	seti(&l.Reads, 32)
 	seti(&l.Stages, 32)
 	seti(&l.Lookups, 64)
 	set(&l.MinRate, 16<<10)
-	seti(&l.ReplayPerKey, 20000)
 	if l.RequestsPerSec <= 0 {
 		l.RequestsPerSec = 200
 	}
+	seti(&l.ReplayPerKey, int(math.Ceil(l.RequestsPerSec*maxSkew.Seconds())))
 	if l.Burst <= 0 {
 		l.Burst = 400
 	}
