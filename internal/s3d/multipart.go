@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -22,9 +23,10 @@ import (
 )
 
 // Multipart uploads (spec section 16.2) are the gateway's own state: the
-// parts are kept on disk as they arrive and assembled into one closure at
-// completion, re-chunked into 4 MiB blobs, with one entry. An upload
-// belongs to the gateway and the access key that began it.
+// parts are kept on disk as they arrive, cut into 4 MiB blobs and hashed
+// (partstage.go), and assembled into one closure at completion, with one
+// entry. An upload belongs to the gateway and the access key that began
+// it.
 
 const minPart = 5 << 20
 
@@ -50,6 +52,8 @@ type upload struct {
 	parts      map[int]partRecord // read from disk once
 	done       *completedRec      // the result, once its entry was made
 	dir        string
+	gens       uint64 // numbers each part record held, in turn
+	run        runHash
 }
 
 // completedRec is a completion whose entry was made, kept so that the
@@ -60,9 +64,18 @@ type completedRec struct {
 	SHA256   string `json:"sha256"`
 }
 
+// partRecord is a part held. Dir names the directory its blob files are
+// in, Blobs and Segs their hashes and segment subtree roots (hex); a
+// record without Dir is a part kept in one file at partPath.
 type partRecord struct {
-	Size int64  `json:"size"`
-	MD5  string `json:"md5"`
+	Size  int64    `json:"size"`
+	MD5   string   `json:"md5"`
+	Dir   string   `json:"dir,omitempty"`
+	Blobs []string `json:"blobs,omitempty"`
+	Segs  []string `json:"segs,omitempty"`
+
+	gen   uint64 // which record of the part this is, in this process
+	fresh bool   // its blobs were hashed by this process
 }
 
 func openUploads(dir string, now func() time.Time) (*uploads, error) {
@@ -92,6 +105,8 @@ func openUploads(dir string, now func() time.Time) (*uploads, error) {
 				up.done = &c
 			}
 		}
+		up.loadParts()
+		up.tidy()
 		u.m[up.ID] = &up
 	}
 	return u, nil
@@ -175,7 +190,38 @@ func (up *upload) loadParts() {
 			continue
 		}
 		if p, err := up.part(k); err == nil {
+			up.gens++
+			p.gen = up.gens
 			up.parts[k] = *p
+		}
+	}
+}
+
+// tidy removes what a stop cut short: a part's files no record names, and
+// temporary files. It runs at start, before any request.
+func (up *upload) tidy() {
+	ents, _ := os.ReadDir(up.dir)
+	for _, e := range ents {
+		name := e.Name()
+		if strings.HasPrefix(name, "tmp-") {
+			_ = os.Remove(filepath.Join(up.dir, name))
+			continue
+		}
+		rest, ok := strings.CutPrefix(name, "part-")
+		if !ok || strings.HasSuffix(name, ".json") || strings.HasSuffix(name, ".tmp") {
+			continue
+		}
+		num, _, dotted := strings.Cut(rest, ".")
+		k, err := strconv.Atoi(num)
+		if err != nil {
+			continue
+		}
+		p, held := up.parts[k]
+		switch {
+		case dotted && (!held || p.Dir != name):
+			_ = os.RemoveAll(filepath.Join(up.dir, name))
+		case !dotted && held && p.Dir != "":
+			_ = os.Remove(filepath.Join(up.dir, name))
 		}
 	}
 }
@@ -276,48 +322,110 @@ func (s *Server) uploadPart(ctx context.Context, w http.ResponseWriter, r *http.
 		return e
 	}
 	defer bd.hashes.sync()
-	f, err := os.CreateTemp(up.dir, "tmp-*")
+	var rnd [6]byte
+	_, _ = rand.Read(rnd[:])
+	name := fmt.Sprintf("part-%05d.%s", n, hex.EncodeToString(rnd[:]))
+	pw, err := newPartWriter(filepath.Join(up.dir, name))
 	if err != nil {
 		return errNoSuchUpload
 	}
-	tmp := f.Name()
-	defer os.Remove(tmp)
-	_, err = io.Copy(f, io.LimitReader(bd.r, bd.length+1))
-	if err == nil {
-		err = f.Sync()
-	}
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
+	kept := false
+	defer func() {
+		if !kept {
+			_ = os.RemoveAll(filepath.Join(up.dir, name))
+		}
+	}()
+	if _, err := io.Copy(pw, io.LimitReader(bd.r, bd.length+1)); err != nil {
+		pw.abort()
 		return bodyError(err)
+	}
+	hashes, segs, err := pw.finish()
+	if err != nil {
+		s.opts.Logf("s3d: upload %s part %d: %v", up.ID, n, err)
+		return errInternal
 	}
 	if e := bd.check(); e != nil {
 		return e
 	}
 	md5h := bd.hashes.md5Hex()
-	rec, _ := json.Marshal(partRecord{Size: bd.hashes.n, MD5: md5h})
-	up.mu.Lock()
-	defer up.mu.Unlock()
-	if up.completing || up.gone || up.done != nil {
-		return errNoSuchUpload
+	part := partRecord{Size: bd.hashes.n, MD5: md5h, Dir: name}
+	for i := range hashes {
+		part.Blobs = append(part.Blobs, hex.EncodeToString(hashes[i][:]))
+		part.Segs = append(part.Segs, hex.EncodeToString(segs[i][:]))
 	}
-	// Checked again under the lock: parts sent at once cannot together
-	// pass the upload's bound.
-	if up.size(n)+bd.hashes.n > s.cfg.Limits.MaxUpload {
-		return errTooLarge
+	// From here keep owns the part's directory.
+	kept = true
+	if e := up.keep(n, part, pw.syncs(), s.cfg.Limits.MaxUpload); e != nil {
+		return e
 	}
-	if err := os.Rename(tmp, up.partPath(n)); err != nil {
-		return errInternal
-	}
-	if err := writeSynced(up.partPath(n)+".json", rec); err != nil {
-		return errInternal
-	}
-	up.parts[n] = partRecord{Size: bd.hashes.n, MD5: md5h}
 	s.metrics.add("bstore_s3d_part_bytes_total", bd.hashes.n)
 	bd.hashes.responseHeaders(w.Header())
 	w.Header().Set("ETag", `"`+md5h+`"`)
 	w.WriteHeader(http.StatusOK)
+	return nil
+}
+
+// keep records part n, its blob files written, in place of any part n
+// held before, unless the upload is closing or the part would take it past
+// max bytes; a part refused is removed. syncs make the blob files durable.
+//
+// The record is written to a temporary file and synced at once with the
+// syncs, before the lock is taken, and renamed into place under it: parts
+// landing together do not wait on each other's syncs, nor the content
+// hash on theirs.
+func (up *upload) keep(n int, part partRecord, syncs []func() error, max int64) *s3Error {
+	refuse := func(e *s3Error) *s3Error {
+		_ = os.RemoveAll(filepath.Join(up.dir, part.Dir))
+		return e
+	}
+	raw, _ := json.Marshal(part)
+	var tmp string
+	err := parallel(16, append(syncs, func() error {
+		var err error
+		tmp, err = writeSyncedTemp(up.dir, raw)
+		return err
+	}))
+	if tmp != "" {
+		defer os.Remove(tmp)
+	}
+	if err != nil {
+		return refuse(errInternal)
+	}
+	up.mu.Lock()
+	if up.completing || up.gone || up.done != nil {
+		up.mu.Unlock()
+		return refuse(errNoSuchUpload)
+	}
+	// Checked again under the lock: parts sent at once cannot together
+	// pass the upload's bound.
+	if up.size(n)+part.Size > max {
+		up.mu.Unlock()
+		return refuse(errTooLarge)
+	}
+	if err := os.Rename(tmp, up.partPath(n)+".json"); err != nil {
+		up.mu.Unlock()
+		return refuse(errInternal)
+	}
+	old, replaced := up.parts[n]
+	up.gens++
+	part.gen, part.fresh = up.gens, true
+	up.parts[n] = part
+	up.dropFrom(n)
+	up.kick()
+	up.mu.Unlock()
+	// The record's new name, and the part's directory, are durable before
+	// the part is acknowledged.
+	if err := syncDir(up.dir); err != nil {
+		return errInternal
+	}
+	// The part this one replaced is no longer named.
+	if replaced {
+		if old.Dir != "" {
+			_ = os.RemoveAll(filepath.Join(up.dir, old.Dir))
+		} else {
+			_ = os.Remove(up.partPath(n))
+		}
+	}
 	return nil
 }
 
@@ -415,16 +523,21 @@ func (s *Server) completeUpload(ctx context.Context, w http.ResponseWriter, r *h
 		}
 	}()
 	var md5s [][]byte
-	var files []string
+	var names []int
+	var recs []partRecord
 	var total int64
 	prev := 0
+	up.mu.Lock()
+	up.loadParts()
+	held := maps.Clone(up.parts)
+	up.mu.Unlock()
 	for i, p := range req.Parts {
 		if p.PartNumber <= prev {
 			return &s3Error{"InvalidPartOrder", "The list of parts was not in ascending order. The parts list must be specified in order by part number.", http.StatusBadRequest}
 		}
 		prev = p.PartNumber
-		rec, err := up.part(p.PartNumber)
-		if err != nil || strings.Trim(p.ETag, `"`) != rec.MD5 {
+		rec, ok := held[p.PartNumber]
+		if !ok || strings.Trim(p.ETag, `"`) != rec.MD5 {
 			return &s3Error{"InvalidPart", "One or more of the specified parts could not be found. The part may not have been uploaded, or the specified entity tag may not match the part's entity tag.", http.StatusBadRequest}
 		}
 		if i < len(req.Parts)-1 && rec.Size < minPart {
@@ -432,7 +545,8 @@ func (s *Server) completeUpload(ctx context.Context, w http.ResponseWriter, r *h
 		}
 		m, _ := hex.DecodeString(rec.MD5)
 		md5s = append(md5s, m)
-		files = append(files, up.partPath(p.PartNumber))
+		names = append(names, p.PartNumber)
+		recs = append(recs, rec)
 		total += rec.Size
 	}
 	if total > s.cfg.Limits.MaxUpload {
@@ -482,19 +596,19 @@ func (s *Server) completeUpload(ctx context.Context, w http.ResponseWriter, r *h
 		finish(xmlError{Code: e.Code, Message: e.Message, Resource: r.URL.Path, RequestID: reqID})
 		return nil
 	}
-	sums := newBodyHashes(whole, "")
-	defer sums.sync()
-	staged, err := s.store.Stage(context.WithoutCancel(ctx), sums.reader(&partsReader{files: files}), uint64(total))
+	staged, bad, err := s.assemble(context.WithoutCancel(ctx), up, names, recs, uint64(total), whole)
 	if err != nil {
 		s.opts.Logf("s3d: completing upload %s: %v", up.ID, err)
 		return fail(errInternal)
 	}
-	defer staged.Release()
+	if staged != nil {
+		defer staged.Release()
+	}
+	if bad != nil {
+		return fail(bad)
+	}
 	if staged.Size != uint64(total) {
 		return fail(&s3Error{"InvalidPart", "A part changed on disk.", http.StatusBadRequest})
-	}
-	if e := sums.check(whole, nil); e != nil {
-		return fail(e)
 	}
 	etag := partETag(md5s)
 	rec, e := s.publishPut(ctx, a, b, key, up.ContentType, up.Meta, &etag, publish.Object{Root: staged.Root, Size: staged.Size,
@@ -511,11 +625,16 @@ func (s *Server) completeUpload(ctx context.Context, w http.ResponseWriter, r *h
 		raw, _ := json.Marshal(c)
 		_ = writeSynced(filepath.Join(up.dir, "completed.json"), raw)
 		_ = os.RemoveAll(filepath.Join(up.dir, "parts"))
-		for _, f := range files {
-			_ = os.Remove(f)
+		for i, n := range names {
+			if recs[i].Dir != "" {
+				_ = os.RemoveAll(filepath.Join(up.dir, recs[i].Dir))
+			} else {
+				_ = os.Remove(up.partPath(n))
+			}
 		}
 		up.mu.Lock()
 		up.done, up.completing = c, false
+		up.run.states = nil
 		up.mu.Unlock()
 		done = true
 	}
@@ -526,6 +645,87 @@ func (s *Server) completeUpload(ctx context.Context, w http.ResponseWriter, r *h
 	finish(completeResult{NS: s3NS, Location: location, Bucket: b.name, Key: key,
 		ETag: `"` + etag + `"`, ChecksumSHA256: base64Std(rec.Entry.ContentHash[:]), ChecksumType: "FULL_OBJECT"})
 	return nil
+}
+
+// assemble stages the parts named, in order, as one object: from the
+// blobs kept as they arrived when every part but the last is a whole
+// number of blobs, else by reading the parts. Either way the closure is
+// the one a put of the same bytes stages. A staged object comes back
+// even with an s3Error (a whole-object checksum that does not match), for
+// the caller to release.
+func (s *Server) assemble(ctx context.Context, up *upload, names []int, recs []partRecord, total uint64, whole http.Header) (*publish.Staged, *s3Error, error) {
+	linked := true
+	var files []string
+	for i, n := range names {
+		linked = linked && recs[i].staged(i == len(names)-1)
+		files = append(files, up.files(n, recs[i])...)
+	}
+	if linked {
+		staged, bad, err := s.stageLinked(ctx, up, names, recs, whole)
+		if err == nil {
+			return staged, bad, nil
+		}
+		// The same bytes either way: read them instead.
+		s.opts.Logf("s3d: completing upload %s from its blobs: %v; reading the parts", up.ID, err)
+	}
+	return s.stageRead(ctx, files, total, whole)
+}
+
+// stageRead stages the content read from files in order, as a put stages
+// its body, and checks the whole object's checksums the completion
+// declared.
+func (s *Server) stageRead(ctx context.Context, files []string, total uint64, whole http.Header) (*publish.Staged, *s3Error, error) {
+	var r io.Reader = &partsReader{files: files}
+	sums := newSums(whole)
+	defer sums.sync()
+	if sums.any() {
+		r = sums.reader(r)
+	}
+	staged, err := s.store.Stage(ctx, r, total)
+	if err != nil {
+		return nil, nil, err
+	}
+	return staged, sums.check(whole, nil), nil
+}
+
+// stageLinked stages the content from its parts' blobs as they were kept
+// and hashed when they arrived. It reads the content again only for what
+// the running content hash has not covered, and for the whole object's
+// checksums when the completion declares any. Every part but the last is
+// a whole number of blobs.
+func (s *Server) stageLinked(ctx context.Context, up *upload, names []int, recs []partRecord, whole http.Header) (*publish.Staged, *s3Error, error) {
+	var blobs []publish.LinkedBlob
+	for _, rec := range recs {
+		b, err := up.linked(rec)
+		if err != nil {
+			return nil, nil, err
+		}
+		blobs = append(blobs, b...)
+	}
+	sums := newSums(whole)
+	defer sums.sync()
+	var serr error
+	var wg sync.WaitGroup
+	if sums.any() {
+		var files []string
+		for i, n := range names {
+			files = append(files, up.files(n, recs[i])...)
+		}
+		wg.Go(func() { serr = hashFiles(sums, files) })
+	}
+	ch, err := up.contentHash(names, recs)
+	wg.Wait()
+	if err == nil {
+		err = serr
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	staged, err := s.store.StageLinked(ctx, blobs, ch)
+	if err != nil {
+		return nil, nil, err
+	}
+	return staged, sums.check(whole, nil), nil
 }
 
 // partsReader reads part files in order, one open at a time.
@@ -557,6 +757,37 @@ func (p *partsReader) Read(b []byte) (int, error) {
 		}
 		return n, err
 	}
+}
+
+// writeSyncedTemp writes b to a new temporary file in dir, synced, and
+// returns its path.
+func writeSyncedTemp(dir string, b []byte) (string, error) {
+	f, err := os.CreateTemp(dir, "tmp-*")
+	if err != nil {
+		return "", err
+	}
+	name := f.Name()
+	_, err = f.Write(b)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(name)
+		return "", err
+	}
+	return name, nil
+}
+
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 func writeSynced(path string, b []byte) error {
