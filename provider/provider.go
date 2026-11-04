@@ -204,9 +204,12 @@ type Provider struct {
 	outboxRun   atomic.Bool
 	outboxAgain atomic.Bool
 
+	// queue holds the roots to look at; queued is each one's place in the
+	// pipeline (hold.go), under qmu.
 	queue   chan string
-	queued  map[string]bool
+	queued  map[string]uint8
 	qmu     sync.Mutex
+	hooks   pipelineHooks
 	metrics *metrics
 
 	hmu    sync.Mutex
@@ -293,7 +296,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 		return nil, fmt.Errorf("advertisement journal: %w", err)
 	}
 	p := &Provider{cfg: cfg, inc: newIncremental(), opts: opts, st: st, index: newEntryIndex(st.Entries), fundings: fundings, wallet: w, signer: signer, pool: w.Pool,
-		queue: make(chan string, 4096), queued: map[string]bool{}, metrics: newMetrics(),
+		queue: make(chan string, 4096), queued: map[string]uint8{}, metrics: newMetrics(),
 		adSends: make(chan struct{}, maxAdSends), adDir: adDir, adFiles: adFiles, heldObjects: map[[32]byte]int32{}}
 	p.saveEnd = sync.NewCond(&p.mu)
 	for r, h := range st.Holdings {

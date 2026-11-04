@@ -152,6 +152,8 @@ func TestConfigRefusals(t *testing.T) {
 		"unclaimed":      func(c *Config) { c.QuotaBytes, c.UnclaimedBytes = 10, 11 },
 		"writer share":   func(c *Config) { c.UnclaimedBytes, c.Policy.MaxObject = 4<<20, 2<<20 },
 		"in flight":      func(c *Config) { c.Limits.InFlightPerAddr = -1 },
+		"verify workers": func(c *Config) { c.Limits.VerifyWorkers = maxVerifyWorkers + 1 },
+		"no verifiers":   func(c *Config) { c.Limits.VerifyWorkers = -1 },
 	} {
 		c := good()
 		edit(c)

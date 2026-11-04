@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/bsv-blockchain/go-sdk/chainhash"
@@ -40,14 +41,29 @@ const decisionHeld = "held"
 
 func (p *Provider) rootDir(rootHex string) string { return filepath.Join(p.cfg.Data, "roots", rootHex) }
 
+// A root is in the pipeline from enqueue until its decisions are made:
+// waiting in p.queue, then taken (verified, then decided). One taken that
+// is asked for again is marked, and queued once more after its decisions,
+// so the same root is never verified or decided twice at once.
+const (
+	rootWaiting uint8 = 1 + iota
+	rootTaken
+	rootAgain
+)
+
 // enqueue asks the worker to look at a root again.
 func (p *Provider) enqueue(rootHex string) {
 	p.qmu.Lock()
-	if p.queued[rootHex] {
+	switch p.queued[rootHex] {
+	case rootWaiting, rootAgain:
+		p.qmu.Unlock()
+		return
+	case rootTaken:
+		p.queued[rootHex] = rootAgain
 		p.qmu.Unlock()
 		return
 	}
-	p.queued[rootHex] = true
+	p.queued[rootHex] = rootWaiting
 	p.qmu.Unlock()
 	select {
 	case p.queue <- rootHex:
@@ -59,26 +75,137 @@ func (p *Provider) enqueue(rootHex string) {
 	}
 }
 
+// verifyJob is one queued root on its way through a verifier to the
+// decision worker; done carries its verification, sent once.
+type verifyJob struct {
+	root string
+	done chan verified
+}
+
+// verified is a root's verification half: the undecided entries it looked
+// at, oldest first, the entries it declined, in the order it declined them,
+// and whether the decisions go on (ok) or the root waits for its next look.
+type verified struct {
+	undecided []*EntryRec
+	declined  []verdict
+	ok        bool
+	err       error
+}
+
+type verdict struct{ c, why string }
+
+// pipelineHooks, set by tests before Start, see a root taken from the
+// queue, about to be verified (where a test makes a disk slow), and
+// decided.
+type pipelineHooks struct {
+	taken, verify, decided func(root string)
+}
+
+// worker looks at the queued roots: limits.verify_workers verifiers check
+// closures at once, each taking the next root in queue order, and one
+// decision worker takes their results in that same order, waiting for a
+// root still being verified before any root queued after it. So decisions,
+// holds and advertisements are made one root at a time in arrival order,
+// as they were with one worker, while the file reads, hashes and syncs of
+// several closures overlap. At most twice verify_workers roots wait for
+// their decisions.
 func (p *Provider) worker(ctx context.Context) {
+	n := p.cfg.Limits.VerifyWorkers
+	jobs := make(chan *verifyJob)
+	order := make(chan *verifyJob, 2*n)
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	wg.Add(n + 1)
+	for range n {
+		go func() { defer wg.Done(); p.verifier(ctx, jobs) }()
+	}
+	go func() { defer wg.Done(); p.decider(ctx, order) }()
 	for {
+		var r string
 		select {
 		case <-ctx.Done():
 			return
-		case r := <-p.queue:
-			p.qmu.Lock()
-			delete(p.queued, r)
-			p.qmu.Unlock()
-			if err := p.evaluate(ctx, r); err != nil && ctx.Err() == nil {
-				p.logf("root %s: %v", short(r), err)
-			}
+		case r = <-p.queue:
+		}
+		p.qmu.Lock()
+		p.queued[r] = rootTaken
+		p.qmu.Unlock()
+		if p.hooks.taken != nil {
+			p.hooks.taken(r)
+		}
+		// In the decision order first, then to a verifier: the decision
+		// worker waits on each job in the order the queue gave them.
+		j := &verifyJob{root: r, done: make(chan verified, 1)}
+		select {
+		case <-ctx.Done():
+			return
+		case order <- j:
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case jobs <- j:
 		}
 	}
 }
 
-// evaluate decides what to do for a root: hold it, advertise it, or wait
-// for more of its closure. It runs on the one worker, so one root at a
-// time is decided and every advertisement is minted in arrival order.
-func (p *Provider) evaluate(ctx context.Context, rootHex string) error {
+// verifier runs the verification half of the roots it is handed. done is
+// buffered, so a verifier never waits on the decision worker.
+func (p *Provider) verifier(ctx context.Context, jobs <-chan *verifyJob) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case j := <-jobs:
+			if p.hooks.verify != nil {
+				p.hooks.verify(j.root)
+			}
+			j.done <- p.verify(ctx, j.root)
+		}
+	}
+}
+
+// decider makes each root's decisions, in queue order.
+func (p *Provider) decider(ctx context.Context, order <-chan *verifyJob) {
+	for {
+		var j *verifyJob
+		select {
+		case <-ctx.Done():
+			return
+		case j = <-order:
+		}
+		var v verified
+		select {
+		case <-ctx.Done():
+			return
+		case v = <-j.done:
+		}
+		if ctx.Err() != nil {
+			// Not decided: a start, or the next background pass, looks
+			// at it again.
+			return
+		}
+		if err := p.evaluate(ctx, j.root, v); err != nil && ctx.Err() == nil {
+			p.logf("root %s: %v", short(j.root), err)
+		}
+		if p.hooks.decided != nil {
+			p.hooks.decided(j.root)
+		}
+		p.qmu.Lock()
+		again := p.queued[j.root] == rootAgain
+		delete(p.queued, j.root)
+		p.qmu.Unlock()
+		if again {
+			p.enqueue(j.root)
+		}
+	}
+}
+
+// verify is a root's verification half: its undecided entries, and its
+// closure verified when it is not held verified yet. It decides nothing:
+// the entries it declines are returned for the decision worker to decline,
+// in order. Verifiers run it for different roots at once.
+func (p *Provider) verify(ctx context.Context, rootHex string) verified {
 	p.mu.Lock()
 	var undecided []*EntryRec
 	for _, e := range p.index.undecided[rootHex] {
@@ -87,7 +214,7 @@ func (p *Provider) evaluate(ctx context.Context, rootHex string) error {
 	h := p.st.Holdings[rootHex]
 	p.mu.Unlock()
 	if len(undecided) == 0 {
-		return nil
+		return verified{}
 	}
 	// Oldest first: the first entry seen is the first raced for.
 	sort.Slice(undecided, func(i, j int) bool {
@@ -96,14 +223,32 @@ func (p *Provider) evaluate(ctx context.Context, rootHex string) error {
 		}
 		return undecided[i].C < undecided[j].C
 	})
+	v := verified{undecided: undecided, ok: true}
 	if h == nil || !h.Verified {
-		ok, err := p.verifyRoot(ctx, rootHex, undecided)
-		if err != nil || !ok {
-			return err
-		}
+		v.ok, v.err = p.verifyRoot(ctx, rootHex, undecided, func(c, why string) {
+			v.declined = append(v.declined, verdict{c, why})
+		})
+	}
+	return v
+}
+
+// evaluate decides what to do for a root once verified: hold it, advertise
+// it, or wait for more of its closure. It runs on the one decision worker,
+// so one root at a time is decided and every advertisement is minted in
+// arrival order.
+func (p *Provider) evaluate(ctx context.Context, rootHex string, v verified) error {
+	for _, d := range v.declined {
+		p.decide(d.c, d.why)
+	}
+	if v.err != nil || !v.ok {
+		return v.err
 	}
 	p.mu.Lock()
-	h = p.st.Holdings[rootHex]
+	// An entry decided since it was looked at (declined above, or ended
+	// by a delete while the roots before this one were decided) keeps
+	// its decision.
+	undecided := slices.DeleteFunc(slices.Clone(v.undecided), func(e *EntryRec) bool { return e.Decision != "" })
+	h := p.st.Holdings[rootHex]
 	damaged := h == nil || h.Damaged
 	p.mu.Unlock()
 	if damaged {
@@ -154,7 +299,7 @@ func (p *Provider) evaluate(ctx context.Context, rootHex string) error {
 // expireUndecided declines the entries whose closure has not arrived
 // within the time an unclaimed piece is kept: the pieces that came are gone
 // by then too.
-func (p *Provider) expireUndecided(entries []*EntryRec, rootHere bool) {
+func (p *Provider) expireUndecided(entries []*EntryRec, rootHere bool, decide func(c, why string)) {
 	wait := time.Duration(p.cfg.UnclaimedSeconds) * time.Second
 	if !rootHere {
 		// Not even the root node came: a closure that is coming starts
@@ -164,7 +309,7 @@ func (p *Provider) expireUndecided(entries []*EntryRec, rootHere bool) {
 	cutoff := p.now().Add(-wait).UnixNano()
 	for _, e := range entries {
 		if e.At < cutoff {
-			p.decide(e.C, "the closure did not arrive in time")
+			decide(e.C, "the closure did not arrive in time")
 		}
 	}
 }
@@ -214,14 +359,16 @@ func (p *Provider) fetch(h [32]byte) ([]byte, error) {
 // names it with the right size and content hash: spec section 9.3 steps 1
 // and 2, as rows C1 to C4 of frozen.md section 14 have them. A closure not
 // yet complete is waited for (false, nil). A closure that fails for any
-// other reason is the writer's: every entry it fails is declined. It
-// writes the proof tree's files and the holding.
-func (p *Provider) verifyRoot(ctx context.Context, rootHex string, entries []*EntryRec) (bool, error) {
+// other reason is the writer's: every entry it fails is declined, through
+// decline, which the decision worker applies. It writes the proof tree's
+// files and the holding. Verifiers run it for different roots at once: what
+// it writes is the root's own directory and, under p.mu, its holding.
+func (p *Provider) verifyRoot(ctx context.Context, rootHex string, entries []*EntryRec, decline func(c, why string)) (bool, error) {
 	root := mustHash(rootHex)
 	// Every object the closure names must be here before a blob is read:
 	// a closure still arriving costs its node reads, never its blobs.
 	if !p.store.Has(root) || !p.complete(root) {
-		p.expireUndecided(entries, p.store.Has(root))
+		p.expireUndecided(entries, p.store.Has(root), decline)
 		return false, nil
 	}
 	select {
@@ -239,11 +386,11 @@ func (p *Provider) verifyRoot(ctx context.Context, rootHex string, entries []*En
 	var fit []*EntryRec
 	for _, x := range entries {
 		if x.Size > p.cfg.Policy.MaxObject {
-			p.decide(x.C, "the object is larger than this provider takes")
+			decline(x.C, "the object is larger than this provider takes")
 			continue
 		}
 		if _, err := storerec.CheckRoot(rootBytes, root, x.Size, mustHash(x.ContentHash)); err != nil {
-			p.decide(x.C, why(err))
+			decline(x.C, why(err))
 			continue
 		}
 		fit = append(fit, x)
@@ -259,14 +406,14 @@ func (p *Provider) verifyRoot(ctx context.Context, rootHex string, entries []*En
 			return false, nil
 		}
 		for _, x := range entries {
-			p.decide(x.C, why(err))
+			decline(x.C, why(err))
 		}
 		p.inc.forget(root, nil)
 		return false, nil
 	}
 	if !c.Canonical {
 		for _, x := range entries {
-			p.decide(x.C, "root: not profile 1's canonical construction")
+			decline(x.C, "root: not profile 1's canonical construction")
 		}
 		p.inc.forget(root, c.Blobs)
 		return false, nil
@@ -283,7 +430,7 @@ func (p *Provider) verifyRoot(ctx context.Context, rootHex string, entries []*En
 	var e *EntryRec
 	for _, x := range entries {
 		if mustHash(x.ProofRoot) != pr {
-			p.decide(x.C, "proof-root: the recomputed proof root differs from the entry's")
+			decline(x.C, "proof-root: the recomputed proof root differs from the entry's")
 		} else if e == nil {
 			e = x
 		}
@@ -294,6 +441,15 @@ func (p *Provider) verifyRoot(ctx context.Context, rootHex string, entries []*En
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	// Another root dropped while this one was read may have taken an
+	// object the two share (its last holder, as far as it could tell):
+	// checked under p.mu, where a drop deletes, the closure is whole.
+	for _, o := range c.Objects {
+		if !p.store.Has(o) {
+			_ = os.RemoveAll(p.rootDir(rootHex))
+			return false, nil
+		}
+	}
 	h := p.st.Holdings[rootHex]
 	if h == nil {
 		h = &Holding{Root: rootHex, At: p.now().Unix()}
