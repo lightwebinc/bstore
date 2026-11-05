@@ -73,7 +73,8 @@ type Receipt struct {
 	// what was not taken.
 	Delivered <-chan struct{}
 	delivered chan struct{}
-	// Pieces is how many piece carriers were minted.
+	// Pieces is how many piece carriers the put committed, each minted
+	// in the background on the output reserved for it.
 	Pieces int
 	// Uploads are the providers' answers when the closure went by upload
 	// sessions instead of piece carriers.
@@ -107,13 +108,15 @@ func (r *Receipt) Wait(ctx context.Context) error {
 // Put publishes obj under f: a hold output first when b asks for one, then
 // the closure's pieces on the bucket's blob topic (unless obj.Closure is
 // nil), then a put entry. It returns once the put is committed: the hold
-// taken, every piece carrier and the entry minted on funding outputs
-// recorded used and written to the outbox, synced, and the entry logged
-// with its race. The sends run in the background, the pieces first and
-// the entry after them, PieceWorkers at a time, and what a target did not
-// take is sent again from the outbox, after a restart too; Wait reports
-// the first send. A closure that goes by upload session is uploaded before
-// Put returns, as the session answers for it.
+// taken, a funding output reserved for every piece carrier and recorded
+// used, a record to mint each from written to the outbox, the entry
+// minted on an output recorded used and written to the outbox, all
+// synced, and the entry logged with its race. The pieces are minted and
+// sent in the background, PieceWorkers at a time, the entry sent after
+// them, and what a target did not take is sent again from the outbox,
+// after a restart too, each piece minted once on its reserved output;
+// Wait reports the first send. A closure that goes by upload session is
+// uploaded before Put returns, as the session answers for it.
 func (p *Publisher) Put(ctx context.Context, f Fields, obj Object, b *Bounty) (*Receipt, error) {
 	e := &storerec.Entry{Bucket: f.Bucket, ID: f.ID, Writer: p.Identity(), Key: f.Key, Kind: storerec.KindPut,
 		Created: uint64(f.Created.UnixMilli()), Size: obj.Size, Root: obj.Root, ContentHash: obj.ContentHash,
@@ -276,21 +279,29 @@ func (p *Publisher) Delete(ctx context.Context, bucket string, id [32]byte, key 
 	return p.publishEntry(ctx, e, rec, nil)
 }
 
-// pieceBatch is a put's piece carriers, minted and in the outbox, to send.
+// pieceBatch is a put's piece carriers in the outbox: to mint later and
+// send, or minted already, to send.
 type pieceBatch struct {
 	b     *outBatch
 	items []*outItem
+	// c is the closure the pieces to mint later are read from (the local
+	// store, as the put staged it); nil when every carrier is minted.
+	c Closure
 }
 
-// mintPieces mints one piece carrier per distinct object of the closure,
-// PieceWorkers at a time: memory holds one object and one carrier a
-// worker. The outputs of each tree spent are recorded used before the
-// first carrier on them is signed, and each carrier is written to the
-// outbox, synced, before mintPieces returns; the batch stays the put's
-// (live) until its sends are done. A put spends what the current tree has
-// left before it switches to the next, minted ahead. A mint that fails
-// stops the put, and the carriers it minted are dropped from the outbox,
-// since no entry names them and the client's retry mints its own.
+// mintPieces commits one piece carrier per distinct object of the
+// closure. The outputs of each tree spent are recorded used, synced,
+// first. A closure of the local store (every put of the gateway and the
+// command) is then written to the outbox as records to mint later, one
+// an object naming its output, all synced at once, and mintPieces
+// returns: the carriers are minted and sent in the background (deliver),
+// and after a restart by the outbox's retry, each exactly once on the
+// output its record reserved. Any other closure's carriers are minted
+// here, PieceWorkers at a time, and kept whole. The batch stays the put's
+// (live) until its first sends are done. A put spends what the current
+// tree has left before it switches to the next, minted ahead. A failure
+// stops the put, and what it wrote is dropped from the outbox, since no
+// entry names it and the client's retry commits its own.
 func (p *Publisher) mintPieces(ctx context.Context, bucket string, root [32]byte, c Closure) (*pieceBatch, error) {
 	objs := c.Objects()
 	targets := p.cfg.Delivery.pieceTargets(bucket)
@@ -307,6 +318,9 @@ func (p *Publisher) mintPieces(ctx context.Context, bucket string, root [32]byte
 		return nil, err
 	}
 	pb := &pieceBatch{b: b, items: make([]*outItem, len(objs))}
+	if byRef {
+		pb.c = c
+	}
 	done := 0
 	for done < len(objs) {
 		batch := min(len(objs)-done, mint.MaxFundingOutputs)
@@ -316,9 +330,15 @@ func (p *Publisher) mintPieces(ctx context.Context, bucket string, root [32]byte
 			batch = min(batch, p.cfg.PieceTree)
 		}
 		tree, vout, err := p.spend(ctx, kindPiece, uint32(batch))
-		if err == nil {
+		if err == nil && byRef {
+			p.cacheTree(tree)
+			var items []*outItem
+			if items, err = p.outbox.addMint(b, bucket, root, objs[done:done+batch], tree.TxID().String(), vout, targets); err == nil {
+				copy(pb.items[done:], items)
+			}
+		} else if err == nil {
 			err = p.eachPiece(ctx, len(objs[done:done+batch]), func(ctx context.Context, i int) error {
-				it, err := p.mintOne(ctx, bucket, root, c, objs[done+i], tree, vout+uint32(i), targets, b, byRef)
+				it, err := p.mintOne(ctx, bucket, root, c, objs[done+i], tree, vout+uint32(i), targets, b)
 				pb.items[done+i] = it
 				return err
 			})
@@ -332,6 +352,118 @@ func (p *Publisher) mintPieces(ctx context.Context, bucket string, root [32]byte
 	}
 	return pb, nil
 }
+
+// cacheTree keeps a mined funding tree for the pieces minted later on it,
+// so that each does not rebuild it from the state; keptTree is the tree,
+// from the cache or the state. A mined tree does not change. The cache is
+// small: the trees of the puts in flight.
+func (p *Publisher) cacheTree(tree *transaction.Transaction) {
+	if tree == nil || tree.MerklePath == nil {
+		return
+	}
+	p.treeMu.Lock()
+	defer p.treeMu.Unlock()
+	if len(p.trees) >= 8 {
+		clear(p.trees)
+	}
+	p.trees[tree.TxID().String()] = tree
+}
+
+func (p *Publisher) keptTree(txid string) (*transaction.Transaction, error) {
+	p.treeMu.Lock()
+	tree, ok := p.trees[txid]
+	p.treeMu.Unlock()
+	if ok {
+		return tree, nil
+	}
+	tree, err := p.loadKept(txid)
+	if err != nil {
+		return nil, err
+	}
+	p.cacheTree(tree)
+	return tree, nil
+}
+
+// mintLater mints the carrier of a piece kept to mint later, on the
+// output its record reserved, writes the minted form to the outbox,
+// synced, and returns the BEEF to send (to release with putBEEF after).
+// c reads the object when it is the closure the put staged (no second
+// hash); nil reads the store, which holds the object to its hash. What
+// it needs may be gone (the tree swept, the object trimmed, the identity
+// killed): the error is the caller's to keep the record owed.
+func (p *Publisher) mintLater(ctx context.Context, it *outItem, c Closure) ([]byte, error) {
+	if p.Killed() {
+		return nil, ErrKilled
+	}
+	h, err := parseHash(it.Ref)
+	if err != nil {
+		return nil, err
+	}
+	root, err := parseHash(it.Root)
+	if err != nil {
+		return nil, err
+	}
+	tree, err := p.keptTree(it.Tree)
+	if err != nil {
+		return nil, err
+	}
+	d, t0 := p.cfg.Delivery, time.Now()
+	data, err := p.readPiece(ctx, c, h)
+	if err != nil {
+		return nil, fmt.Errorf("object %x: %w", h[:6], err)
+	}
+	d.observe(pieceStage("read"), t0)
+	t0 = time.Now()
+	tx, beef, at, err := p.mintPiece(ctx, it.Bucket, root, data, tree, it.Vout)
+	putObject(data)
+	if err != nil {
+		return nil, err
+	}
+	d.observe(pieceStage("mint"), t0)
+	t0 = time.Now()
+	if err := p.outbox.minted(it, tx.TxID().String(), beef, at, len(data)); err != nil {
+		putBEEF(beef)
+		return nil, err
+	}
+	d.observe(pieceStage("outbox"), t0)
+	return beef, nil
+}
+
+// readPiece is one object of a closure, in a buffer from the pool when
+// the closure is the local store (putObject gives it back).
+func (p *Publisher) readPiece(ctx context.Context, c Closure, h [32]byte) ([]byte, error) {
+	switch sc := c.(type) {
+	case nil:
+		return p.cfg.Store.readInto(h, false, getBuf(&objectBufs))
+	case StoreClosure:
+		return sc.Store.readInto(h, sc.Staged, getBuf(&objectBufs))
+	}
+	return c.Object(ctx, h)
+}
+
+// The buffers a piece passes through are pooled: a 4 MiB object and its
+// carrier's BEEF, fresh each piece, cost page faults and garbage before
+// any byte is hashed.
+var objectBufs, beefBufs sync.Pool
+
+func getBuf(pool *sync.Pool) []byte {
+	if b, ok := pool.Get().(*[]byte); ok {
+		return (*b)[:0]
+	}
+	return nil
+}
+
+func putBuf(pool *sync.Pool, b []byte) {
+	if cap(b) >= storerec.BlobSize {
+		pool.Put(&b)
+	}
+}
+
+func putObject(b []byte) { putBuf(&objectBufs, b) }
+
+// putBEEF gives a BEEF mintPiece built back to the pool, once its send is
+// answered. One that is not given back is garbage, no worse.
+func putBEEF(b []byte) { putBuf(&beefBufs, b) }
 
 // eachPiece runs f over 0 to n-1, PieceWorkers at a time, and returns the
 // first failure after every worker has stopped. A step under way is run to
@@ -377,12 +509,13 @@ func (p *Publisher) eachPiece(ctx context.Context, n int, f func(ctx context.Con
 	return first
 }
 
-// mintOne mints one piece carrier and records it in the outbox. Its
-// transaction id is computed once, over the carrier's bytes where they
-// lie in the BEEF, and kept on the transaction, so the outbox key hashes
-// the 4 MiB carrier no second time.
+// mintOne mints one piece carrier of a closure that is not the local
+// store and records it in the outbox, whole. Its transaction id is
+// computed once, over the carrier's bytes where they lie in the BEEF, and
+// kept on the transaction, so the outbox key hashes the 4 MiB carrier no
+// second time.
 func (p *Publisher) mintOne(ctx context.Context, bucket string, root [32]byte, c Closure, h [32]byte,
-	tree *transaction.Transaction, out uint32, targets []Target, b *outBatch, byRef bool) (*outItem, error) {
+	tree *transaction.Transaction, out uint32, targets []Target, b *outBatch) (*outItem, error) {
 	d, t0 := p.cfg.Delivery, time.Now()
 	data, err := c.Object(ctx, h)
 	if err != nil {
@@ -390,19 +523,14 @@ func (p *Publisher) mintOne(ctx context.Context, bucket string, root [32]byte, c
 	}
 	d.observe(pieceStage("read"), t0)
 	t0 = time.Now()
-	tx, beef, at, err := p.mintPiece(ctx, bucket, root, data, tree, out)
+	tx, beef, _, err := p.mintPiece(ctx, bucket, root, data, tree, out)
 	if err != nil {
 		return nil, err
 	}
-	txid := tx.TxID()
 	d.observe(pieceStage("mint"), t0)
 	t0 = time.Now()
-	var it *outItem
-	if byRef {
-		it, err = p.outbox.addRef(b, txid.String(), "piece", beef, h, at, len(data), targets)
-	} else {
-		it, err = p.outbox.add(txid.String(), "piece", beef, targets)
-	}
+	it, err := p.outbox.add(tx.TxID().String(), "piece", beef, targets)
+	putBEEF(beef)
 	if err != nil {
 		return nil, err
 	}
@@ -411,21 +539,30 @@ func (p *Publisher) mintOne(ctx context.Context, bucket string, root [32]byte, c
 	return it, nil
 }
 
-// sendMinted sends a put's piece carriers, PieceWorkers at a time, each
-// read back from the outbox (the stored object and the carrier's head and
-// tail). One no target took is logged by the outbox and sent again later.
+// sendMinted mints and sends a put's piece carriers, PieceWorkers at a
+// time: each minted on the output its record reserved (or read back from
+// the outbox when it was minted already), then sent. One no target took
+// is logged by the outbox and sent again later; one that could not be
+// minted stays owed and is minted again later.
 func (p *Publisher) sendMinted(ctx context.Context, pb *pieceBatch) {
 	_ = p.eachPiece(ctx, len(pb.items), func(ctx context.Context, i int) error {
 		it := pb.items[i]
-		beef, err := p.outbox.beefOf(it)
-		if err != nil {
-			p.cfg.Logf("piece %s: %v; it cannot be sent", short(it.ID), err)
+		var beef []byte
+		var err error
+		if it.What == whatMint {
+			if beef, err = p.mintLater(ctx, it, pb.c); err != nil {
+				p.outbox.later(it, err)
+				return nil
+			}
+		} else if beef, err = p.outbox.beefOf(it); err != nil {
+			p.cfg.Logf("piece %s: %v; it cannot be sent", it.name(), err)
 			p.outbox.remove(it)
 			return nil
 		}
 		t0 := time.Now()
 		p.outbox.sendAll(ctx, it, beef)
 		p.cfg.Delivery.observe(pieceStage("send"), t0)
+		putBEEF(beef)
 		return nil
 	})
 }
@@ -501,7 +638,8 @@ func pushHead(n int) []byte {
 }
 
 // pieceBEEF is tx.AtomicBEEF(false) for a carrier spending one output of a
-// mined funding tree, built once into a buffer of the exact size: the
+// mined funding tree, built once into a buffer of the exact size (from
+// the pool, when one is there; putBEEF gives it back): the
 // atomic prefix, the carrier's txid, BEEF v2, one BUMP (the tree's proof),
 // then the tree (raw, BUMP 0) and the carrier (raw), as the SDK lays them
 // out. The txid is hashed over the carrier's bytes where they lie, written
@@ -524,7 +662,10 @@ func pieceBEEF(tx, tree *transaction.Transaction) ([]byte, int, error) {
 	}
 	bump := tree.MerklePath.Bytes()
 	n := 4 + 32 + 4 + 1 + len(bump) + 1 + 2 + tree.Size() + 1 + tx.Size()
-	beef := make([]byte, 0, n)
+	beef := getBuf(&beefBufs)
+	if cap(beef) < n {
+		beef = make([]byte, 0, n)
+	}
 	beef = binary.LittleEndian.AppendUint32(beef, transaction.ATOMIC_BEEF)
 	beef = append(beef, make([]byte, 32)...) // the txid, once the carrier's bytes are in place
 	beef = binary.LittleEndian.AppendUint32(beef, transaction.BEEF_V2)

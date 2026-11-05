@@ -239,9 +239,10 @@ not do, stated so that nobody finds it by accident.
    the rest. A chain longer than the file holds asks hosts again for the
    part past it.
 8. **A retry is the same entry only while the first is still publishing.**
-   A put answers `200` once its carriers are in the outbox, whether or not
-   a target has taken them yet, so a write answered `200` and sent again
-   is a new write. The same write (same identity, key, content, content
+   A put answers `200` once its carriers are committed to the outbox (the
+   entry minted, each piece as a record to mint it from on a reserved
+   output), whether or not a piece has been minted or a target has taken
+   anything yet, so a write answered `200` and sent again is a new write. The same write (same identity, key, content, content
    type, ETag and metadata) sent again while the first is still being
    committed at this gateway waits for it and is answered from its entry,
    and no second entry is made. A retry after that, after a gateway

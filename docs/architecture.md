@@ -72,8 +72,13 @@ key against the owner's latest token and its own headers.
    plane, as piece carriers to each provider's `/submit`, or by BRC-167
    upload session); the entry goes to the hosts. With a bounty, a hold
    output minted ahead is named in the entry. The S3 gateway answers once
-   the carriers are minted and in its outbox and sends them from there
-   ([s3.md](s3.md)); `bstore put` waits for the first send.
+   the put is committed to its outbox: the hold taken, a funding output
+   reserved and recorded used for each piece, a record to mint each piece
+   from written, the entry minted and written, all synced. It mints and
+   sends the pieces from those records in the background and the entry
+   after them ([s3.md](s3.md)); a restart mints what is left on the
+   outputs reserved, never fresh ones, and the state keeps a funding
+   tree while a record names it. `bstore put` waits for the first send.
 3. **Hold.** Each provider checks the closure and the proof root, decides
    by its policy, and advertises (a mined BRC-26 advertisement).
 4. **Race.** The writer's client ranks advertisers by first sight,

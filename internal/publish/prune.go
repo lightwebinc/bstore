@@ -133,15 +133,18 @@ func (p *Publisher) racesOver() (map[string]bool, error) {
 
 // pruneTrees drops from each kind's history the trees spent out that are
 // not the current one: nothing is left on them for a sweep to take, and
-// no carrier is minted on them again. It returns how many were dropped.
+// no carrier is minted on them again. A tree the outbox still names (a
+// piece to mint later spends it) is kept until that mint. It returns how
+// many were dropped.
 func (p *Publisher) pruneTrees() (int, error) {
+	named := p.outbox.treesNamed()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	n := 0
 	for _, s := range []*treeSet{&p.st.Piece, &p.st.Entry, &p.st.Outcome} {
 		keep := s.Trees[:0]
 		for _, t := range s.Trees {
-			if t.Remaining() == 0 && (s.Tree == nil || s.Tree.Txid != t.Txid) {
+			if t.Remaining() == 0 && !named[t.Txid] && (s.Tree == nil || s.Tree.Txid != t.Txid) {
 				n++
 				continue
 			}

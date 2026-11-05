@@ -269,6 +269,8 @@ type Outbox struct {
 	Max    int64
 	owed   owedCount
 	owedAt time.Time
+	// minter mints a piece kept to mint later (the publisher's mintLater).
+	minter func(ctx context.Context, it *outItem, c Closure) ([]byte, error)
 }
 
 // DefaultOutboxMax is the bytes an identity's outbox may owe before a put
@@ -301,10 +303,141 @@ type outItem struct {
 	Tail []byte `json:"tail,omitempty"`
 	Sum  string `json:"sum,omitempty"`
 	Ver  int    `json:"ver,omitempty"`
+	// A piece carrier not minted yet (What whatMint): Ref names the stored
+	// object, Bucket and Root the piece record, and Tree and Vout the
+	// funding output reserved for it. Its ID is that output, and stays the
+	// item's once minted: the minted form (What "piece", by reference) is
+	// written under the same ID before the carrier's first send, and the
+	// last line of an ID is the item.
+	Bucket string `json:"bucket,omitempty"`
+	Root   string `json:"root,omitempty"`
+	Tree   string `json:"tree,omitempty"`
+	Vout   uint32 `json:"vout,omitempty"`
+	// Txid is the carrier's transaction id when the ID is not it.
+	Txid string `json:"txid,omitempty"`
 	// Done marks a batch line whose item left the batch.
 	Done string `json:"done,omitempty"`
 
 	batch *outBatch
+}
+
+// whatMint is a piece carrier to mint later, from the output reserved.
+const whatMint = "mint"
+
+// mintID is the ID of a piece minted later: the funding output it spends,
+// so that no two items mint on one output.
+func mintID(tree string, vout uint32) string {
+	return tree + "-" + strconv.FormatUint(uint64(vout), 10)
+}
+
+// name is the item for the log: its carrier's id, or the output a piece
+// not yet minted spends.
+func (it *outItem) name() string {
+	if it.Txid != "" {
+		return short(it.Txid)
+	}
+	if it.Tree != "" {
+		return "on " + short(it.Tree) + ":" + strconv.FormatUint(uint64(it.Vout), 10)
+	}
+	return short(it.ID)
+}
+
+// addMint records in batch b the piece carriers of a put to mint later,
+// a line each, synced together: each names its stored object, the piece
+// record's bucket and root, and the funding output reserved for it (vout
+// up, one an object). The objects are pinned while the items are owed.
+func (o *Outbox) addMint(b *outBatch, bucket string, root [32]byte, objs [][32]byte, tree string, vout uint32, targets []Target) ([]*outItem, error) {
+	if o.store == nil {
+		return nil, errors.New("no store to mint the pieces from later")
+	}
+	now := o.now()
+	items := make([]*outItem, len(objs))
+	for i, h := range objs {
+		v := vout + uint32(i)
+		items[i] = &outItem{ID: mintID(tree, v), What: whatMint, Targets: targets, Created: now, Next: now, batch: b,
+			Ref: hex.EncodeToString(h[:]), Bucket: bucket, Root: hex.EncodeToString(root[:]), Tree: tree, Vout: v}
+		o.markSending(items[i].ID)
+		o.pinRef(items[i])
+	}
+	if err := b.appendAll(items); err != nil {
+		for _, it := range items {
+			o.unpinRef(it.ID)
+			o.done(it.ID)
+		}
+		return nil, err
+	}
+	for _, it := range items {
+		b.track(it.ID)
+	}
+	return items, nil
+}
+
+// minted turns a mint item into its carrier, by reference: the BEEF's
+// head and tail around the object at offset at, the carrier's txid, and
+// What "piece"; the ID and Created stay. The item is written again (a line
+// of its batch, or its own file), synced, before it returns: a crash after
+// that sends these bytes again; one before it mints the same record on the
+// same output again, and nothing was sent.
+func (o *Outbox) minted(it *outItem, txid string, beef []byte, at, n int) error {
+	it.What, it.Txid = "piece", txid
+	if at < 0 || n < 1 || at+n > len(beef) {
+		// Not placed: kept whole, as addRef keeps such a carrier.
+		bp, _ := o.paths(it.ID)
+		if err := writeFileSync(filepath.Join(o.dir, "tmp"), bp, beef); err != nil {
+			return err
+		}
+		o.unpinRef(it.ID)
+		it.Ref = ""
+	} else {
+		it.Head, it.Tail, it.Ver = bytes.Clone(beef[:at]), bytes.Clone(beef[at+n:]), refVersion
+		it.Sum = refSum(it.Head, it.Tail)
+	}
+	it.Bucket, it.Root, it.Tree, it.Vout = "", "", "", 0
+	if it.batch != nil {
+		return it.batch.append(it)
+	}
+	return o.write(it)
+}
+
+// later keeps an item whose mint failed: logged, counted owed, and tried
+// again after a backoff by the retry run; a week old it is given up like
+// anything else owed.
+func (o *Outbox) later(it *outItem, err error) {
+	o.logf("piece %s: not minted (%v); it is tried again later", it.name(), err)
+	it.Tries++
+	back := time.Duration(1<<min(it.Tries, 10)) * 5 * time.Second
+	it.Next = o.now().Add(min(back, time.Hour))
+	o.park(it)
+}
+
+// park writes an item to a file of its own and takes it out of its batch:
+// a crash between the two leaves both, and the file wins.
+func (o *Outbox) park(it *outItem) {
+	if err := o.write(it); err != nil {
+		o.logf("outbox %s: %v", it.name(), err)
+		return
+	}
+	if it.batch != nil {
+		it.batch.markDone(it.ID)
+		it.batch = nil
+	}
+}
+
+// treesNamed is every funding tree a piece not yet minted spends: the
+// state keeps those until the mint.
+func (o *Outbox) treesNamed() map[string]bool {
+	if o == nil {
+		return nil
+	}
+	items := o.load()
+	defer o.closeBatches(items)
+	out := map[string]bool{}
+	for _, it := range items {
+		if it.What == whatMint {
+			out[it.Tree] = true
+		}
+	}
+	return out
 }
 
 // outboxKeep is how long an undelivered object is tried.
@@ -504,10 +637,10 @@ func (o *Outbox) sendAll(ctx context.Context, it *outItem, beef []byte) (ok, ref
 		case errors.Is(r.err, errRefused):
 			// Taken nothing, for a reason the same bytes will not change:
 			// neither delivered nor sent again.
-			o.logf("%s %s: %v", it.What, short(it.ID), r.err)
+			o.logf("%s %s: %v", it.What, it.name(), r.err)
 			refused = append(refused, r.t)
 		default:
-			o.logf("%s %s: not delivered to %s (%v); it is sent again later", it.What, short(it.ID), r.t.Base, r.err)
+			o.logf("%s %s: not delivered to %s (%v); it is sent again later", it.What, it.name(), r.t.Base, r.err)
 			left = append(left, r.t)
 		}
 	}
@@ -519,17 +652,21 @@ func (o *Outbox) sendAll(ctx context.Context, it *outItem, beef []byte) (ok, ref
 	}
 	back := time.Duration(1<<min(it.Tries, 10)) * 5 * time.Second
 	it.Next = o.now().Add(min(back, time.Hour))
-	// An item of a batch moves to a file of its own, then leaves the
-	// batch: a crash between the two leaves both, and the file wins.
-	if err := o.write(it); err != nil {
-		o.logf("outbox %s: %v", short(it.ID), err)
-		return ok, refused
-	}
-	if it.batch != nil {
-		it.batch.markDone(it.ID)
-		it.batch = nil
-	}
+	// An item of a batch moves to a file of its own.
+	o.park(it)
 	return ok, refused
+}
+
+// ready is an item's BEEF to send: minted now when it is a piece to mint
+// later (through the publisher's minter), or read back.
+func (o *Outbox) ready(ctx context.Context, it *outItem) ([]byte, error) {
+	if it.What != whatMint {
+		return o.beefOf(it)
+	}
+	if o.minter == nil {
+		return nil, errors.New("no publisher to mint the piece")
+	}
+	return o.minter(ctx, it, nil)
 }
 
 // Drop removes every item of the given kinds ("piece", "entry",
@@ -577,17 +714,27 @@ func (o *Outbox) retry(ctx context.Context, all bool) {
 			continue
 		}
 		if o.now().Sub(it.Created) > outboxKeep {
-			o.logf("%s %s: given up after a week; still owed to %d target(s)", it.What, short(it.ID), len(it.Targets))
+			o.logf("%s %s: given up after a week; still owed to %d target(s)", it.What, it.name(), len(it.Targets))
 			o.remove(it)
 			continue
 		}
-		beef, err := o.beefOf(it)
+		mint := it.What == whatMint
+		beef, err := o.ready(ctx, it)
+		if err != nil && mint {
+			// Not minted: what it needs (the tree, the object, the wallet)
+			// may come back; it stays owed.
+			o.later(it, err)
+			continue
+		}
 		if err != nil {
-			o.logf("outbox %s: %v; it cannot be sent again", short(it.ID), err)
+			o.logf("outbox %s: %v; it cannot be sent again", it.name(), err)
 			o.remove(it)
 			continue
 		}
 		o.send(ctx, it, beef)
+		if mint {
+			putBEEF(beef)
+		}
 	}
 }
 
@@ -725,12 +872,21 @@ func (o *Outbox) openBatch(name string) (*outBatch, []*outItem, error) {
 		}
 	}
 	b := &outBatch{o: o, path: path, open: map[string]bool{}}
+	// The last line of an ID is the item (a piece minted later is written
+	// again, minted); the order is that of the first.
 	var out []*outItem
+	at := map[string]int{}
 	for _, it := range lines {
-		if !done[it.ID] && !b.open[it.ID] {
-			b.open[it.ID] = true
-			out = append(out, it)
+		if done[it.ID] {
+			continue
 		}
+		if i, ok := at[it.ID]; ok {
+			out[i] = it
+			continue
+		}
+		b.open[it.ID] = true
+		at[it.ID] = len(out)
+		out = append(out, it)
 	}
 	if len(out) == 0 {
 		_ = os.Remove(path)
@@ -744,25 +900,35 @@ func (o *Outbox) openBatch(name string) (*outBatch, []*outItem, error) {
 
 // append writes an item's line and returns once a sync covers it; the
 // workers of one put share each sync.
-func (b *outBatch) append(it *outItem) error {
-	c := *it
-	c.batch = nil
-	raw, err := json.Marshal(&c)
-	if err != nil {
-		return err
+func (b *outBatch) append(it *outItem) error { return b.appendAll([]*outItem{it}) }
+
+// appendAll writes the items' lines, one write, and returns once a sync
+// covers them.
+func (b *outBatch) appendAll(items []*outItem) error {
+	var raw []byte
+	for _, it := range items {
+		c := *it
+		c.batch = nil
+		line, err := json.Marshal(&c)
+		if err != nil {
+			return err
+		}
+		raw = append(append(raw, line...), '\n')
 	}
 	b.mu.Lock()
 	if b.f == nil {
 		b.mu.Unlock()
 		return errors.New("outbox batch closed")
 	}
-	if _, err := b.f.Write(append(raw, '\n')); err != nil {
+	if _, err := b.f.Write(raw); err != nil {
 		b.mu.Unlock()
 		return err
 	}
-	b.written++
+	b.written += len(items)
 	mine := b.written
-	b.open[it.ID] = true
+	for _, it := range items {
+		b.open[it.ID] = true
+	}
 	b.mu.Unlock()
 	b.syncMu.Lock()
 	defer b.syncMu.Unlock()
