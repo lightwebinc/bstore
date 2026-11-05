@@ -100,18 +100,13 @@ func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(bodyDeadline))
-	// A submission only on blob topics is read into a pooled buffer, which
-	// goes back to the pool once every piece is checked: a checked carrier
-	// keeps nothing of the bytes it was read from (the transaction parse
-	// copies them), and a blob topic's take reads only the checked carrier.
-	// A records topic's take reads the body, so such a submission is read
-	// into a buffer of its own.
-	beef, held, err := readBody(w, r, bound, blobsOnly)
-	release := func() {
-		putBody(held)
-		held, beef = nil, nil
-	}
-	defer release()
+	// The body is read into a buffer of its own, which the checked carriers
+	// alias (storerec.CheckPieceCarrier parses in place): a piece is the
+	// carrier's output where it lies in the body, and is kept by reference
+	// (the recent pieces, the walk) after the take. Pooling the body was the
+	// way to skip zeroing a fresh 4 MiB buffer while the parse copied the
+	// piece into one of its own anyway; now the body is that one buffer.
+	beef, err := readBody(w, r, bound)
 	if err == nil {
 		select {
 		case p.limits.ingest <- struct{}{}:
@@ -144,7 +139,7 @@ func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		pieces[t] = pc
 	}
 	if blobsOnly {
-		release()
+		beef = nil // the carriers hold what they need of it
 	}
 	if feeder {
 		// A feeder (the local bridge) is answered once every piece has
@@ -836,68 +831,19 @@ func writeEngineError(w http.ResponseWriter, code int, msg string, hdr ...string
 // was even parsed (memmove and memclr were a third of the provider's CPU on
 // the lab edge). A body longer than its declared length is refused by the
 // extra read; a shorter one is an error from ReadFull.
-//
-// With pooled set, a body of at least pooledBody bytes is read into a buffer
-// from bodyPool, returned as held: a new buffer of 4 MiB is zeroed before the
-// body overwrites it (memclr was a sixth of the provider's CPU on the lab
-// edge), a pooled one is not. The caller hands held back with putBody once
-// nothing reads the body any more, and the body is not read after that.
-func readBody(w http.ResponseWriter, r *http.Request, bound int64, pooled bool) (body []byte, held *[]byte, err error) {
+func readBody(w http.ResponseWriter, r *http.Request, bound int64) ([]byte, error) {
 	lr := http.MaxBytesReader(w, r.Body, bound)
 	n := r.ContentLength
 	if n <= 0 || n > bound {
-		body, err = io.ReadAll(lr)
-		return body, nil, err
+		return io.ReadAll(lr)
 	}
-	var buf []byte
-	if pooled && n >= pooledBody && n <= storerec.MaxPieceBEEF {
-		held = getBody()
-		buf = (*held)[:n]
-	} else {
-		buf = make([]byte, n)
-	}
+	buf := make([]byte, n)
 	if _, err := io.ReadFull(lr, buf); err != nil {
-		putBody(held)
-		return nil, nil, err
+		return nil, err
 	}
 	var extra [1]byte
 	if m, _ := lr.Read(extra[:]); m > 0 {
-		putBody(held)
-		return nil, nil, errors.New("body longer than its Content-Length")
+		return nil, errors.New("body longer than its Content-Length")
 	}
-	return buf, held, nil
-}
-
-// bodyPool holds buffers of a piece carrier's bound for submission bodies:
-// a free list of at most maxBodies, which is how many are out at once (the
-// bodies slot), so it holds what readBody would otherwise allocate and
-// nothing more. A sync.Pool is emptied by every collection, and a provider
-// taking pieces collects often, so each emptied buffer came back as a new
-// 4 MiB allocation, zeroed; these stay.
-var bodyPool = make(chan *[]byte, maxBodies)
-
-// getBody is a pooled buffer, or a new one.
-func getBody() *[]byte {
-	select {
-	case held := <-bodyPool:
-		return held
-	default:
-		b := make([]byte, storerec.MaxPieceBEEF)
-		return &b
-	}
-}
-
-// pooledBody is the least body read into a pooled buffer: a piece carrier
-// of a full piece is about 4 MiB, a root's or a records topic's far less.
-const pooledBody = 64 << 10
-
-// putBody hands a pooled body's buffer back; nil is nothing.
-func putBody(held *[]byte) {
-	if held == nil {
-		return
-	}
-	select {
-	case bodyPool <- held:
-	default:
-	}
+	return buf, nil
 }
