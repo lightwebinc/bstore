@@ -42,7 +42,7 @@ func TestIncrementalClosureMatchesFull(t *testing.T) {
 			if err := st.Put(h, o); err != nil {
 				t.Fatal(err)
 			}
-			p.arrived(h, o, b.RootHash, true)
+			arrive(p, h, o, b.RootHash, true)
 			if k < len(objs)-1 {
 				if _, err := p.checkClosure(b.RootHash); !errors.Is(err, storerec.ErrClosure) {
 					t.Fatalf("size %d: before the last piece: %v", size, err)
@@ -90,7 +90,7 @@ func TestIncrementalClosureLabels(t *testing.T) {
 	for _, o := range objs[:len(objs)-1] {
 		h := sha256.Sum256(o)
 		_ = st.Put(h, o)
-		p.arrived(h, o, b.RootHash, true)
+		arrive(p, h, o, b.RootHash, true)
 	}
 	last := objs[len(objs)-1]
 	lh := sha256.Sum256(last)
@@ -123,9 +123,9 @@ func TestIncrementalResentPieceDoesNotMaskDamage(t *testing.T) {
 	for _, o := range objs[:len(objs)-1] {
 		h := sha256.Sum256(o)
 		_ = st.Put(h, o)
-		p.arrived(h, o, b.RootHash, true)
+		arrive(p, h, o, b.RootHash, true)
 	}
-	p.arrived(lh, last, b.RootHash, false)
+	arrive(p, lh, last, b.RootHash, false)
 	_, err = p.checkClosure(b.RootHash)
 	_, want := storerec.VerifyCHIRP(b.RootHash, p.fetch)
 	if !errors.Is(err, storerec.ErrClosure) || want == nil || err.Error() != want.Error() {
@@ -144,7 +144,7 @@ func TestIncrementalWalksBounded(t *testing.T) {
 	root := func(i int) [32]byte { return sha256.Sum256([]byte{byte(i), byte(i >> 8)}) }
 	for i := range maxRoots + 10 {
 		r := root(i)
-		p.arrived(r, []byte{byte(i), byte(i >> 8)}, r, true)
+		arrive(p, r, []byte{byte(i), byte(i >> 8)}, r, true)
 		if i > 0 {
 			p.walk(root(0), false) // kept in use
 		}
@@ -158,7 +158,7 @@ func TestIncrementalWalksBounded(t *testing.T) {
 	if p.walk(root(1), false) != nil {
 		t.Fatal("the oldest idle walk was kept")
 	}
-	p.arrived(sha256.Sum256([]byte("blob")), []byte("blob"), root(1), true)
+	arrive(p, sha256.Sum256([]byte("blob")), []byte("blob"), root(1), true)
 	if p.walk(root(1), false) != nil {
 		t.Fatal("a dropped walk was started again by a blob")
 	}
@@ -195,7 +195,7 @@ func TestIncrementalKeepsPiecesAheadOfTheWalk(t *testing.T) {
 		if err := st.Put(h, o); err != nil {
 			t.Fatal(err)
 		}
-		p.arrived(h, o, b.RootHash, true)
+		arrive(p, h, o, b.RootHash, true)
 		return h
 	}
 	put(objs[0])
@@ -236,4 +236,11 @@ func TestIncrementalKeepsPiecesAheadOfTheWalk(t *testing.T) {
 			t.Fatalf("%d bytes, %d in order, %d kept", p.inc.recentLen, len(p.inc.rfifo), len(p.inc.recent))
 		}
 	}
+}
+
+// arrive is arrived with the piece's hashes computed as keepPiece computes
+// them.
+func arrive(p *Provider, h [32]byte, data []byte, root [32]byte, stored bool) {
+	_, leaves, sub := storerec.HashBlob(data)
+	p.arrived(h, data, leaves, sub, root, stored)
 }

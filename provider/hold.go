@@ -3,7 +3,6 @@ package provider
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -509,17 +508,13 @@ func (p *Provider) writeProofFiles(rootHex string, c *chirp.Closure) ([32]byte, 
 		leaves, r, ok := p.preLeaves(b.Hash)
 		if !ok {
 			blob, err := p.fetch(b.Hash)
-			if err != nil || sha256.Sum256(blob) != b.Hash {
+			if err != nil {
 				return [32]byte{}, 0, errIncomplete
 			}
-			leaves = make([]byte, 0, 32*storerec.SegmentsPerBlob)
-			var lh [][32]byte
-			for off := 0; off < len(blob); off += storerec.SegmentSize {
-				l := commit.HashLeaf(blob[off:min(off+storerec.SegmentSize, len(blob))])
-				lh = append(lh, l)
-				leaves = append(leaves, l[:]...)
+			var h [32]byte
+			if h, leaves, r = storerec.HashBlob(blob); h != b.Hash {
+				return [32]byte{}, 0, errIncomplete
 			}
-			r = commit.RootOfLeafHashes(lh)
 		}
 		if _, err := files["leaves"].Write(leaves); err != nil {
 			return [32]byte{}, 0, err
