@@ -46,9 +46,11 @@ type logRow struct {
 	// Ad is a pending advertisement signed and journaled before it reaches
 	// the settlement leg, with the holding and the undecided entries it
 	// answers for (the funding output it spends is marked used with it).
-	// AdDone is a pending advertisement finished or dropped, by txid.
-	Ad     *PendingAd `json:"ad,omitempty"`
-	AdDone string     `json:"adDone,omitempty"`
+	// AdDone is a pending advertisement finished or dropped, by txid; with
+	// AdDoneVout, one root's row of it (a transaction minted for several).
+	Ad         *PendingAd `json:"ad,omitempty"`
+	AdDone     string     `json:"adDone,omitempty"`
+	AdDoneVout *uint32    `json:"adDoneVout,omitempty"`
 	// Hold is a holding as it stands; Dropped a holding dropped, by root.
 	Hold    *Holding `json:"holding,omitempty"`
 	Dropped string   `json:"dropped,omitempty"`
@@ -110,11 +112,13 @@ func (st *State) apply(r *logRow) {
 	}
 	if pa := r.Ad; pa != nil && pa.Txid != "" {
 		st.markSpent(pa.Tree, pa.Vout)
-		if !slices.ContainsFunc(st.PendingAds, func(x PendingAd) bool { return x.Txid == pa.Txid }) {
+		if !slices.ContainsFunc(st.PendingAds, func(x PendingAd) bool { return x.Txid == pa.Txid && x.AdVout == pa.AdVout }) {
 			st.PendingAds = append(st.PendingAds, *pa)
 		}
 	}
-	if r.AdDone != "" {
+	if r.AdDone != "" && r.AdDoneVout != nil {
+		st.dropPendingAdOut(r.AdDone, *r.AdDoneVout)
+	} else if r.AdDone != "" {
 		st.dropPendingAd(r.AdDone)
 	}
 	if h := r.Hold; h != nil && h.Root != "" {
@@ -423,6 +427,22 @@ func (p *Provider) wait(seq uint64) error {
 // journalAd records pa as pending, with the holding and undecided entries
 // it answers for, and returns once the row is durable.
 func (p *Provider) journalAd(pa PendingAd) error {
+	return p.journalAds([]PendingAd{pa})
+}
+
+// journalAds records every row of one transaction minted for several roots
+// and returns once the last is durable (one sync for the batch).
+func (p *Provider) journalAds(pas []PendingAd) error {
+	var seq uint64
+	for _, pa := range pas {
+		seq = p.journalAdRow(pa)
+	}
+	return p.wait(seq)
+}
+
+// journalAdRow records pa as pending and returns the row's sequence; the
+// caller waits for it.
+func (p *Provider) journalAdRow(pa PendingAd) uint64 {
 	p.mu.Lock()
 	row := &logRow{Ad: &pa}
 	if h := p.st.Holdings[pa.Root]; h != nil {
@@ -438,7 +458,7 @@ func (p *Provider) journalAd(pa PendingAd) error {
 	p.st.PendingAds = append(p.st.PendingAds, pa)
 	seq := p.record(row)
 	p.mu.Unlock()
-	return p.wait(seq)
+	return seq
 }
 
 // journalEntry records entry c as it stands, for a writer answered that
@@ -518,7 +538,7 @@ func (st *State) replayAd(row *adRow) {
 		return
 	}
 	for i := range st.PendingAds {
-		if st.PendingAds[i].Txid == pa.Txid {
+		if st.PendingAds[i].Txid == pa.Txid && st.PendingAds[i].AdVout == pa.AdVout {
 			return
 		}
 	}

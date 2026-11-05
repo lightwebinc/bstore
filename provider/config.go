@@ -197,6 +197,18 @@ type Limits struct {
 	// AdSends bounds the advertisements on their way to the settlement leg
 	// at once, behind the workers.
 	AdSends int `json:"ad_sends"`
+	// AdBatch is the most roots one advertisement transaction carries (an
+	// output each, spec section 12.1 admits up to 1,024 a transaction), and
+	// AdBatchMs how long the minter collects roots behind the first before
+	// it signs; 1 mints one a transaction, as before.
+	AdBatch   int `json:"ad_batch"`
+	AdBatchMs int `json:"ad_batch_ms"`
+	// AdVerdict is what an advertisement's send waits for on an arcade leg:
+	// "proof" (the default) returns once arcade has taken the transaction,
+	// the Merkle proof the background watches for being the evidence;
+	// "network" waits for the network's verdict first, which bounds the
+	// rate at what the network announces (about 150 a second on one node).
+	AdVerdict string `json:"ad_verdict"`
 	// RenewalsPerRootPerHour bounds paid renewals of one root.
 	RenewalsPerRootPerHour float64 `json:"renewals_per_root_per_hour"`
 	// SubmitsPerAddrPerSec and SubmitBurst bound submissions from one
@@ -317,6 +329,15 @@ func (c *Config) defaults() {
 	}
 	if l.AdSends == 0 {
 		l.AdSends = 64
+	}
+	if l.AdBatch == 0 {
+		l.AdBatch = 64
+	}
+	if l.AdBatchMs == 0 {
+		l.AdBatchMs = 20
+	}
+	if l.AdVerdict == "" {
+		l.AdVerdict = "proof"
 	}
 	if l.ObjectReaders == 0 {
 		l.ObjectReaders = 32
@@ -466,6 +487,15 @@ func (c *Config) Check() error {
 	}
 	if c.Limits.AdSends < 1 || c.Limits.AdSends > 1024 {
 		return errors.New("limits.ad_sends is 1 to 1024")
+	}
+	if c.Limits.AdBatch < 1 || c.Limits.AdBatch > storerec.MaxAdsPerTx {
+		return fmt.Errorf("limits.ad_batch is 1 to %d", storerec.MaxAdsPerTx)
+	}
+	if c.Limits.AdBatchMs < 1 || c.Limits.AdBatchMs > 10000 {
+		return errors.New("limits.ad_batch_ms is 1 to 10000")
+	}
+	if c.Limits.AdVerdict != "proof" && c.Limits.AdVerdict != "network" {
+		return errors.New(`limits.ad_verdict is "proof" or "network"`)
 	}
 	if c.TreeCount < 1 || c.TreeCount > 1023 {
 		return errors.New("tree_count is 1 to 1023")
