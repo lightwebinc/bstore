@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lightwebinc/bcommon/chirp"
+
 	"github.com/lightwebinc/bstore/storerec"
 )
 
@@ -41,8 +43,11 @@ func BenchmarkSubmitPiece(b *testing.B) {
 	topic := storerec.BlobTopic(testBucket)
 	root := o.Built.RootHash
 	var objs [][32]byte
+	var blobs []chirp.Child
 	for _, ob := range o.Built.Objects() {
-		objs = append(objs, sha256.Sum256(ob))
+		h := sha256.Sum256(ob)
+		objs = append(objs, h)
+		blobs = append(blobs, chirp.Child{Hash: h})
 	}
 	var total int64
 	for _, pc := range o.Pieces {
@@ -60,7 +65,8 @@ func BenchmarkSubmitPiece(b *testing.B) {
 			delete(p.st.Unclaimed, hex.EncodeToString(h[:]))
 		}
 		p.mu.Unlock()
-		p.inc.forget(root, nil)
+		// The leaves too: every piece of the next round is new, hashed in full.
+		p.inc.forget(root, blobs)
 	}
 	submit := func(beef []byte) {
 		req := httptest.NewRequest(http.MethodPost, "/submit", bytes.NewReader(beef))

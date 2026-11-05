@@ -1,6 +1,7 @@
 package storerec
 
 import (
+	"crypto/sha256"
 	"fmt"
 
 	"github.com/lightwebinc/bcommon/chirp"
@@ -48,6 +49,36 @@ func SegmentRootOf(blob []byte) [32]byte {
 	}
 	return b.Root()
 }
+
+// HashBlob is a blob's three hashes from one pass over its bytes: its
+// SHA-256 (the object it is), the leaf hash of each SegmentSize segment
+// (commit.HashLeaf, 32 bytes a segment, in order) and the subtree root over
+// them (commit.RootOfLeafHashes), which a proof root is composed of. Each
+// segment is read once, while it is in cache, by both digests, and the leaf
+// digest is reused across segments, so nothing is allocated but the leaves.
+// The values are exactly those of sha256.Sum256, commit.HashLeaf and
+// commit.RootOfLeafHashes over the same bytes.
+func HashBlob(blob []byte) (hash [32]byte, leaves []byte, sub [32]byte) {
+	d := sha256.New()
+	l := sha256.New()
+	leaves = make([]byte, 0, 32*((len(blob)+SegmentSize-1)/SegmentSize))
+	var b commit.Builder
+	for len(blob) > 0 {
+		k := min(SegmentSize, len(blob))
+		seg := blob[:k]
+		blob = blob[k:]
+		d.Write(seg)
+		l.Reset()
+		l.Write(leafPrefix[:])
+		l.Write(seg)
+		leaves = l.Sum(leaves)
+		b.Add([32]byte(leaves[len(leaves)-32:]))
+	}
+	return [32]byte(d.Sum(nil)), leaves, b.Root()
+}
+
+// leafPrefix is RFC 6962's leaf domain separator, as commit.HashLeaf writes it.
+var leafPrefix = [1]byte{0x00}
 
 // Write takes content in order.
 func (p *Parallel) Write(b []byte) (int, error) {

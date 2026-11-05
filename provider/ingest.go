@@ -416,9 +416,14 @@ func (p *Provider) pruneEntries() {
 // it: an error of this provider's, not a refusal of the piece.
 const storeFailed = "store: the piece could not be stored"
 
-// keepPiece stores a piece's bytes as unclaimed, if there is room.
+// keepPiece stores a piece's bytes as unclaimed, if there is room. The
+// piece's three hashes (its SHA-256, which names it; its segment leaves and
+// subtree root, for the proofs) come from one pass over its bytes, and the
+// bytes go to the store and the closure walk as they are, copied nowhere
+// here. The carrier's own hashes (its txid, the record's signature) were
+// taken over other bytes by the carrier check and are not repeated.
 func (p *Provider) keepPiece(data []byte, rootHex, bucket, writer string) string {
-	h := sha256.Sum256(data)
+	h, leaves, sub := storerec.HashBlob(data)
 	hh := hex.EncodeToString(h[:])
 	if p.front != nil {
 		// A front keeps no second copy of what it handed to the backend.
@@ -446,7 +451,7 @@ func (p *Provider) keepPiece(data []byte, rootHex, bucket, writer string) string
 		p.mu.Unlock()
 		stored = true
 	}
-	p.arrived(h, data, mustHash(rootHex), stored)
+	p.arrived(h, data, leaves, sub, mustHash(rootHex), stored)
 	p.mu.Lock()
 	wanted := len(p.index.undecided[rootHex]) > 0
 	p.mu.Unlock()
@@ -835,10 +840,7 @@ func readBody(w http.ResponseWriter, r *http.Request, bound int64, pooled bool) 
 	}
 	var buf []byte
 	if pooled && n >= pooledBody && n <= storerec.MaxPieceBEEF {
-		if held, _ = bodyPool.Get().(*[]byte); held == nil {
-			b := make([]byte, storerec.MaxPieceBEEF)
-			held = &b
-		}
+		held = getBody()
 		buf = (*held)[:n]
 	} else {
 		buf = make([]byte, n)
@@ -855,8 +857,24 @@ func readBody(w http.ResponseWriter, r *http.Request, bound int64, pooled bool) 
 	return buf, held, nil
 }
 
-// bodyPool holds buffers of a piece carrier's bound for submission bodies.
-var bodyPool sync.Pool
+// bodyPool holds buffers of a piece carrier's bound for submission bodies:
+// a free list of at most maxBodies, which is how many are out at once (the
+// bodies slot), so it holds what readBody would otherwise allocate and
+// nothing more. A sync.Pool is emptied by every collection, and a provider
+// taking pieces collects often, so each emptied buffer came back as a new
+// 4 MiB allocation, zeroed; these stay.
+var bodyPool = make(chan *[]byte, maxBodies)
+
+// getBody is a pooled buffer, or a new one.
+func getBody() *[]byte {
+	select {
+	case held := <-bodyPool:
+		return held
+	default:
+		b := make([]byte, storerec.MaxPieceBEEF)
+		return &b
+	}
+}
 
 // pooledBody is the least body read into a pooled buffer: a piece carrier
 // of a full piece is about 4 MiB, a root's or a records topic's far less.
@@ -864,7 +882,11 @@ const pooledBody = 64 << 10
 
 // putBody hands a pooled body's buffer back; nil is nothing.
 func putBody(held *[]byte) {
-	if held != nil {
-		bodyPool.Put(held)
+	if held == nil {
+		return
+	}
+	select {
+	case bodyPool <- held:
+	default:
 	}
 }

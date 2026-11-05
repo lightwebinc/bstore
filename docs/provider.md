@@ -91,8 +91,9 @@ the root's own size and content hash:
    with the entry's.
 
 The work is done as the pieces arrive: each piece is hashed by the request
-that brings it (its segment leaves and subtree root, on whatever core
-serves it) and handed to the root's closure walk (bcommon
+that brings it (its SHA-256, its segment leaves and subtree root, from one
+pass over its bytes, on whatever core serves it) and handed to the root's
+closure walk (bcommon
 `chirp.Incremental`), which checks the closure as `chirp.Verify` does as
 far as the pieces on hand allow, the content hash advancing over the blobs
 in order. When the entry is evaluated, the walk is finished from where it
@@ -102,12 +103,13 @@ starts when its root's piece arrives. A root whose walk is not kept, after
 a restart for instance, has its walk started by the evaluation, which reads
 back the pieces already held, once each, and continues as more arrive. A
 piece the store already held is read from the store, not taken from the
-request that sent it again. Leaves are kept for at most 1,024 pieces,
-walks for 64 roots (the least recently used dropped first), and each walk
-keeps at most 4 MiB of pieces that arrived ahead of it. Besides, the
-pieces stored last, 64 MiB of them across all walks, are kept until their
-walk reads them, so pieces taken at once and out of order are not read
-back; others are read back from the store when the walk reaches them.
+request that sent it again. Leaves are kept for at most 1,024 pieces and
+walks for 64 roots (the least recently used dropped first). The pieces
+stored last, 128 MiB of them across all walks, are kept until their walk
+comes to wait for each and handed to it then with the hash the provider
+computed, so a piece taken out of order is neither read back nor hashed
+again; one dropped from that budget is read back from the store when the
+walk reaches it.
 
 A closure that fails is the writer's fault: every entry it fails is
 declined, and the reason recorded. One that is not complete yet is waited
