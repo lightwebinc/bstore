@@ -394,14 +394,16 @@ func refSum(head, tail []byte) string {
 
 // addRef records a carrier of a stored object in batch b, by reference
 // when the object's n bytes lie at offset at of the BEEF and there is a
-// store to read them back from, and returns once the line is synced. A
-// carrier whose object is not placed (at below zero) is kept whole.
+// store to read them back from, and returns once the line is synced. The
+// head and the tail are copied: the item outlives the BEEF, which a put
+// holds for many pieces until their background send. A carrier whose
+// object is not placed (at below zero) is kept whole.
 func (o *Outbox) addRef(b *outBatch, id, what string, beef []byte, obj [32]byte, at, n int, targets []Target) (*outItem, error) {
 	if at < 0 || n < 1 || at+n > len(beef) || o.store == nil {
 		return o.add(id, what, beef, targets)
 	}
 	it := &outItem{ID: id, What: what, Targets: targets, Created: o.now(), Next: o.now(), batch: b,
-		Ref: hex.EncodeToString(obj[:]), Head: beef[:at:at], Tail: beef[at+n:], Ver: refVersion}
+		Ref: hex.EncodeToString(obj[:]), Head: bytes.Clone(beef[:at]), Tail: bytes.Clone(beef[at+n:]), Ver: refVersion}
 	it.Sum = refSum(it.Head, it.Tail)
 	o.markSending(id)
 	o.pinRef(it)

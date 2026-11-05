@@ -543,7 +543,8 @@ func bodyError(err error) *s3Error {
 
 // putObject is PutObject (spec section 16.2): the body staged into its
 // closure while it streams, every digest checked, then published by the
-// access key's identity; 200 once the entry is sent.
+// access key's identity; 200 once the put is committed (the carriers in
+// the outbox, synced, and the entry pending), its sends in the background.
 func (s *Server) putObject(ctx context.Context, w http.ResponseWriter, r *http.Request, a *Auth, b *bucket, key string) *s3Error {
 	if e := refuseUnsupported(r.Header); e != nil {
 		return e
@@ -615,7 +616,7 @@ func (s *Server) putObject(ctx context.Context, w http.ResponseWriter, r *http.R
 
 // publishPut publishes a put entry by the key's identity and records it
 // pending. Publishing goes on if the client goes away: its carriers are
-// already signed.
+// signed and in the outbox, and sent from there in the background.
 func (s *Server) publishPut(ctx context.Context, a *Auth, b *bucket, key, ct string, meta []storerec.MetaPair, etag *string, obj publish.Object) (*publish.Receipt, *s3Error) {
 	p := s.pubs[a.Key.Identity]
 	var bounty *publish.Bounty

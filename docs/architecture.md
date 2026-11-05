@@ -71,7 +71,9 @@ key against the owner's latest token and its own headers.
    the signed entry rides another. Pieces go to the providers (by the
    plane, as piece carriers to each provider's `/submit`, or by BRC-167
    upload session); the entry goes to the hosts. With a bounty, a hold
-   output minted ahead is named in the entry.
+   output minted ahead is named in the entry. The S3 gateway answers once
+   the carriers are minted and in its outbox and sends them from there
+   ([s3.md](s3.md)); `bstore put` waits for the first send.
 3. **Hold.** Each provider checks the closure and the proof root, decides
    by its policy, and advertises (a mined BRC-26 advertisement).
 4. **Race.** The writer's client ranks advertisers by first sight,

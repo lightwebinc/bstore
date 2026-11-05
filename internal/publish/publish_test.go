@@ -103,6 +103,9 @@ func TestPutDeliversAndRetries(t *testing.T) {
 	f := Fields{Bucket: testBucket, ID: sha256.Sum256([]byte("id")), Key: "a/b", ContentType: "application/octet-stream"}
 	obj := Object{Root: st.Root, Size: st.Size, ContentHash: st.ContentHash, ProofRoot: st.ProofRoot, Closure: StoreClosure{Store: store, Manifest: st.Manifest}}
 	r, err := p.Put(ctx, f, obj, &Bounty{Satoshis: 1000, T: 1, K: 1, Retention: 3600, DeadlineBlocks: 10, CheckC: 30})
+	if err == nil {
+		err = r.Wait(ctx)
+	}
 	if err != nil || !r.Sent || r.Pieces != 4 || r.Entry.Hold == nil {
 		t.Fatalf("put: %v %+v", err, r)
 	}
@@ -128,15 +131,18 @@ func TestPutDeliversAndRetries(t *testing.T) {
 		t.Fatalf("hold records: %d used by the entry, %d ready", used, ready)
 	}
 
-	// The provider is down: the put fails before any entry, and the
-	// carriers it minted leave the outbox with it, since no entry names
-	// them and a retry of the put mints its own.
+	// The provider is down: the put answers all the same, the host takes
+	// the entry, and the outbox owes the provider the pieces and the entry.
 	prov.down.Store(true)
-	if _, err := p.Put(ctx, Fields{Bucket: testBucket, ID: f.ID, Key: "a/c", ContentType: "text/plain"}, obj, nil); err == nil {
-		t.Fatal("a put whose pieces reached no target succeeded")
+	r1, err := p.Put(ctx, Fields{Bucket: testBucket, ID: f.ID, Key: "a/c", ContentType: "text/plain"}, obj, nil)
+	if err == nil {
+		err = r1.Wait(ctx)
 	}
-	if n := p.Outbox().Pending(); n != 0 {
-		t.Fatalf("outbox holds %d carrier(s) of the failed put", n)
+	if err != nil || !r1.Sent {
+		t.Fatalf("put with the provider down: %v", err)
+	}
+	if n := p.Outbox().Pending(); n != 5 {
+		t.Fatalf("outbox holds %d carrier(s) owed to the provider, want 5", n)
 	}
 	// The host is down: the entry is minted, not sent; the outbox keeps it.
 	prov.down.Store(false)
@@ -155,16 +161,19 @@ func TestPutDeliversAndRetries(t *testing.T) {
 	if p2.Outbox().Pending() != 0 {
 		t.Fatalf("after the retry the outbox holds %d", p2.Outbox().Pending())
 	}
-	if host.count(records) != 3 {
-		t.Fatalf("the delete entry reached the host %d times", host.count(records)-2)
+	if host.count(records) != 4 {
+		t.Fatalf("the delete entry reached the host %d times", host.count(records)-3)
+	}
+	if prov.count(blob) != 8 || prov.count(records) != 3 {
+		t.Fatalf("the provider took %d pieces and %d records, want 8 and 3", prov.count(blob), prov.count(records))
 	}
 	// The entry tree's outputs were recorded used before their carriers:
 	// the next entry spends the next output.
 	p2.mu.Lock()
 	next := p2.st.Entry.Tree.Next
 	p2.mu.Unlock()
-	if next != 2 {
-		t.Fatalf("entry tree next output %d, want 2", next)
+	if next != 3 {
+		t.Fatalf("entry tree next output %d, want 3", next)
 	}
 }
 

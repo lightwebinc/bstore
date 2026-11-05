@@ -635,8 +635,8 @@ func (s *Server) completeUpload(ctx context.Context, w http.ResponseWriter, r *h
 	}
 	location := scheme + "://" + r.Host + "/" + b.name + "/" + urlEncodeKey(key)
 	if rec != nil {
-		// The entry is made (sent, or in the outbox): a completion sent
-		// again answers this, and publishes nothing.
+		// The entry is made (in the outbox, sent from there): a completion
+		// sent again answers this, and publishes nothing.
 		c := &completedRec{Location: location, ETag: etag, SHA256: base64Std(rec.Entry.ContentHash[:])}
 		raw, _ := json.Marshal(c)
 		_ = writeSynced(filepath.Join(up.dir, "completed.json"), raw)
