@@ -326,7 +326,9 @@ const whatMint = "mint"
 
 // mintID is the ID of a piece minted later: the funding output it spends,
 // so that no two items mint on one output.
-func mintID(tree string, vout uint32) string { return tree + "-" + strconv.FormatUint(uint64(vout), 10) }
+func mintID(tree string, vout uint32) string {
+	return tree + "-" + strconv.FormatUint(uint64(vout), 10)
+}
 
 // name is the item for the log: its carrier's id, or the output a piece
 // not yet minted spends.

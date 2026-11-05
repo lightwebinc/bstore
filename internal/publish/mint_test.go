@@ -317,4 +317,3 @@ func TestPieceBEEFMatchesSDK(t *testing.T) {
 		t.Fatalf("on an unmined tree: equal %v, carrier at %d of %d", bytes.Equal(got, want), at, len(got))
 	}
 }
-
