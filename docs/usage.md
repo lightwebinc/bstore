@@ -231,6 +231,38 @@ $ bstore settle
   (`race_window_seconds`) ends with at least `t` passed, or with `settle
   -close`. With fewer than `t` when the window ends nothing is paid.
 
+A race, from the put to its end:
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  [*] --> open: put with a bounty
+  open --> open: each look ranks, challenges and records draws
+  open --> closed: K passed, or the window ends with t passed, or settle -close
+  open --> lapsed: window ends or deadline with fewer than t
+  closed --> settled: settle mines, remittances sent
+  closed --> lapsed: a canceled payee leaves fewer than t
+  lapsed --> reclaimed: reclaim once the tip reaches the deadline
+  settled --> [*]
+  reclaimed --> [*]
+```
+
+One candidate within it:
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  [*] --> seen: eligible advertisement, first sight
+  seen --> drawn: challenged in rank order, two draws in all
+  drawn --> drawn: no answer, sent again unchanged
+  drawn --> passed: signed pass
+  drawn --> failed: fails at its own front, or unretrievable
+  seen --> seen: waits: hold output not minAge deep, or priced
+  drawn --> seen: failed at a front that is not the advertiser
+  passed --> paid: settled by rank
+  passed --> dropped: advertisement canceled before settle
+```
+
 `settle` pays by rank (spec section 9.5). It first checks each payee's
 advertisement unspent by positive evidence from the chain view, a renewal
 successor counting as unspent; a canceled one is dropped, the ranks below

@@ -33,6 +33,25 @@ The zero-infrastructure profile, what an unset network gets:
 | headers | `woc:main` | `woc:test` |
 | settle | `arcade:main` | `arcade:test` |
 
+The three services every configuration names, and what is checked or
+trusted from each:
+
+```mermaid
+flowchart LR
+  ME["a home, provider<br/>or gateway"]
+  ME -->|"transactions, proofs, spends"| CV["chain view<br/>woc:main, asset:#lt;url#gt;"]
+  ME -->|"headers"| HS["header source<br/>woc:main, bhs:#lt;url#gt;"]
+  ME -->|"broadcast"| SL["settlement leg<br/>arcade:main, arc:#lt;url#gt;"]
+  CV --> CK["checked: a transaction hashes to its txid,<br/>a proof verifies against your headers"]
+  CV --> TR["WhatsOnChain's word: unspent,<br/>not known, not mined<br/>a node of your own removes it"]
+  SL --> AC["accepted is held to<br/>the chain view's spends"]
+  %% The last node is an invisible spacer in the rightmost rank: the rendered
+  %% viewer places its zoom and pan controls over the bottom-right corner.
+  SL ~~~ pad
+  pad["&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;"]:::pad
+  classDef pad fill:none,stroke:none,color:transparent
+```
+
 What is trusted and what is checked: a transaction from the chain view
 must hash to its txid and every proof must verify against your headers,
 so a wrong answer is refused, never believed. "Unspent", "not known" and

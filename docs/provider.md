@@ -10,6 +10,34 @@ provider does, and an operator's guide.
 
 ## What it does
 
+How an object moves through a provider, from the ways in to the
+advertisement (each step is a section below):
+
+```mermaid
+flowchart LR
+  subgraph in["Ways in"]
+    SUB["POST /submit<br/>the plane's feeder, or a writer"]
+    UP["upload sessions<br/>/chirp/v1/uploads"]
+  end
+  SUB -->|"blob topic"| PR["piece rules<br/>carrier, signature,<br/>funding tree mined"]
+  SUB -->|"records topic"| ER["host admission rules<br/>put entries kept"]
+  UP --> ST
+  PR --> ST[("store<br/>unclaimed until<br/>an entry names the root")]
+  ST --> WALK["closure walk as pieces arrive<br/>segment leaves hashed once"]
+  ER --> EV
+  WALK --> EV["evaluate: root, closure,<br/>proof root"]
+  EV --> POL{"policy and<br/>bounty checks"}
+  POL -->|"declined"| DEC["reason recorded"]
+  POL -->|"taken"| LEASE["lease the closure<br/>through the expiry"]
+  LEASE --> AD["advertisement minted<br/>from a funding tree"]
+  AD --> OUT["hosts' records topics,<br/>the facade, tm_uhrp"]
+  %% The last node is an invisible spacer in the rightmost rank: the rendered
+  %% viewer places its zoom and pan controls over the bottom-right corner.
+  AD ~~~ pad
+  pad["&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;"]:::pad
+  classDef pad fill:none,stroke:none,color:transparent
+```
+
 ### Receiving
 
 A provider subscribes to both topics of each bucket it serves (spec section

@@ -43,6 +43,24 @@ advertisement check under the Go fuzzer.
 
 ## How the two codecs are kept equal
 
+One contract, two codecs, one set of goldens:
+
+```mermaid
+flowchart LR
+  GO["storerec<br/>the Go codec"] --> GEN["cmd/vectors<br/>every check it makes"]
+  GEN --> VEC[("testdata/vectors<br/>golden JSON")]
+  GEN -.->|"make verify: regenerated<br/>in memory, byte compare"| VEC
+  VEC --> TS["host/src<br/>the TypeScript twin"]
+  TS --> EQ["same bytes, same values,<br/>same refusal labels"]
+  OR["brute-force oracle<br/>about 38 million pages"] --> PC["page checks"]
+  GO --> PC
+  %% The last node is an invisible spacer in the rightmost rank: the rendered
+  %% viewer places its zoom and pan controls over the bottom-right corner.
+  TS ~~~ pad
+  pad["&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;"]:::pad
+  classDef pad fill:none,stroke:none,color:transparent
+```
+
 - Every record vector decodes in TypeScript to the Go codec's view and
   re-encodes to the Go bytes; every refusal vector is refused for the same
   label and, where a label covers several rules, the same rule.

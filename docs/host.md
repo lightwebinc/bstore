@@ -14,6 +14,25 @@ session's response budget taken before the request's signature is
 verified. It holds no bytes of any object, fetches nothing a record
 names, and broadcasts nothing.
 
+What happens to a submission, from admission to the answer:
+
+```mermaid
+flowchart LR
+  IN["submissions<br/>the plane, owners, writers, providers"] --> TM{"tm_bstore_#lt;id#gt;<br/>codec rules and headers"}
+  IN --> TB["tm_bstoreblob_#lt;id#gt;<br/>refuses every piece"]
+  TM -->|"refused, raised"| RF["nothing stored<br/>decided again if offered again"]
+  TM -->|"admitted"| SG[("engine storage<br/>bstore-rows.jsonl")]
+  SG --> IX["ls_bstore index<br/>chains and maps, entries,<br/>ads, sweeps and marks"]
+  RET["retention, hourly"] -.->|"drops"| SG
+  IX --> LK["BRC-24 /lookup<br/>free classes"]
+  IX --> RT["module route, BSTORE_LISTEN<br/>priced classes over BRC-104"]
+  %% The last node is an invisible spacer in the rightmost rank: the rendered
+  %% viewer places its zoom and pan controls over the bottom-right corner.
+  IX ~~~ pad
+  pad["&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;"]:::pad
+  classDef pad fill:none,stroke:none,color:transparent
+```
+
 This page is in two parts: what the module does, and an operator's guide.
 
 ## Build and deploy
