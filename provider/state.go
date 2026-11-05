@@ -22,6 +22,9 @@ type State struct {
 	path string
 
 	Identity string `json:"identity"`
+	// LogGen is the generation of the state log this checkpoint was taken
+	// at: a start applies that generation and every later one (journal.go).
+	LogGen uint64 `json:"logGen,omitempty"`
 
 	// The funding trees advertisements and renewals spend.
 	Tree         *funding.Tree  `json:"tree,omitempty"`

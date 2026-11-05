@@ -106,8 +106,9 @@ func (p *Provider) renew(ctx context.Context, r *http.Request, body []byte, who 
 	// mines).
 	p.mu.Lock()
 	p.st.Owed = append(p.st.Owed, Owed{Root: req.Root, Until: req.Until, Payment: pl.Txid, Held: held})
-	err = p.save()
+	seq := p.recordOwedLocked()
 	p.mu.Unlock()
+	err = p.wait(seq)
 	if err != nil {
 		return auth104.Error(http.StatusInternalServerError, "ERR_INTERNAL", "the renewal could not be recorded")
 	}
@@ -159,7 +160,14 @@ func (p *Provider) payOwed(root string, until uint64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.st.Owed = slices.DeleteFunc(p.st.Owed, func(o Owed) bool { return o.Root == root && o.Until <= until })
-	_ = p.save()
+	p.recordOwedLocked()
+}
+
+// recordOwedLocked records the renewals owed as they stand; the caller
+// holds p.mu.
+func (p *Provider) recordOwedLocked() uint64 {
+	owed := slices.Clone(p.st.Owed)
+	return p.record(&logRow{Owed: &owed})
 }
 
 // makeOwed makes the renewals paid for and not made yet.

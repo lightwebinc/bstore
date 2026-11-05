@@ -24,11 +24,12 @@ const decisionDeleted = "deleted by its writer"
 // dropped.
 func (p *Provider) noteDelete(e *storerec.Entry) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	k := e.Bucket + "/" + e.Key
+	row := &logRow{}
 	if d := p.st.Deletes[k]; d == nil || d.Created < e.Created {
 		p.st.Deletes[k] = &DeleteRec{Created: e.Created, At: p.now().Unix()}
 		p.pruneDeletesLocked()
+		row.Deletes = map[string]*DeleteRec{k: p.st.Deletes[k]}
 	}
 	roots := map[string]bool{}
 	for _, x := range p.st.Entries {
@@ -39,13 +40,17 @@ func (p *Provider) noteDelete(e *storerec.Entry) {
 			continue
 		}
 		p.setDecision(x, decisionDeleted)
+		row.Entries = append(row.Entries, *x)
 		roots[x.Root] = true
 		p.metrics.inc("bstore_provider_deletes_total")
 	}
 	for rootHex := range roots {
 		p.releaseRootLocked(rootHex)
 	}
-	_ = p.save()
+	// The writer reads the answer as the delete taken: on disk first.
+	seq := p.record(row)
+	p.mu.Unlock()
+	_ = p.wait(seq)
 }
 
 // The deletes remembered: the newest per key, and past this many the
@@ -81,8 +86,14 @@ func (p *Provider) releaseRootLocked(rootHex string) {
 	}
 	if h := p.st.Holdings[rootHex]; h != nil {
 		h.Entries, h.Ad, h.Lease = nil, nil, 0
+		for _, pa := range p.st.PendingAds {
+			if pa.Root == rootHex {
+				p.record(&logRow{AdDone: pa.Txid})
+			}
+		}
 		p.st.PendingAds = deleteIf(p.st.PendingAds, func(pa PendingAd) bool { return pa.Root == rootHex })
 		p.st.Owed = deleteIf(p.st.Owed, func(o Owed) bool { return o.Root == rootHex })
+		p.recordOwedLocked()
 		p.dropHoldingLocked(rootHex)
 	}
 	p.releasePiecesLocked(rootHex)
@@ -94,17 +105,18 @@ func (p *Provider) releasePiecesLocked(rootHex string) {
 	if len(p.index.undecided[rootHex]) > 0 {
 		return
 	}
-	n := 0
+	var gone []string
 	for h, u := range p.st.Unclaimed {
 		if u.Root != rootHex || p.heldObjectLocked(h) {
 			continue
 		}
 		_ = p.store.Delete(mustHash(h))
 		delete(p.st.Unclaimed, h)
-		n++
+		gone = append(gone, h)
 	}
-	if n > 0 {
-		p.logf("root %s: %d piece(s) that waited for it released", short(rootHex), n)
+	if len(gone) > 0 {
+		p.record(&logRow{Claimed: gone})
+		p.logf("root %s: %d piece(s) that waited for it released", short(rootHex), len(gone))
 		p.metrics.inc("bstore_provider_released_total")
 	}
 }

@@ -319,8 +319,7 @@ func (p *Provider) decide(c, decision string) {
 		if decision != decisionHeld {
 			p.releasePiecesLocked(e.Root)
 		}
-		// A start looks at every entry undecided or held again.
-		p.dirty = true
+		p.record(&logRow{Entries: []EntryRec{*e}})
 	}
 }
 
@@ -337,7 +336,6 @@ func (p *Provider) dropUnheld(rootHex string) {
 		return
 	}
 	p.dropHoldingLocked(rootHex)
-	p.dirty = true
 }
 
 // fetch is the store as a CHIRP fetch: an object's whole bytes.
@@ -456,14 +454,16 @@ func (p *Provider) verifyRoot(ctx context.Context, rootHex string, entries []*En
 	h.Objects, h.Blobs, h.Bytes, h.Verified, h.Damaged = len(c.Objects), len(c.Blobs), bytesHeld, true, false
 	// The closure's pieces are held now; a piece another closure still
 	// waiting for its entry sent keeps its record.
+	row := holdRow(h)
 	for _, o := range c.Objects {
 		k := hex.EncodeToString(o[:])
 		if u := p.st.Unclaimed[k]; u != nil && (u.Root == rootHex || u.Root == "") {
 			delete(p.st.Unclaimed, k)
+			row.Claimed = append(row.Claimed, k)
 		}
 	}
 	// Checked again on a start, if a crash loses this.
-	p.dirty = true
+	p.record(row)
 	p.inc.forget(root, c.Blobs)
 	p.logf("root %s: closure verified (%d objects, %d bytes, proof root %s)", short(rootHex), len(c.Objects), e.Size, short(h.ProofRoot))
 	if p.export != nil {
@@ -647,7 +647,7 @@ func (p *Provider) damaged(rootHex, why string) {
 		return
 	}
 	h.Damaged = true
-	_ = p.save()
+	p.record(holdRow(h))
 	p.metrics.inc("bstore_provider_damaged_total")
 	p.logf("root %s: DAMAGED: %s; it is no longer served, answered for or renewed", short(rootHex), why)
 }

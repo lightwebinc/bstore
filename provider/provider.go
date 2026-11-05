@@ -204,6 +204,10 @@ type Provider struct {
 	adSweep uint32
 	adDir   string
 	adFiles []string
+	// log is the state log; checkpointAt is when the state was last
+	// written whole (journal.go).
+	log          *stateLog
+	checkpointAt time.Time
 	// outboxRun keeps publishOutbox one run at a time, and outboxAgain
 	// asks that run for another pass.
 	outboxRun   atomic.Bool
@@ -307,9 +311,18 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("advertisement journal: %w", err)
 	}
+	nextGen, err := st.replayLogs(cfg.Data, opts.Logf)
+	if err != nil {
+		return nil, fmt.Errorf("state log: %w", err)
+	}
+	stlog, err := openLog(cfg.Data, nextGen)
+	if err != nil {
+		return nil, fmt.Errorf("state log: %w", err)
+	}
 	p := &Provider{cfg: cfg, inc: newIncremental(), opts: opts, st: st, index: newEntryIndex(st.Entries), fundings: fundings, wallet: w, signer: signer, pool: w.Pool,
 		queue: make(chan string, 4096), queued: map[string]uint8{}, metrics: newMetrics(),
-		adSends: make(chan struct{}, maxAdSends), adDir: adDir, adFiles: adFiles, heldObjects: map[[32]byte]int32{}}
+		adSends: make(chan struct{}, maxAdSends), adDir: adDir, adFiles: adFiles, heldObjects: map[[32]byte]int32{},
+		log: stlog, checkpointAt: opts.Now()}
 	p.saveEnd = sync.NewCond(&p.mu)
 	p.slimPendingAds()
 	for r, h := range st.Holdings {
@@ -616,6 +629,9 @@ func (p *Provider) Close() error {
 	if lerr := p.ledger.close(); err == nil {
 		err = lerr
 	}
+	if cerr := p.log.close(); err == nil {
+		err = cerr
+	}
 	return err
 }
 
@@ -623,18 +639,18 @@ func (p *Provider) logf(format string, args ...any) { p.opts.Logf("bstore-provid
 
 func (p *Provider) now() time.Time { return p.opts.Now() }
 
-// save returns once the state as it stands is durable. The caller holds
-// p.mu, and save lets it go while the write runs: what is around a save may
-// have changed after it, so a caller reads the state again or is done with
-// it.
+// save writes a checkpoint: the state whole, and returns once it is
+// durable. The caller holds p.mu, and save lets it go while the write
+// runs: what is around a save may have changed after it, so a caller reads
+// the state again or is done with it. The hold path and the feed never
+// call it: they append rows to the state log (journal.go), and the
+// background writes a checkpoint on its own cadence.
 //
-// One write runs at a time: the copy is taken under the lock, and encoded
-// and synced outside it, so a save blocks no take behind p.mu, whatever the
-// state's size. A save that arrives during a write shares the next one,
-// which is a group commit: a write's cost grows with the state, and a burst
-// of saves pays for one. A change a crash may lose, which the next start
-// rebuilds or the writer is told nothing of, sets p.dirty instead and goes
-// with the next background pass.
+// One write runs at a time: the log is rotated and the copy taken under
+// the lock, and the copy encoded and synced outside it. A save that
+// arrives during a write shares the next one, which is a group commit.
+// A change a crash may lose, which the next start rebuilds or the writer
+// is told nothing of, sets p.dirty instead.
 func (p *Provider) save() error {
 	p.asked++
 	want := p.asked
@@ -647,9 +663,23 @@ func (p *Provider) save() error {
 		p.dirty = false
 		asked := p.asked
 		at := time.Now()
+		gen, err := p.log.rotate()
+		if err != nil {
+			p.saving = false
+			p.dirty = true
+			p.saveEnd.Broadcast()
+			p.logf("rotating the state log: %v", err)
+			return err
+		}
 		snap := p.st.snapshot()
+		snap.LogGen = gen
+		p.checkpointAt = p.now()
+		p.metrics.add("bstore_provider_state_copy_seconds_total", time.Since(at).Seconds())
 		p.mu.Unlock()
-		err := snap.save()
+		err = snap.save()
+		if err == nil {
+			p.log.prune(gen)
+		}
 		p.mu.Lock()
 		p.saving = false
 		p.saveEnd.Broadcast()
@@ -665,6 +695,14 @@ func (p *Provider) save() error {
 	}
 	return nil
 }
+
+// checkpointEvery is how often the background writes the state whole when
+// something changed; checkpointBytes is the log size that writes one
+// sooner. Between checkpoints the log has every change that matters.
+const (
+	checkpointEvery = 5 * time.Minute
+	checkpointBytes = 256 << 20
+)
 
 func (p *Provider) fees() mint.Fees {
 	return p.view.Fees(context.Background())

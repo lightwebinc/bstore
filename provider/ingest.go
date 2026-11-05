@@ -168,7 +168,6 @@ func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	out := map[string]any{}
 	var entries []string
-	others := false
 	for _, t := range topics {
 		admitted, entry, why := p.take(r.Context(), t, beef, pieces[t])
 		res := map[string]any{"outputsToAdmit": admitted, "coinsToRetain": []int{}}
@@ -181,24 +180,16 @@ func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		out[t] = res
 		if entry != "" {
 			entries = append(entries, entry)
-		} else if pieces[t] == nil {
-			others = true
 		}
 	}
 	// A writer reads this answer as the entry taken, so it is on disk
-	// first: a put entry as a journal row of its own, anything else on a
-	// records topic (a delete) with the state; one the plane delivered
-	// goes with the next pass.
+	// first: a put entry as a row of the state log (a delete waits for its
+	// row in noteDelete); one the plane delivered goes with the next sync.
 	for _, c := range entries {
 		if err = p.journalEntry(c); err != nil {
 			p.logf("entry %s: journal: %v", short(c), err)
 			break
 		}
-	}
-	if err == nil && others {
-		p.mu.Lock()
-		err = p.save()
-		p.mu.Unlock()
 	}
 	if err != nil {
 		auth104.Write(w, auth104.Error(http.StatusInternalServerError, "ERR_INTERNAL", "the entry could not be recorded"))
@@ -385,7 +376,7 @@ func (p *Provider) noteEntry(c string, e *storerec.Entry, listed bool) string {
 			p.index.add(rec)
 			p.metrics.inc("bstore_provider_deletes_total")
 			p.releasePiecesLocked(rootHex)
-			_ = p.save()
+			p.record(&logRow{Entries: []EntryRec{*rec}})
 			p.mu.Unlock()
 			p.logf("entry %s: %s %s: deleted before it arrived", short(c), e.Bucket, e.Key)
 			return ""
@@ -397,7 +388,7 @@ func (p *Provider) noteEntry(c string, e *storerec.Entry, listed bool) string {
 		p.st.Entries[c] = rec
 		p.index.add(rec)
 		p.pruneEntries()
-		p.dirty = true
+		p.record(&logRow{Entries: []EntryRec{*rec}})
 		p.logf("entry %s: %s %s, %d bytes, root %s", short(c), e.Bucket, e.Key, e.Size, short(rootHex))
 	}
 	p.mu.Unlock()
@@ -462,7 +453,7 @@ func (p *Provider) keepPiece(data []byte, rootHex, bucket, writer string) string
 		// collected from the store on the next start, and sent again.
 		p.mu.Lock()
 		p.st.Unclaimed[hh] = &Unclaimed{Root: rootHex, Bucket: bucket, Writer: writer, Size: uint64(len(data)), At: p.now().Unix()}
-		p.dirty = true
+		p.record(&logRow{Pieces: map[string]*Unclaimed{hh: p.st.Unclaimed[hh]}})
 		p.mu.Unlock()
 		stored = true
 	}
@@ -693,10 +684,12 @@ func (p *Provider) uploadObject(method, id string, obj [32]byte, body []byte, wh
 		if err := p.store.Put(obj, body); err != nil {
 			return auth104.Error(http.StatusInternalServerError, "ERR_STORE", "the object could not be stored")
 		}
+		k := hex.EncodeToString(obj[:])
 		p.mu.Lock()
-		p.st.Unclaimed[hex.EncodeToString(obj[:])] = &Unclaimed{Writer: uploaderKey + who.Hex, Size: uint64(len(body)), At: p.now().Unix()}
-		_ = p.save()
+		p.st.Unclaimed[k] = &Unclaimed{Writer: uploaderKey + who.Hex, Size: uint64(len(body)), At: p.now().Unix()}
+		seq := p.record(&logRow{Pieces: map[string]*Unclaimed{k: p.st.Unclaimed[k]}})
 		p.mu.Unlock()
+		_ = p.wait(seq)
 	}
 	p.uploads.mu.Lock()
 	s.objects[obj] = true
@@ -750,12 +743,17 @@ func (p *Provider) uploadCommit(ctx context.Context, id string, body []byte, who
 	s.committed[root] = true
 	p.uploads.mu.Unlock()
 	p.mu.Lock()
+	claimed := map[string]*Unclaimed{}
 	for o := range s.objects {
-		if u := p.st.Unclaimed[hex.EncodeToString(o[:])]; u != nil && u.Root == "" && u.Writer == uploaderKey+who.Hex {
+		k := hex.EncodeToString(o[:])
+		if u := p.st.Unclaimed[k]; u != nil && u.Root == "" && u.Writer == uploaderKey+who.Hex {
 			u.Root = rootHex
+			claimed[k] = u
 		}
 	}
-	p.dirty = true
+	if len(claimed) > 0 {
+		p.record(&logRow{Pieces: claimed})
+	}
 	h := p.st.Holdings[rootHex]
 	var ad *AdRec
 	if h != nil && h.Ad != nil && !h.Damaged {
