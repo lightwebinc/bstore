@@ -421,6 +421,10 @@ func (p *Publisher) mintLater(ctx context.Context, it *outItem, c Closure) ([]by
 	}
 	d.observe(pieceStage("mint"), t0)
 	t0 = time.Now()
+	// The local hand-off's account of the carrier, taken before minted
+	// clears the item's record fields (they are kept only while unminted).
+	it.local = &localMeta{bucket: it.Bucket, root: root, hash: h, funding: outpoint(tree.TxID(), it.Vout),
+		commitment: *tx.TxID(), at: at, n: len(data)}
 	if err := p.outbox.minted(it, tx.TxID().String(), beef, at, len(data)); err != nil {
 		putBEEF(beef)
 		return nil, err
@@ -560,9 +564,12 @@ func (p *Publisher) sendMinted(ctx context.Context, pb *pieceBatch) {
 			return nil
 		}
 		t0 := time.Now()
+		local := it.owesLocal()
 		p.outbox.sendAll(ctx, it, beef)
 		p.cfg.Delivery.observe(pieceStage("send"), t0)
-		putBEEF(beef)
+		if !local {
+			putBEEF(beef)
+		}
 		return nil
 	})
 }

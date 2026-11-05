@@ -53,3 +53,29 @@ func TestConfigDefaults(t *testing.T) {
 		}
 	}
 }
+
+// A local provider is a way to deliver pieces on its own, names its
+// configuration, and checks what it is handed unless told not to.
+func TestConfigLocalProvider(t *testing.T) {
+	c := minimalConfig()
+	c.Providers = nil
+	if err := c.Check(); err == nil {
+		t.Fatal("no facade, provider or local provider was accepted")
+	}
+	c.LocalProvider = &LocalProvider{}
+	if err := c.Check(); err == nil || !strings.Contains(err.Error(), "local_provider.config") {
+		t.Fatalf("a local provider with no configuration: %v", err)
+	}
+	c.LocalProvider.Config = "/etc/bstore/provider.json"
+	if err := c.Check(); err != nil {
+		t.Fatal(err)
+	}
+	if !c.LocalProvider.Verifies() {
+		t.Fatal("a local provider does not verify by default")
+	}
+	off := false
+	c.LocalProvider.Verify = &off
+	if c.LocalProvider.Verifies() {
+		t.Fatal("verify false was not honored")
+	}
+}

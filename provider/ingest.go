@@ -276,16 +276,9 @@ func (p *Provider) take(ctx context.Context, topic string, beef []byte, pc *stor
 				return []int{}, "", "piece: " + why(err)
 			}
 		}
-		if !writerAllowed(b, pc.Piece.Writer) {
-			return []int{}, "", "writer: not a writer this provider takes for the bucket"
-		}
-		if !p.fundingFree(pc.Funding, pc.Commitment) {
-			return []int{}, "", "funding: a second carrier on one funding output"
-		}
-		if why := p.keepPiece(pc.Piece.Piece, hex.EncodeToString(pc.Piece.Root[:]), b.Bucket, hex.EncodeToString(pc.Piece.Writer)); why != "" {
+		if why := p.takePiece(b, pc, nil); why != "" {
 			return []int{}, "", why
 		}
-		p.claimFunding(pc.Funding, pc.Commitment)
 		return []int{0}, "", ""
 	}
 	if len(beef) > maxRecordsBEEF {
@@ -415,14 +408,42 @@ func (p *Provider) pruneEntries() {
 // it: an error of this provider's, not a refusal of the piece.
 const storeFailed = "store: the piece could not be stored"
 
+// takePiece takes a checked piece carrier, or one its gateway in this
+// process vouches for (TakeLocal): the writer and the funding output are
+// held to the bucket's rules, and the piece kept. known is the piece's
+// SHA-256 when the caller has it. It returns why nothing was taken.
+func (p *Provider) takePiece(b *BucketConfig, pc *storerec.PieceCarrier, known *[32]byte) string {
+	if !writerAllowed(b, pc.Piece.Writer) {
+		return "writer: not a writer this provider takes for the bucket"
+	}
+	if !p.fundingFree(pc.Funding, pc.Commitment) {
+		return "funding: a second carrier on one funding output"
+	}
+	if why := p.keepPiece(pc.Piece.Piece, known, hex.EncodeToString(pc.Piece.Root[:]), b.Bucket, hex.EncodeToString(pc.Piece.Writer)); why != "" {
+		return why
+	}
+	p.claimFunding(pc.Funding, pc.Commitment)
+	return ""
+}
+
 // keepPiece stores a piece's bytes as unclaimed, if there is room. The
 // piece's three hashes (its SHA-256, which names it; its segment leaves and
 // subtree root, for the proofs) come from one pass over its bytes, and the
 // bytes go to the store and the closure walk as they are, copied nowhere
 // here. The carrier's own hashes (its txid, the record's signature) were
-// taken over other bytes by the carrier check and are not repeated.
-func (p *Provider) keepPiece(data []byte, rootHex, bucket, writer string) string {
-	h, leaves, sub := storerec.HashBlob(data)
+// taken over other bytes by the carrier check and are not repeated. known,
+// when set, is the piece's SHA-256 from a caller that computed it (a
+// gateway in this process), and only the leaves are hashed.
+func (p *Provider) keepPiece(data []byte, known *[32]byte, rootHex, bucket, writer string) string {
+	var h [32]byte
+	var leaves []byte
+	var sub [32]byte
+	if known != nil {
+		h = *known
+		leaves, sub = storerec.LeavesOf(data)
+	} else {
+		h, leaves, sub = storerec.HashBlob(data)
+	}
 	hh := hex.EncodeToString(h[:])
 	if p.front != nil {
 		// A front keeps no second copy of what it handed to the backend.
