@@ -101,14 +101,14 @@ xychart-beta
   title "A 4 GiB put, end to end (seconds)"
   x-axis ["Acknowledged by S3", "Carried to every provider", "Verified by every provider"]
   y-axis "seconds" 0 --> 25
-  bar [3.75, 6.5, 19]
+  bar [3.75, 5.8, 17]
 ```
 
 | Measure | Result |
 | --- | --- |
 | A 4 GiB put acknowledged by the S3 gateway | 3.75 s, about 1,145 MB/s |
-| The same put carried over the multicast plane, lossless | about 700 MB/s |
-| Every provider verified the object | about 19 s after the put |
+| The same put carried over the multicast plane, lossless | 744 MB/s |
+| Every provider verified the object | 17 s after the put |
 | Small puts answered `200` by one gateway | 400 a second |
 | Roots held and advertised by one provider | about 150 a second |
 
@@ -125,7 +125,7 @@ Release tarballs for Linux and macOS (amd64, arm64), each with its
 `SHA256SUMS` entry, are on the
 [releases page](https://github.com/lightwebinc/bstore/releases). The
 container images are built from the [Dockerfile](Dockerfile)
-(`ghcr.io/lightwebinc/bstore`, `bstore-provider`, `bstore-devchain`); see
+(`ghcr.io/lightwebinc/bstore`, `bstore-provider`, `bstore-devchain`, `bstore-host`); see
 [docs/configuration.md](docs/configuration.md#container-images).
 
 ## On mainnet in five commands
