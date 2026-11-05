@@ -204,7 +204,9 @@ func (c *chunkReader) Read(p []byte) (int, error) {
 		p = p[:c.left]
 	}
 	n, err := c.br.Read(p)
-	c.h.Write(p[:n])
+	if c.signed {
+		c.h.Write(p[:n])
+	}
 	c.left -= int64(n)
 	c.total += int64(n)
 	if err == io.EOF {
