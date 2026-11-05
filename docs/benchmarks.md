@@ -54,7 +54,7 @@ _The same object, acknowledged in 3.75 s (1,145 MB/s) once the gateway hashed th
 | Body into the gateway, aws CLI, multipart x16 | 3 s of transfer after 7 s of client-side hashing | the CLI's own SHA-256 pass on one core |
 | Put acknowledged, Go client | 3.75 s end to end, 1,145 MB/s | the body's transfer; the carriers are minted after the answer |
 | Put acknowledged, aws CLI | 5.8 s | the CLI |
-| Every provider holds the object verified | 17 s after the put | the plane's carriage rate below |
+| Every provider holds the object verified | 15 s after the put | the plane's carriage rate below |
 | Reading 4 GiB back, one stream | 894 MB/s | one TCP flow on one bond member |
 | Ranged reads | 1.5 GB/s | both bond members |
 
@@ -66,17 +66,18 @@ subscribes to the bucket receives them. Adding a provider adds no upload.
 ```mermaid
 xychart-beta
     title "Plane carriage, lossless, one group (MB/s, higher is better)"
-    x-axis ["open-source listener", "commercial, one edge host", "commercial, listener on its own host", "one 10 GbE link"]
+    x-axis ["open-source listener", "commercial, one edge host", "listener on its own host", "copies removed", "one 10 GbE link"]
     y-axis "MB/s" 0 --> 1300
-    bar [400, 700, 744, 1237]
+    bar [400, 700, 744, 919, 1237]
 ```
 
-_The open-source listener processes each datagram between reads and drops above about 400 MB/s; the commercial listener reads each socket in batches into a queue and carried every run without a drop at peaks of 700 MB/s on one edge host, and 744 MB/s with the listener on a host of its own and the group forwarded to that host alone. The last bar is what one 10 GbE link moves (9.9 Gb/s, measured with iperf), the ceiling the lane is working toward._
+_The open-source listener processes each datagram between reads and drops above about 400 MB/s; the commercial listener reads each socket in batches into a queue and carried every run without a drop at peaks of 700 MB/s on one edge host, 744 MB/s with the listener on a host of its own and the group forwarded to that host alone, and 919 MB/s once the copies on the way were removed (bstore v0.23.0: each piece read in place rather than copied out of the carrier; the lane read straight into its buffers; the retry cache given room). The last bar is what one 10 GbE link moves (9.9 Gb/s, measured with iperf), the ceiling the lane is working toward._
 
-What bounds the rate today is the edge host: the proxy's TCP intake, its copies into the
-multicast sender and the listener's copies out of it share one machine, and the host's total
-intake under that load measures about 1.2 GB/s. The next step is fewer copies on that host, not
-more goroutines.
+What bounds the rate today is the work per piece on the writer's side: minting each carrier
+(three SHA-256 passes over its 4 MiB, inherent to a signed carrier, and copies of the piece as
+the carrier is built) and the provider's checks beside the facade. The edge keeps up: at a
+higher offered rate its lane no longer backs up. The next step is the carrier built once, in the
+buffer it is sent from.
 
 Loss on the plane is repaired by the network: a listener that misses a datagram asks the retry
 endpoint for it by number. A 4 GiB object is one chain of about 490,000 fragments, and a fleet
