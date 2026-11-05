@@ -73,9 +73,9 @@ func TestMultipartThroughput(t *testing.T) {
 		wg.Go(func() {
 			defer func() { <-sem }()
 			bh := newBodyHashes(trailer, "x-amz-checksum-crc64nvme", true)
-			src := bh.reader(bytes.NewReader(parts[i]))
+			src := bytes.NewReader(parts[i])
 			if legacy {
-				legacyPart(t, up, i+1, src, bh)
+				legacyPart(t, up, i+1, bh.reader(src), bh)
 			} else {
 				r.putFrom(up, i+1, int64(len(parts[i])), src, bh)
 			}
@@ -112,7 +112,8 @@ func TestMultipartThroughput(t *testing.T) {
 		mode, size>>20, len(parts), partSize, conc, landed.Seconds(), mbs(landed), done.Seconds(), total.Seconds(), mbs(total))
 }
 
-// putFrom is put of a part read from src through its body hashes.
+// putFrom is put of a part read from src, its body hashes fed from the
+// blob buffers as uploadPart feeds them.
 func (r *mpRig) putFrom(up *upload, n int, size int64, src io.Reader, bh *bodyHashes) {
 	r.t.Helper()
 	part, pw, closed, err := up.openPart(n, size)
@@ -120,7 +121,8 @@ func (r *mpRig) putFrom(up *upload, n int, size int64, src io.Reader, bh *bodyHa
 		r.t.Fatal(err)
 	}
 	defer closed()
-	if _, err := io.Copy(pw, src); err != nil {
+	pw.(*partWriter).tee = bh.feed
+	if _, err := io.Copy(pw, io.LimitReader(src, size+1)); err != nil {
 		r.t.Fatal(err)
 	}
 	hashes, segs, err := pw.finish()

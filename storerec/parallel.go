@@ -30,14 +30,23 @@ type Parallel struct {
 func NewParallel(workers int, store func(i int, h [32]byte, blob []byte) error) *Parallel {
 	p := &Parallel{}
 	p.c = chirp.NewParallelChunker(workers, func(i int, ref chirp.Child, blob []byte) error {
-		sub, err := commit.SegmentRoot(blob, SegmentSize)
-		if err != nil {
-			return err
-		}
-		p.subs.Set(i, sub)
+		p.subs.Set(i, SegmentRootOf(blob))
 		return store(i, ref.Hash, blob)
 	})
 	return p
+}
+
+// SegmentRootOf is commit.SegmentRoot of a blob at SegmentSize, the
+// segment subtree root a proof root is composed of, hashed in place: each
+// segment is a slice of the blob, copied nowhere.
+func SegmentRootOf(blob []byte) [32]byte {
+	var b commit.Builder
+	for len(blob) > 0 {
+		k := min(SegmentSize, len(blob))
+		b.AddBytes(blob[:k])
+		blob = blob[k:]
+	}
+	return b.Root()
 }
 
 // Write takes content in order.

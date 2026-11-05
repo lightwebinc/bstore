@@ -50,6 +50,22 @@ var StageWorkers = 0
 // error from r, or content over max (ErrTooLarge), leaves nothing to
 // publish.
 func (st *Store) Stage(ctx context.Context, r io.Reader, max uint64) (*Staged, error) {
+	return st.StageTee(ctx, r, max, nil)
+}
+
+// A Tee is given each buffer StageTee reads, in content order, and calls
+// done once it is through with it; the buffer is not read into again
+// before then.
+type Tee func(p []byte, done func())
+
+// stageBufs is how many read buffers StageTee cycles through with a tee:
+// the tee's hashing overlaps the reads and the chunker's copy.
+const stageBufs = 4
+
+// StageTee is Stage with every buffer read also given to tee, before the
+// closure takes it: the digests a request checks run over the same bytes,
+// read once and copied by nothing but the chunker.
+func (st *Store) StageTee(ctx context.Context, r io.Reader, max uint64, tee Tee) (*Staged, error) {
 	if max > storerec.MaxSize {
 		max = storerec.MaxSize
 	}
@@ -86,18 +102,32 @@ func (st *Store) Stage(ctx context.Context, r io.Reader, max uint64) (*Staged, e
 			st.unstage(wrote)
 		}
 	}()
-	buf := make([]byte, 256<<10)
+	bufs := 1
+	if tee != nil {
+		bufs = stageBufs
+	}
+	free := make(chan []byte, bufs)
+	for range bufs {
+		free <- make([]byte, 256<<10)
+	}
 	var n uint64
 	for {
+		buf := <-free
 		k, err := r.Read(buf)
 		if k > 0 {
 			n += uint64(k)
 			if n > max {
 				return nil, fmt.Errorf("%w: more than %d bytes", ErrTooLarge, max)
 			}
+			if tee != nil {
+				tee(buf[:k], func() { free <- buf })
+			}
 			if _, werr := b.Write(buf[:k]); werr != nil {
 				return nil, werr
 			}
+		}
+		if tee == nil || k == 0 {
+			free <- buf
 		}
 		if err == io.EOF {
 			break

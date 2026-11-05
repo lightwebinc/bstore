@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // The flexible checksums S3 clients send, in a header or a trailer
@@ -35,10 +36,57 @@ type bodyHashes struct {
 	sha256 hash.Hash
 	sums   map[string]hash.Hash
 	n      int64
+	// staged stands in for the body's SHA-256 where a stage computes it
+	// as the content hash (sha256Staged): the bytes are hashed once.
+	staged *stagedSHA256
 
-	lanes   []chan []byte
+	lanes   []chan *hashJob
+	started bool
 	pending sync.WaitGroup
 	synced  bool
+}
+
+// hashJob is one buffer handed to every lane; done, when set, runs once
+// the last lane has hashed it, and the buffer is the caller's again.
+type hashJob struct {
+	p    []byte
+	left atomic.Int32
+	done func()
+}
+
+// stagedSHA256 is a SHA-256 whose sum is set from elsewhere: the content
+// hash a stage computes over the same bytes. Writes are nothing.
+type stagedSHA256 struct{ sum [32]byte }
+
+func (s *stagedSHA256) Write(p []byte) (int, error) { return len(p), nil }
+func (s *stagedSHA256) Sum(b []byte) []byte         { return append(b, s.sum[:]...) }
+func (s *stagedSHA256) Reset()                      {}
+func (s *stagedSHA256) Size() int                   { return sha256.Size }
+func (s *stagedSHA256) BlockSize() int              { return sha256.BlockSize }
+
+// sha256Staged makes every SHA-256 of the body (a signed payload hash, an
+// x-amz-checksum-sha256) one the stage sets (setSHA256) instead of one
+// hashed here: a put's body is the content, whose SHA-256 the stage
+// computes. Before the first write.
+func (b *bodyHashes) sha256Staged() {
+	if b.sha256 == nil && b.sums["sha256"] == nil {
+		return
+	}
+	b.staged = &stagedSHA256{}
+	if b.sha256 != nil {
+		b.sha256 = b.staged
+	}
+	if b.sums["sha256"] != nil {
+		b.sums["sha256"] = b.staged
+	}
+}
+
+// setSHA256 is the body's SHA-256 as the stage computed it, after
+// sha256Staged.
+func (b *bodyHashes) setSHA256(sum [32]byte) {
+	if b.staged != nil {
+		b.staged.sum = sum
+	}
 }
 
 // newBodyHashes computes MD5 when wantMD5 (an MD5 ETag, or a Content-MD5
@@ -72,42 +120,58 @@ func newBodyHashes(h http.Header, trailer string, wantMD5 bool) *bodyHashes {
 	return b
 }
 
-// Write hands p to every digest. Each digest runs on a goroutine of its
-// own, fed a copy of p, so the request's read loop waits for none of them
-// and the digests overlap each other and the closure's own hashing; sync
-// waits for them all before any digest is read.
+// Write hands a copy of p to every digest (feed): an io.Writer, for a
+// reader teed through the hashes.
 func (b *bodyHashes) Write(p []byte) (int, error) {
+	b.feed(append([]byte(nil), p...), nil)
+	return len(p), nil
+}
+
+// feed hands p itself to every digest, in order with what was fed before,
+// and calls done (when not nil) once the last of them has hashed it; until
+// then p is theirs. Each digest runs on a goroutine of its own, so the
+// caller's read loop waits for none of them and the digests overlap each
+// other and the closure's own hashing; sync waits for them all before any
+// digest is read. Once synced, feed hashes in line.
+func (b *bodyHashes) feed(p []byte, done func()) {
 	b.n += int64(len(p))
-	if b.synced {
-		b.write(p)
-		return len(p), nil
-	}
-	if b.lanes == nil {
-		for _, h := range b.all() {
-			ch := make(chan []byte, 8)
+	if !b.synced && !b.started {
+		b.started = true
+		for _, h := range b.hashing() {
+			ch := make(chan *hashJob, 8)
 			b.lanes = append(b.lanes, ch)
 			go func(h hash.Hash) {
-				for c := range ch {
-					h.Write(c)
+				for j := range ch {
+					h.Write(j.p)
+					if j.left.Add(-1) == 0 && j.done != nil {
+						j.done()
+					}
 					b.pending.Done()
 				}
 			}(h)
 		}
 	}
-	c := append([]byte(nil), p...)
+	if b.synced || len(b.lanes) == 0 {
+		b.write(p)
+		if done != nil {
+			done()
+		}
+		return
+	}
+	j := &hashJob{p: p, done: done}
+	j.left.Store(int32(len(b.lanes)))
 	b.pending.Add(len(b.lanes))
 	for _, ch := range b.lanes {
-		ch <- c
+		ch <- j
 	}
-	return len(p), nil
 }
 
 // newSums computes only the flexible checksums h declares: a completed
 // upload's whole-object checksums, where no MD5 is needed.
 func newSums(h http.Header) *bodyHashes { return newBodyHashes(h, "", false) }
 
-// any reports whether there is a digest to compute.
-func (b *bodyHashes) any() bool { return len(b.all()) > 0 }
+// any reports whether there is a digest to compute over the bytes.
+func (b *bodyHashes) any() bool { return len(b.hashing()) > 0 }
 
 func (b *bodyHashes) all() []hash.Hash {
 	var hs []hash.Hash
@@ -123,8 +187,19 @@ func (b *bodyHashes) all() []hash.Hash {
 	return hs
 }
 
-func (b *bodyHashes) write(p []byte) {
+// hashing is every digest that hashes the bytes: all but the staged one.
+func (b *bodyHashes) hashing() []hash.Hash {
+	var hs []hash.Hash
 	for _, h := range b.all() {
+		if b.staged == nil || h != hash.Hash(b.staged) {
+			hs = append(hs, h)
+		}
+	}
+	return hs
+}
+
+func (b *bodyHashes) write(p []byte) {
+	for _, h := range b.hashing() {
 		h.Write(p)
 	}
 }

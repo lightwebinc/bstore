@@ -404,7 +404,8 @@ func entryMeta(h http.Header) (string, []storerec.MetaPair, *s3Error) {
 // so encoded, every digest computed, and check to call at its end, before
 // anything is published.
 type body struct {
-	r      io.Reader
+	r      io.Reader // the body through its digests (hashes)
+	src    io.Reader // the body alone, for a sink that feeds the digests itself (hashes.feed)
 	hashes *bodyHashes
 	chunks *chunkReader
 	length int64
@@ -483,6 +484,7 @@ func (s *Server) openBody(r *http.Request, a *Auth, max int64) (*body, *s3Error)
 			bd.hashes.sha256 = sha256.New()
 		}
 	}
+	bd.src = raw
 	bd.r = bd.hashes.reader(raw)
 	bd.check = func() *s3Error {
 		bd.hashes.sync()
@@ -562,12 +564,17 @@ func (s *Server) putObject(ctx context.Context, w http.ResponseWriter, r *http.R
 		return e
 	}
 	defer bd.hashes.sync()
-	staged, err := s.store.Stage(ctx, bd.r, uint64(bd.length))
+	// The stage hashes each buffer of the body once for everything that
+	// needs it: the closure, and the digests fed from the same buffer. The
+	// body's SHA-256, when one is signed or declared, is the content hash.
+	bd.hashes.sha256Staged()
+	staged, err := s.store.StageTee(ctx, bd.src, uint64(bd.length), bd.hashes.feed)
 	stageDone()
 	if err != nil {
 		return bodyError(err)
 	}
 	defer staged.Release()
+	bd.hashes.setSHA256(staged.ContentHash)
 	if e := bd.check(); e != nil {
 		return e
 	}
