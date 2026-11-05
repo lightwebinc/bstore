@@ -88,7 +88,8 @@ func (p *Provider) releaseRootLocked(rootHex string) {
 		h.Entries, h.Ad, h.Lease = nil, nil, 0
 		for _, pa := range p.st.PendingAds {
 			if pa.Root == rootHex {
-				p.record(&logRow{AdDone: pa.Txid})
+				vout := pa.AdVout
+				p.record(&logRow{AdDone: pa.Txid, AdDoneVout: &vout})
 			}
 		}
 		p.st.PendingAds = deleteIf(p.st.PendingAds, func(pa PendingAd) bool { return pa.Root == rootHex })

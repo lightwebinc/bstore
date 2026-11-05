@@ -134,8 +134,11 @@ type AdRec struct {
 // chained up behind a slow block, thousands of them the bulk of a 247 MB
 // state written whole on every save.
 type PendingAd struct {
-	Root    string `json:"root"`
-	Txid    string `json:"txid"`
+	Root string `json:"root"`
+	Txid string `json:"txid"`
+	// AdVout is the root's output in the transaction: a transaction minted
+	// for several roots at once (limits.ad_batch) has a row per root.
+	AdVout  uint32 `json:"adVout,omitempty"`
 	RawHex  string `json:"rawHex,omitempty"`
 	BeefHex string `json:"beef,omitempty"`
 	Expiry  uint64 `json:"expiry"`
@@ -411,6 +414,23 @@ func (st *State) adopted(txid string) bool {
 
 func (st *State) dropPendingAd(txid string) {
 	st.PendingAds = slices.DeleteFunc(st.PendingAds, func(p PendingAd) bool { return p.Txid == txid })
+}
+
+// dropPendingAdOut drops one root's row of a transaction.
+func (st *State) dropPendingAdOut(txid string, vout uint32) {
+	st.PendingAds = slices.DeleteFunc(st.PendingAds, func(p PendingAd) bool { return p.Txid == txid && p.AdVout == vout })
+}
+
+// pendingAdsOf are the rows of one transaction, in output order.
+func (st *State) pendingAdsOf(txid string) []PendingAd {
+	var rows []PendingAd
+	for _, pa := range st.PendingAds {
+		if pa.Txid == txid {
+			rows = append(rows, pa)
+		}
+	}
+	slices.SortFunc(rows, func(a, b PendingAd) int { return int(a.AdVout) - int(b.AdVout) })
+	return rows
 }
 
 func itoa(v uint64) string {

@@ -203,11 +203,16 @@ type Provider struct {
 	// ancSent is when each unmined ancestor was last put on the leg
 	// (send), under ancMu.
 	adSends chan struct{}
-	ancMu   sync.Mutex
-	ancSent map[string]time.Time
-	adSweep uint32
-	adDir   string
-	adFiles []string
+	// adAsks feeds the minter (adbatch.go) when limits.ad_batch is above 1;
+	// adSettler is the settlement leg advertisements go on, the configured
+	// one or, for "proof", an arcade that waits for no verdict.
+	adAsks    chan adAsk
+	adSettler publish.Settler
+	ancMu     sync.Mutex
+	ancSent   map[string]time.Time
+	adSweep   uint32
+	adDir     string
+	adFiles   []string
 	// log is the state log; checkpointAt is when the state was last
 	// written whole (journal.go).
 	log          *stateLog
@@ -328,6 +333,9 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 		adSends: make(chan struct{}, cfg.Limits.AdSends), adDir: adDir, adFiles: adFiles, heldObjects: map[[32]byte]int32{},
 		log: stlog, checkpointAt: opts.Now()}
 	p.saveEnd = sync.NewCond(&p.mu)
+	if cfg.Limits.AdBatch > 1 {
+		p.adAsks = make(chan adAsk)
+	}
 	p.slimPendingAds()
 	for r, h := range st.Holdings {
 		if !h.Verified {
@@ -426,6 +434,11 @@ func (p *Provider) legs() error {
 		v.CacheSpends()
 	}
 	p.view, p.chain, p.settler, p.arcade, p.hc = v, v.Chain, v.Settler, v.Arcade, v.Headers
+	if p.arcade != nil && p.cfg.Limits.AdVerdict == "proof" {
+		a := *p.arcade
+		a.Verdict = -1
+		p.adSettler = &a
+	}
 	for _, h := range c.Hosts {
 		p.hosts = append(p.hosts, &publish.Facade{Base: strings.TrimRight(h, "/")})
 	}
@@ -558,6 +571,10 @@ func (p *Provider) Start(ctx context.Context) error {
 		}
 	}()
 	go func() { defer p.wg.Done(); p.worker(ctx) }()
+	if p.adAsks != nil {
+		p.wg.Add(1)
+		go func() { defer p.wg.Done(); p.adMinter(ctx) }()
+	}
 	go func() { defer p.wg.Done(); p.background(ctx) }()
 	// Everything already held or waiting is looked at again.
 	p.mu.Lock()
