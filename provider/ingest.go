@@ -345,11 +345,9 @@ func (p *Provider) fundingFree(op transaction.Outpoint, c [32]byte) bool {
 
 func writerAllowList(b *BucketConfig) bool { return len(b.Writers) > 0 }
 
-// The most undecided entries kept, from one writer and in all.
-const (
-	maxUndecidedPerWriter = 4096
-	maxUndecided          = 10000
-)
+// The most undecided entries kept in all; one writer's most is
+// limits.undecided_per_writer.
+const maxUndecided = 10000
 
 // noteEntry records a put entry, once, and asks for its root to be looked
 // at.
@@ -361,7 +359,7 @@ func (p *Provider) noteEntry(c string, e *storerec.Entry, listed bool) string {
 		mine, all := p.index.writers[w], p.index.total
 		// A writer a bucket's allow-list names is never shut out by the
 		// total that strangers fill.
-		if mine >= maxUndecidedPerWriter || (!listed && all >= maxUndecided) {
+		if mine >= p.cfg.Limits.UndecidedPerWriter || (!listed && all >= maxUndecided) {
 			p.mu.Unlock()
 			return "room: too many entries waiting for their closures"
 		}

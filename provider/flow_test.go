@@ -162,8 +162,12 @@ func TestProviderFlow(t *testing.T) {
 
 	// Renewal: paid, the successor spends the advertisement.
 	body, _ := json.Marshal(map[string]any{"root": hex.EncodeToString(root[:]), "until": ad.Expiry + 86400})
+	// Answered 200 once made, or 202 when it is owed and made by the
+	// background (the root's advertisement was still on its way to the
+	// leg, which the batch minter sends off its own goroutine); either way
+	// the renewal shows on the root.
 	call, err = r.writer.Post(ctx, front+"/renew", body, 100000)
-	if err != nil || call.Status != 200 {
+	if err != nil || (call.Status != 200 && call.Status != 202) {
 		t.Fatalf("renew: %v %+v\n%s", err, call, r.said())
 	}
 	r.eventually("renewed", 10*time.Second, func() bool { a := p.liveAd(root); return a != nil && a.Expiry == ad.Expiry+86400 })
