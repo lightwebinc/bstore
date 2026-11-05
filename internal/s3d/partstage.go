@@ -240,6 +240,9 @@ func (w *partWriter) Write(p []byte) (int, error) {
 		return 0, err
 	}
 	n := len(p)
+	if w.run != nil {
+		w.run.Write(p)
+	}
 	for len(p) > 0 {
 		if w.cur == nil {
 			w.cur = w.buffer()
