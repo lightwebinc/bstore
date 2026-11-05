@@ -174,6 +174,7 @@ func (p *Provider) mintAd(ctx context.Context, root [32]byte, until uint64) (Pen
 	// library hands out the state's next (treeState.Current). A mint that
 	// fails past this point leaves its output unused.
 	p.mintMu.Lock()
+	locked := time.Now()
 	tree, vout, err := p.spendTree(ctx)
 	if err == nil {
 		p.mu.Lock()
@@ -181,6 +182,8 @@ func (p *Provider) mintAd(ctx context.Context, root [32]byte, until uint64) (Pen
 		p.mu.Unlock()
 	}
 	p.mintMu.Unlock()
+	p.metrics.inc("bstore_provider_mint_lock_total")
+	p.metrics.add("bstore_provider_mint_lock_seconds_total", time.Since(locked).Seconds())
 	if err != nil {
 		return none, nil, nil, err
 	}
@@ -197,11 +200,7 @@ func (p *Provider) mintAd(ctx context.Context, root [32]byte, until uint64) (Pen
 	if err != nil {
 		return none, nil, nil, fmt.Errorf("advertisement transaction: %w", err)
 	}
-	beef, err := funding.BEEF(tx)
-	if err != nil {
-		return none, nil, nil, err
-	}
-	pa := PendingAd{Root: rootHex, Txid: tx.TxID().String(), BeefHex: hex.EncodeToString(beef), Expiry: until,
+	pa := PendingAd{Root: rootHex, Txid: tx.TxID().String(), RawHex: hex.EncodeToString(tx.Bytes()), Expiry: until,
 		Tree: tree.TxID().String(), Vout: vout, Prev: prev, At: p.now().Unix()}
 	if err := p.journalAd(pa); err != nil {
 		return none, nil, nil, err
@@ -225,7 +224,7 @@ type noAdWait struct{}
 
 // maxAdSends bounds the advertisements on their way to the settlement leg
 // behind the worker.
-const maxAdSends = 16
+const maxAdSends = 64
 
 var errAdPending = errors.New("an advertisement for this root is pending; it is looked at again once it mines")
 
@@ -447,11 +446,7 @@ func (p *Provider) resumeAds(ctx context.Context) {
 		if pa.Sent && !sweep {
 			continue
 		}
-		raw, err := hex.DecodeString(pa.BeefHex)
-		if err != nil {
-			continue
-		}
-		tx, err := transaction.NewTransactionFromBEEF(raw)
+		tx, err := p.pendingTx(pa)
 		if err != nil {
 			p.logf("pending advertisement %s: %v", short(pa.Txid), err)
 			continue
@@ -503,11 +498,52 @@ func (p *Provider) resumeAds(ctx context.Context) {
 
 // pendingAdvert is a pending advertisement as the backend answers it.
 func (p *Provider) pendingAdvert(pa PendingAd) (*backend.Advert, error) {
-	raw, err := hex.DecodeString(pa.BeefHex)
+	tx, err := p.pendingTx(pa)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := funding.BEEF(tx)
 	if err != nil {
 		return nil, err
 	}
 	return &backend.Advert{Txid: pa.Txid, Vout: 0, Expiry: pa.Expiry, BEEF: raw}, nil
+}
+
+// pendingTx is a pending advertisement's transaction with its inputs'
+// transactions behind it: the funding tree the state keeps and the
+// advertisement a renewal spends, as mintAd built it. A row from before
+// RawHex carries its BEEF whole.
+func (p *Provider) pendingTx(pa PendingAd) (*transaction.Transaction, error) {
+	if pa.RawHex == "" {
+		raw, err := hex.DecodeString(pa.BeefHex)
+		if err != nil {
+			return nil, err
+		}
+		return transaction.NewTransactionFromBEEF(raw)
+	}
+	raw, err := hex.DecodeString(pa.RawHex)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := transaction.NewTransactionFromBytes(raw)
+	if err != nil {
+		return nil, err
+	}
+	for _, in := range tx.Inputs {
+		switch id := in.SourceTXID.String(); {
+		case id == pa.Tree:
+			if in.SourceTransaction, err = p.loadKept(pa.Tree); err != nil {
+				return nil, err
+			}
+		case pa.Prev != nil && id == pa.Prev.Txid:
+			if in.SourceTransaction, err = funding.Rebuild(pa.Prev.RawHex, pa.Prev.Bump, ""); err != nil {
+				return nil, err
+			}
+		default:
+			return nil, fmt.Errorf("input %s is neither its funding tree nor the advertisement it renews", short(id))
+		}
+	}
+	return tx, nil
 }
 
 func adAdvert(a *AdRec) (*backend.Advert, error) {

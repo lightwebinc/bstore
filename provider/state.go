@@ -123,11 +123,18 @@ type AdRec struct {
 }
 
 // PendingAd is an advertisement or renewal transaction signed and
-// persisted before it reaches the settlement leg.
+// persisted before it reaches the settlement leg. RawHex is the
+// transaction alone: its inputs are the funding tree the state keeps and,
+// for a renewal, the advertisement it renews, so its BEEF is rebuilt from
+// those (pendingTx). BeefHex is what rows before 2026-11-05 kept: a BEEF
+// with every unmined ancestor, 142 KB each on the lab once funding trees
+// chained up behind a slow block, thousands of them the bulk of a 247 MB
+// state written whole on every save.
 type PendingAd struct {
 	Root    string `json:"root"`
 	Txid    string `json:"txid"`
-	BeefHex string `json:"beef"`
+	RawHex  string `json:"rawHex,omitempty"`
+	BeefHex string `json:"beef,omitempty"`
 	Expiry  uint64 `json:"expiry"`
 	// Tree and Vout are the funding output it spends for its fee; Prev the
 	// advertisement a renewal spends.

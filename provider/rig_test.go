@@ -130,7 +130,10 @@ func (r *rig) startHooked(cfg *Config, fund bool, opts Options, before func(*Pro
 		}
 	}
 	ctx := context.Background()
-	opts.Tick, opts.Logf = 100*time.Millisecond, r.logf
+	opts.Logf = r.logf
+	if opts.Tick == 0 {
+		opts.Tick = 100 * time.Millisecond
+	}
 	p, err := New(ctx, cfg, opts)
 	if err != nil {
 		r.t.Fatal(err)

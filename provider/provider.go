@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -310,6 +311,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 		queue: make(chan string, 4096), queued: map[string]uint8{}, metrics: newMetrics(),
 		adSends: make(chan struct{}, maxAdSends), adDir: adDir, adFiles: adFiles, heldObjects: map[[32]byte]int32{}}
 	p.saveEnd = sync.NewCond(&p.mu)
+	p.slimPendingAds()
 	for r, h := range st.Holdings {
 		if !h.Verified {
 			continue
@@ -659,6 +661,7 @@ func (p *Provider) save() error {
 		p.written = asked
 		p.metrics.inc("bstore_provider_state_saves_total")
 		p.metrics.set("bstore_provider_state_save_seconds", time.Since(at).Seconds())
+		p.metrics.add("bstore_provider_state_save_seconds_total", time.Since(at).Seconds())
 	}
 	return nil
 }
@@ -675,6 +678,33 @@ func (p *Provider) tip(ctx context.Context) (uint32, error) {
 	}
 	p.lastTip.Store(h)
 	return h, nil
+}
+
+// slimPendingAds turns every pending advertisement kept as a BEEF (rows
+// before RawHex) into its transaction alone, where its inputs are kept:
+// the state shrinks at the first start, not when those mine.
+func (p *Provider) slimPendingAds() {
+	for i := range p.st.PendingAds {
+		pa := &p.st.PendingAds[i]
+		if pa.RawHex != "" || pa.BeefHex == "" {
+			continue
+		}
+		raw, err := hex.DecodeString(pa.BeefHex)
+		if err != nil {
+			continue
+		}
+		tx, err := transaction.NewTransactionFromBEEF(raw)
+		if err != nil {
+			continue
+		}
+		slim := *pa
+		slim.RawHex, slim.BeefHex = hex.EncodeToString(tx.Bytes()), ""
+		if _, err := p.pendingTx(slim); err != nil {
+			continue
+		}
+		*pa = slim
+		p.dirty = true
+	}
 }
 
 // loadKept rebuilds a funding tree the state keeps.

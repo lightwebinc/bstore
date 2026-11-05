@@ -87,3 +87,20 @@ func TestEntryIndexFollowsDecisions(t *testing.T) {
 		t.Fatal("an entry no longer held keeps its hold output")
 	}
 }
+
+// A tree's row brings back its pending record, unless the state adopted
+// or kept the tree already.
+func TestTreeJournalBringsBackAPendingTree(t *testing.T) {
+	row := &adRow{Tree: &PendingTree{Tree: funding.Tree{Txid: "tree", Count: 16}}}
+	st := &State{Holdings: map[string]*Holding{}, Entries: map[string]*EntryRec{}}
+	st.replayAd(row)
+	st.replayAd(row)
+	if len(st.PendingTrees) != 1 || st.PendingTrees[0].Tree.Txid != "tree" {
+		t.Fatalf("pending trees %+v", st.PendingTrees)
+	}
+	adopted := &State{Holdings: map[string]*Holding{}, Entries: map[string]*EntryRec{}, Tree: &funding.Tree{Txid: "tree"}, Trees: []funding.Tree{{Txid: "tree"}}}
+	adopted.replayAd(row)
+	if len(adopted.PendingTrees) != 0 {
+		t.Fatal("a tree the state adopted came back as pending")
+	}
+}
