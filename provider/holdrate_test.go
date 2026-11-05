@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -438,6 +439,80 @@ func TestHoldRateAsGatewaySends(t *testing.T) {
 	p := r.startWith(cfg, true, Options{})
 	run := prepareHoldRun(t, r, p, n)
 	rate := run.runAsGateway(t)
+	if floor := float64(envInt("BSTORE_HOLD_FLOOR", 100)); rate < floor && !raceDetector {
+		t.Fatalf("%.0f entries held a second, want at least %.0f", rate, floor)
+	}
+}
+
+// labShape fills a provider's state, before it starts, as a lab provider's
+// stands after a week of small puts: held holdings with their
+// advertisements and entries, and pending advertisements whose BEEF
+// carries a long chain of unmined funding trees (142 KB each, as sampled
+// on the lab on 2026-11-05).
+func labShape(p *Provider, holdings, pending int) {
+	now := p.now()
+	writer := hex.EncodeToString(p.signer.Identity.Compressed())
+	raw := strings.Repeat("ab", 300)
+	bump := strings.Repeat("cd", 100)
+	for i := range holdings {
+		root := fmt.Sprintf("%064x", 1<<45+i)
+		c := fmt.Sprintf("%064x", 1<<46+i)
+		p.st.Entries[c] = &EntryRec{C: c, Bucket: testBucket, Key: "held/" + strconv.Itoa(i), Writer: writer, Root: root, Size: 7,
+			ContentHash: root, ProofRoot: root, Created: uint64(now.UnixMilli()), At: now.UnixNano(), Decision: decisionHeld,
+			Hold: &HoldRec{Txid: fmt.Sprintf("%064x", 1<<47+i/1024), Vout: uint32(i % 1024), Sats: 5000, T: 1, K: 2, Retention: 86400, Deadline: 1e6}}
+		p.index.add(p.st.Entries[c])
+		p.st.Holdings[root] = &Holding{Root: root, At: now.Unix(), Verified: true, Size: 7, Objects: 1, Blobs: 1, Bytes: 7, Buckets: []string{testBucket},
+			Entries: []string{c}, Lease: uint64(now.Unix()) + 86400, Ad: &AdRec{Txid: fmt.Sprintf("%064x", 1<<48+i), Expiry: uint64(now.Unix()) + 86400, Height: 700, RawHex: raw, Bump: bump}}
+	}
+	// Neither is hex, so resumeAds skips them without a log line: a row
+	// before RawHex carried a BEEF of 142 KB, one since carries the
+	// transaction alone.
+	chain, alone := strings.Repeat("zz", 71012), strings.Repeat("zz", 300)
+	for i := range pending {
+		root := fmt.Sprintf("%064x", 1<<49+i)
+		p.st.Holdings[root] = &Holding{Root: root, At: now.Unix(), Verified: true, Size: 7, Objects: 1, Blobs: 1, Bytes: 7, Lease: uint64(now.Unix()) + 86400}
+		pa := PendingAd{Root: root, Txid: fmt.Sprintf("%064x", 1<<50+i), Tree: fmt.Sprintf("%064x", 1<<51+i/16),
+			Vout: uint32(i % 16), Expiry: uint64(now.Unix()) + 86400, At: now.Unix(), Sent: true, RawHex: alone}
+		if os.Getenv("BSTORE_HOLD_LEGACY") != "" {
+			pa.RawHex, pa.BeefHex = "", chain
+		}
+		p.st.PendingAds = append(p.st.PendingAds, pa)
+	}
+}
+
+// A lab provider's shape: 25,000 holdings held, 1,700 advertisements
+// pending with long BEEFs (a 250 MB state), funding trees of 16 outputs,
+// the background pass every 5 s. What a hold costs there: the state saves
+// on the path, their size and time, and the mint lock's hold per
+// advertisement.
+func TestHoldRateLabShape(t *testing.T) {
+	n := envInt("BSTORE_HOLD_N", 300)
+	holdings, pending := envInt("BSTORE_HOLD_HOLDINGS", 25000), envInt("BSTORE_HOLD_PENDING", 1700)
+	r := newSlowRig(t, chainDelay)
+	cfg := rateConfig(t, r)
+	cfg.TreeCount = 16
+	p := r.startHooked(cfg, true, Options{Tick: 5 * time.Second}, func(p *Provider) { labShape(p, holdings, pending) })
+	run := prepareHoldRun(t, r, p, n)
+	saves0, saveSecs0 := p.metrics.get("bstore_provider_state_saves_total"), p.metrics.get("bstore_provider_state_save_seconds_total")
+	rate := run.run(t)
+	saves := p.metrics.get("bstore_provider_state_saves_total") - saves0
+	saveSecs := p.metrics.get("bstore_provider_state_save_seconds_total") - saveSecs0
+	locks, lockSecs := p.metrics.get("bstore_provider_mint_lock_total"), p.metrics.get("bstore_provider_mint_lock_seconds_total")
+	// One save of this state, for its size and time.
+	at := time.Now()
+	p.mu.Lock()
+	err := p.save()
+	p.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	one := time.Since(at)
+	st, _ := os.Stat(filepath.Join(cfg.Data, "state.json"))
+	var size int64
+	if st != nil {
+		size = st.Size()
+	}
+	t.Logf("during the run %.0f saves, %.2f s in all (%.0f ms each); mint lock held %.1f ms an advertisement over %.0f; one save of this state: %d MB in %v", saves, saveSecs, 1000*saveSecs/max(saves, 1), 1000*lockSecs/max(locks, 1), locks, size>>20, one.Round(time.Millisecond))
 	if floor := float64(envInt("BSTORE_HOLD_FLOOR", 100)); rate < floor && !raceDetector {
 		t.Fatalf("%.0f entries held a second, want at least %.0f", rate, floor)
 	}

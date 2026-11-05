@@ -70,6 +70,9 @@ func (t treeState) Current() *funding.Tree {
 	return &c
 }
 
+// Adopt makes tr the current tree. It goes to the disk with the next pass:
+// a start that finds the tree's row (prepareTree) and no adoption settles
+// it from the chain (recoverTrees), as it settles one a stop cut off.
 func (t treeState) Adopt(tr funding.Tree) error {
 	p := t.p
 	p.mu.Lock()
@@ -79,18 +82,23 @@ func (t treeState) Adopt(tr funding.Tree) error {
 	st.Trees = producer.Index(st.Trees, &tr)
 	st.Ahead = slices.DeleteFunc(st.Ahead, func(a funding.Tree) bool { return a.Txid == tr.Txid })
 	st.dropPendingTree(tr.Txid)
-	return p.save()
+	p.dirty = true
+	return nil
 }
 
-// prepareTree records a tree signed for coin before it reaches the leg; a
-// record that cannot be saved aborts the mint.
+// prepareTree records a tree signed for coin before it reaches the leg, as
+// a journal row of its own; a record that cannot be written aborts the
+// mint.
 func (p *Provider) prepareTree(tree funding.Tree, coin bwallet.Output) error {
+	pt := PendingTree{Tree: tree, Coin: coin}
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.st.dropPendingTree(tree.Txid)
-	p.st.PendingTrees = append(p.st.PendingTrees, PendingTree{Tree: tree, Coin: coin})
-	if err := p.save(); err != nil {
+	p.st.PendingTrees = append(p.st.PendingTrees, pt)
+	p.mu.Unlock()
+	if err := p.journalTree(pt); err != nil {
+		p.mu.Lock()
 		p.st.dropPendingTree(tree.Txid)
+		p.mu.Unlock()
 		return err
 	}
 	return nil

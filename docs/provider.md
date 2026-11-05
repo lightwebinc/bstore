@@ -183,15 +183,19 @@ key; the next tree is minted before the current one runs out. An
 advertisement pays all of its output in fee and keeps no change, so
 `tree_sats` is the most one costs. A tree is
 recorded with its fee coin before it reaches the settlement leg (bcommon
-`producer`'s `Prepare`), so a provider that stops between the leg and the
-adoption finds the record on its next start and settles it (`Recover`):
+`producer`'s `Prepare`), as a journal row of its own under `ads/` (the
+state is never written whole on the hold path: a 250 MB state took a
+second a write, twice a tree, under the mint lock), so a provider that
+stops between the leg and the adoption finds the record on its next start
+and settles it (`Recover`):
 the tree adopted when it is on the chain, held behind the current tree,
 its coin taken out of the pool when another transaction spent it, or its
 coin returned when the chain view does not know the tree, the record then kept
 for one more start and dropped on the second. A tree the library already
-holds is never recovered twice. An advertisement is persisted, with its
-funding output marked used and the lease extended, before it reaches the
-leg; a start finds it and records it once mined, sends the same bytes
+holds is never recovered twice. An advertisement is persisted as its own transaction
+(its funding tree and, for a renewal, the advertisement it renews are kept
+already), with its funding output marked used and the lease extended,
+before it reaches the leg; a start finds it and records it once mined, sends the same bytes
 again when the chain view never saw it, or advertises afresh when its funding
 output went to another transaction.
 

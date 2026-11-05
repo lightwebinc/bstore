@@ -26,6 +26,12 @@ type adRow struct {
 	Ad      PendingAd  `json:"ad"`
 	Holding Holding    `json:"holding"`
 	Entries []EntryRec `json:"entries,omitempty"`
+	// Tree is a funding tree signed for coin and not yet adopted: its row
+	// (data/ads/tree-<txid>.json) is what prepareTree makes durable before
+	// the tree reaches the leg, in place of a save of the whole state
+	// (2026-11-05: two such saves a tree, under the mint lock, held the
+	// lab's providers to six holds a second on a 250 MB state).
+	Tree *PendingTree `json:"tree,omitempty"`
 }
 
 // journalAd writes pa's row, then records pa as pending.
@@ -91,6 +97,26 @@ func (p *Provider) journalEntry(c string) error {
 	return nil
 }
 
+// journalTree writes a pending tree's row, for the tree to reach the leg.
+func (p *Provider) journalTree(pt PendingTree) error {
+	raw, err := json.Marshal(adRow{Tree: &pt})
+	if err != nil {
+		return err
+	}
+	file := filepath.Join(p.adDir, "tree-"+pt.Tree.Txid+".json")
+	if err := os.MkdirAll(p.adDir, 0o700); err != nil {
+		return err
+	}
+	if err := writeFileAtomic(file, raw); err != nil {
+		return err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.adFiles = append(p.adFiles, file)
+	p.dirty = true
+	return nil
+}
+
 // replayAds brings back what the state lacks of the rows a stopped run left,
 // and returns their files, for the next save to cover. A row whose
 // advertisement the state already holds, pending or finished, adds nothing.
@@ -125,6 +151,14 @@ func (st *State) replayAds(dir string, logf func(string, ...any)) ([]string, err
 
 func (st *State) replayAd(row *adRow) {
 	pa := row.Ad
+	if row.Tree != nil {
+		// A tree's row: the record, unless the state adopted or kept it.
+		id := row.Tree.Tree.Txid
+		if st.pendingTree(id) == nil && !st.adopted(id) && st.mintedAhead(id) == nil {
+			st.PendingTrees = append(st.PendingTrees, *row.Tree)
+		}
+		return
+	}
 	if pa.Txid == "" {
 		// An entry's row: the entry, if the state lost it.
 		for i := range row.Entries {

@@ -36,6 +36,23 @@ func (m *metrics) preset(name string, labels ...string) {
 	}
 }
 
+// add adds v to the counter name.
+func (m *metrics) add(name string, v float64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.counters[name] += v
+}
+
+// get reads a counter or gauge.
+func (m *metrics) get(name string) float64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if v, ok := m.counters[name]; ok {
+		return v
+	}
+	return m.gauges[name]
+}
+
 func (m *metrics) set(name string, v float64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
