@@ -200,7 +200,11 @@ type Provider struct {
 	// adSends bounds the advertisements being sent behind the worker;
 	// adSweep is the tip resumeAds last looked at every pending one for;
 	// adFiles are the journal rows the next save covers (journal.go).
+	// ancSent is when each unmined ancestor was last put on the leg
+	// (send), under ancMu.
 	adSends chan struct{}
+	ancMu   sync.Mutex
+	ancSent map[string]time.Time
 	adSweep uint32
 	adDir   string
 	adFiles []string
@@ -321,7 +325,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 	}
 	p := &Provider{cfg: cfg, inc: newIncremental(), opts: opts, st: st, index: newEntryIndex(st.Entries), fundings: fundings, wallet: w, signer: signer, pool: w.Pool,
 		queue: make(chan string, 4096), queued: map[string]uint8{}, metrics: newMetrics(),
-		adSends: make(chan struct{}, maxAdSends), adDir: adDir, adFiles: adFiles, heldObjects: map[[32]byte]int32{},
+		adSends: make(chan struct{}, cfg.Limits.AdSends), adDir: adDir, adFiles: adFiles, heldObjects: map[[32]byte]int32{},
 		log: stlog, checkpointAt: opts.Now()}
 	p.saveEnd = sync.NewCond(&p.mu)
 	p.slimPendingAds()
