@@ -72,7 +72,7 @@ func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	if !feeder {
 		addr := auth104.AddressKey(p.clientAddr(r))
-		if !p.limits.inflight.enter(addr) {
+		if !p.limits.inflight.enter(r.Context(), addr) {
 			auth104.Write(w, auth104.Error(http.StatusTooManyRequests, "ERR_RATE_LIMITED", "too many submissions in flight from this address", "Retry-After", "1"))
 			return
 		}
@@ -638,7 +638,7 @@ func (p *Provider) handleUpload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		addr := auth104.AddressKey(p.clientAddr(r))
-		if !p.limits.inflight.enter(addr) {
+		if !p.limits.inflight.enter(r.Context(), addr) {
 			auth104.Write(w, auth104.Error(http.StatusTooManyRequests, "ERR_RATE_LIMITED", "too many uploads in flight from this address", "Retry-After", "1"))
 			return
 		}

@@ -201,7 +201,8 @@ type Limits struct {
 	SubmitsPerAddrPerSec float64 `json:"submits_per_addr_per_sec"`
 	SubmitBurst          float64 `json:"submit_burst"`
 	// InFlightPerAddr bounds the submissions and uploads one address has
-	// read or processed at once (a feeder skips it, as it skips the rate).
+	// read or processed at once; one past it waits up to inflightWait for
+	// a slot before a 429 (a feeder skips it, as it skips the rate).
 	InFlightPerAddr int `json:"in_flight_per_addr"`
 	// ObjectReaders bounds the object reads served at once;
 	// ObjectReadsPerAddrPerSec and ObjectReadBurst one address's reads.
