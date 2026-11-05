@@ -54,7 +54,7 @@ _The same object, acknowledged in 3.75 s (1,145 MB/s) once the gateway hashed th
 | Body into the gateway, aws CLI, multipart x16 | 3 s of transfer after 7 s of client-side hashing | the CLI's own SHA-256 pass on one core |
 | Put acknowledged, Go client | 3.75 s end to end, 1,145 MB/s | the body's transfer; the carriers are minted after the answer |
 | Put acknowledged, aws CLI | 5.8 s | the CLI |
-| Every provider holds the object verified | about 19 s after the put | the plane's carriage rate below |
+| Every provider holds the object verified | 17 s after the put | the plane's carriage rate below |
 | Reading 4 GiB back, one stream | 894 MB/s | one TCP flow on one bond member |
 | Ranged reads | 1.5 GB/s | both bond members |
 
@@ -66,14 +66,14 @@ subscribes to the bucket receives them. Adding a provider adds no upload.
 ```mermaid
 xychart-beta
     title "Plane carriage, lossless, one group (MB/s, higher is better)"
-    x-axis ["open-source listener", "commercial listener", "one 10 GbE link"]
+    x-axis ["open-source listener", "commercial, one edge host", "commercial, listener on its own host", "one 10 GbE link"]
     y-axis "MB/s" 0 --> 1300
-    bar [400, 700, 1237]
+    bar [400, 700, 744, 1237]
 ```
 
-_The open-source listener processes each datagram between reads and drops above about 400 MB/s; the commercial listener reads each socket in batches into a queue and carried every run without a drop at peaks of 700 MB/s. The last bar is what one 10 GbE link moves (9.9 Gb/s, measured with iperf), the ceiling the lane is working toward._
+_The open-source listener processes each datagram between reads and drops above about 400 MB/s; the commercial listener reads each socket in batches into a queue and carried every run without a drop at peaks of 700 MB/s on one edge host, and 744 MB/s with the listener on a host of its own and the group forwarded to that host alone. The last bar is what one 10 GbE link moves (9.9 Gb/s, measured with iperf), the ceiling the lane is working toward._
 
-What bounds the 700 MB/s today is the edge host: the proxy's TCP intake, its copies into the
+What bounds the rate today is the edge host: the proxy's TCP intake, its copies into the
 multicast sender and the listener's copies out of it share one machine, and the host's total
 intake under that load measures about 1.2 GB/s. The next step is fewer copies on that host, not
 more goroutines.
