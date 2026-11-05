@@ -5,8 +5,10 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lightwebinc/bstore/internal/publish"
+	"github.com/lightwebinc/bstore/internal/testwriter"
 	"github.com/lightwebinc/bstore/storerec"
 )
 
@@ -99,5 +101,39 @@ func TestTakeLocal(t *testing.T) {
 	wrong.Bucket = "other_qzvmkwerty"
 	if err := p.TakeLocal(ctx, wrong, false); err == nil || !strings.Contains(err.Error(), "refused") {
 		t.Fatalf("an account of another bucket: %v", err)
+	}
+}
+
+// A storage node's provider, handed the put's entry and every piece by
+// TakeLocal with the gateway's account and no check, verifies the closure
+// and advertises the root as one fed over HTTP does.
+func TestStorageNodeHoldsThroughTakeLocal(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	p := r.start(r.config(t.TempDir()), true)
+	w := r.writer
+	o, err := w.Build(ctx, content(2*storerec.BlobSize+12345, 7))
+	if err != nil {
+		t.Fatal(err)
+	}
+	put, err := w.Entry(ctx, o, "node/one.bin", testwriter.Terms{Sats: 5000, T: 1, K: 2, Retention: 86400, DeadlineAhead: 200, CheckC: 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.TakeLocal(ctx, publish.LocalPiece{Topic: storerec.RecordsTopic(testBucket), BEEF: put.BEEF}, false); err != nil {
+		t.Fatalf("the entry: %v", err)
+	}
+	for i, pc := range o.Pieces {
+		if err := p.TakeLocal(ctx, account(t, pc), false); err != nil {
+			t.Fatalf("piece %d: %v", i, err)
+		}
+	}
+	root := o.Built.RootHash
+	r.eventually("advertised", 20*time.Second, func() bool { return p.liveAd(root) != nil })
+	// A broken record is refused, checked even here.
+	bad := bytes.Clone(put.BEEF)
+	bad[len(bad)/2] ^= 0x01
+	if err := p.TakeLocal(ctx, publish.LocalPiece{Topic: storerec.RecordsTopic(testBucket), BEEF: bad}, false); err == nil {
+		t.Fatal("a broken record was taken")
 	}
 }

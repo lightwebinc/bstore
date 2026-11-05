@@ -8,9 +8,10 @@ import (
 	"github.com/lightwebinc/bstore/storerec"
 )
 
-// TakeLocal takes a piece carrier from a gateway in this process: a storage
-// node, the gateway's local_provider. It is the feeder path without the
-// socket, and with the check optional.
+// TakeLocal takes a piece carrier, or a record, from a gateway in this
+// process: a storage node, the gateway's local_provider. It is the feeder
+// path without the socket, and with the check of a piece optional; a record
+// is always checked (takeLocalRecord).
 //
 // With verify set, or for a piece the gateway gives no account of (lp.Known
 // unset: an item read back from its outbox after a restart), the carrier is
@@ -30,8 +31,11 @@ import (
 // the piece again later.
 func (p *Provider) TakeLocal(ctx context.Context, lp publish.LocalPiece, verify bool) error {
 	b, blob := p.bucketOf(lp.Topic)
-	if b == nil || !blob {
-		return publish.Refused("not a blob topic of this provider's")
+	if b == nil {
+		return publish.Refused("not a topic of this provider's")
+	}
+	if !blob {
+		return p.takeLocalRecord(ctx, lp)
 	}
 	select {
 	case p.limits.takes <- struct{}{}:
@@ -71,5 +75,26 @@ func (p *Provider) TakeLocal(ctx context.Context, lp publish.LocalPiece, verify 
 		return publish.Refused(w)
 	}
 	p.metrics.inc("bstore_provider_local_takes_total", "result=taken", "mode="+mode)
+	return nil
+}
+
+// takeLocalRecord takes a record (an entry, a token, an outcome) from the
+// gateway in this process as the submit route takes one: checked always, a
+// record being small, and an entry on disk before the gateway hears it was
+// taken.
+func (p *Provider) takeLocalRecord(ctx context.Context, lp publish.LocalPiece) error {
+	_, entry, w := p.take(ctx, lp.Topic, lp.BEEF, nil)
+	if w != "" {
+		p.metrics.inc("bstore_provider_local_takes_total", "result=refused", "mode=record")
+		return publish.Refused(w)
+	}
+	if entry != "" {
+		if err := p.journalEntry(entry); err != nil {
+			p.logf("entry %s: journal: %v", short(entry), err)
+			p.metrics.inc("bstore_provider_local_takes_total", "result=error", "mode=record")
+			return err
+		}
+	}
+	p.metrics.inc("bstore_provider_local_takes_total", "result=taken", "mode=record")
 	return nil
 }

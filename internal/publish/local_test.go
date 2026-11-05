@@ -73,10 +73,23 @@ func TestLocalProviderGetsTheGatewaysAccount(t *testing.T) {
 	// 9 MiB: four pieces, each to the facade and to the local provider.
 	put("a", bytes.Repeat([]byte("storage node, "), 9<<20/14+1)[:9<<20])
 	blob := storerec.BlobTopic(testBucket)
-	if facade.count(blob) != 4 || len(got) != 4 {
-		t.Fatalf("pieces: facade %d, local %d", facade.count(blob), len(got))
+	var pieces []LocalPiece
+	records := 0
+	for _, lp := range got {
+		switch lp.Topic {
+		case blob:
+			pieces = append(pieces, lp)
+		case storerec.RecordsTopic(testBucket):
+			if lp.Known {
+				t.Fatal("a record came with a piece's account")
+			}
+			records++
+		}
 	}
-	for i, lp := range got {
+	if facade.count(blob) != 4 || len(pieces) != 4 || records == 0 {
+		t.Fatalf("pieces: facade %d, local %d; records to the local provider %d", facade.count(blob), len(pieces), records)
+	}
+	for i, lp := range pieces {
 		if lp.Topic != blob || !lp.Known {
 			t.Fatalf("piece %d: topic %q known %v", i, lp.Topic, lp.Known)
 		}

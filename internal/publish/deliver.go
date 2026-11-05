@@ -123,6 +123,11 @@ func (d *Delivery) recordTargets(bucket string, entry bool) []Target {
 	for _, h := range d.Hosts {
 		out = append(out, Target{Base: trim(h), Topic: topic, Host: true})
 	}
+	if d.Local != nil {
+		// The provider in this process hears of every record, as one beside
+		// a facade does through the facade's route.
+		out = append(out, Target{Base: "local", Topic: topic, Local: true})
+	}
 	if entry {
 		for _, p := range d.Providers {
 			out = append(out, Target{Base: trim(p), Topic: topic})
