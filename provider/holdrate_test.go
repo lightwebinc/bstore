@@ -60,6 +60,17 @@ var rateTerms = testwriter.Terms{Sats: 5000, T: 1, K: 2, Retention: 86400, Deadl
 // header service across a network, not the same process.
 const chainDelay = 2 * time.Millisecond
 
+// rateRun skips a rate measurement unless BSTORE_HOLD_RATE is set: each
+// prepares hundreds of entries on the test chain and runs for a minute on
+// a loaded machine, and the provider's suite has a ten-minute budget on
+// CI. The crash, order and load tests always run.
+func rateRun(t *testing.T) {
+	t.Helper()
+	if os.Getenv("BSTORE_HOLD_RATE") == "" {
+		t.Skip("a rate measurement: set BSTORE_HOLD_RATE=1 to run it")
+	}
+}
+
 func envInt(name string, def int) int {
 	if v, err := strconv.Atoi(os.Getenv(name)); err == nil && v > 0 {
 		return v
@@ -185,6 +196,7 @@ func rateConfig(t *testing.T, r *rig) *Config {
 // the provider's own pipeline: several hundred a second, not one at a time
 // behind a network round trip and a sync each.
 func TestHoldRate(t *testing.T) {
+	rateRun(t)
 	n := envInt("BSTORE_HOLD_N", 300)
 	r := newSlowRig(t, chainDelay)
 	cfg := rateConfig(t, r)
@@ -201,6 +213,7 @@ func TestHoldRate(t *testing.T) {
 // and pieces side by side: an entry whose pieces come after it is held when
 // the last of them lands, not when a pass looks again.
 func TestHoldRateEntriesFirst(t *testing.T) {
+	rateRun(t)
 	for _, order := range []string{"entries", "mixed"} {
 		t.Run(order, func(t *testing.T) {
 			n := envInt("BSTORE_HOLD_N", 300)
@@ -240,6 +253,7 @@ func backlog(p *Provider, n int) {
 // waiting, holdings and advertisements pending, an entry costs what it
 // costs on an empty provider.
 func TestHoldRateWithBacklog(t *testing.T) {
+	rateRun(t)
 	n, pending := envInt("BSTORE_HOLD_N", 300), envInt("BSTORE_HOLD_BACKLOG", 8000)
 	r := newSlowRig(t, chainDelay)
 	cfg := rateConfig(t, r)
@@ -447,6 +461,7 @@ func (run *holdRun) waitHeld(t *testing.T, start time.Time) time.Duration {
 // its turn here rather than being sent away for a second, so the rate is
 // the provider's, not the backoff's.
 func TestHoldRateAsGatewaySends(t *testing.T) {
+	rateRun(t)
 	n := envInt("BSTORE_HOLD_N", 300)
 	r := newSlowRig(t, chainDelay)
 	cfg := rateConfig(t, r)
@@ -503,6 +518,7 @@ func labShape(p *Provider, holdings, pending int) {
 // whole state run back to back through the run, as the lab's passes did:
 // the feed must answer within milliseconds and the rate must not fall.
 func TestHoldRateLabShape(t *testing.T) {
+	rateRun(t)
 	n := envInt("BSTORE_HOLD_N", 300)
 	holdings, pending := envInt("BSTORE_HOLD_HOLDINGS", 25000), envInt("BSTORE_HOLD_PENDING", 1700)
 	r := newSlowRig(t, chainDelay)
