@@ -80,6 +80,9 @@ type ChallengeResult struct {
 	Why        string
 	Fetches    int
 	WholeBlobs int
+	// Busy is a front that said try later (429, 503): no answer and no
+	// failure, the same draw goes again on the next pass.
+	Busy bool
 	// NotTaken is set when the answerer refused the request after a
 	// payment and signed that it did not take it (row C30): the payment's
 	// coin is already back in the pool.
@@ -190,6 +193,10 @@ func (p *Publisher) Challenge(ctx context.Context, ch *Challenge, fetch *http.Cl
 		_ = json.Unmarshal(call.Body, &e)
 		res.Refusal = e.Error
 		res.Outcome, res.Why = storerec.OutcomeNoAnswer, "refused: "+e.Error
+		return res, nil
+	case http.StatusTooManyRequests, http.StatusServiceUnavailable:
+		res.Busy = true
+		res.Outcome, res.Why = storerec.OutcomeNoAnswer, fmt.Sprintf("busy: %d %s", call.Status, firstLine(string(call.Body)))
 		return res, nil
 	default:
 		var e struct {

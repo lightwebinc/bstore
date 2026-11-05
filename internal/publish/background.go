@@ -3,6 +3,7 @@ package publish
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 )
 
@@ -35,6 +36,7 @@ func (p *Publisher) RaceTick(ctx context.Context, o RaceOptions) int {
 		p.cfg.Logf("races: %v", err)
 		return 0
 	}
+	p.stepOpen(ctx, races, o)
 	left := 0
 	for _, r := range races {
 		if ctx.Err() != nil {
@@ -42,11 +44,6 @@ func (p *Publisher) RaceTick(ctx context.Context, o RaceOptions) int {
 		}
 		switch r.State {
 		case RaceOpen:
-			if r.Settlement == nil {
-				if err := p.Step(ctx, r, o); err != nil {
-					p.cfg.Logf("race %s: %v", short(r.Entry), err)
-				}
-			}
 			switch {
 			case r.State == RaceOpen && (r.Settlement != nil || r.Closed(p.cfg.Now(), o.Window)):
 				p.settleQuiet(ctx, r)
@@ -72,6 +69,37 @@ func (p *Publisher) RaceTick(ctx context.Context, o RaceOptions) int {
 		}
 	}
 	return left
+}
+
+// stepOpen steps every open race with nothing settled yet, o.Parallel at a
+// time. Each step touches only its own race (its file, its candidates);
+// what the steps share (the store, the reader, the fronts) already serves
+// a race's candidates concurrently, and each front's calls go one at a
+// time through its own client.
+func (p *Publisher) stepOpen(ctx context.Context, races []*Race, o RaceOptions) {
+	n := max(o.Parallel, 1)
+	sem := make(chan struct{}, n)
+	var wg sync.WaitGroup
+	for _, r := range races {
+		if r.State != RaceOpen || r.Settlement != nil {
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			wg.Wait()
+			return
+		case sem <- struct{}{}:
+		}
+		wg.Add(1)
+		go func(r *Race) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if err := p.Step(ctx, r, o); err != nil {
+				p.cfg.Logf("race %s: %v", short(r.Entry), err)
+			}
+		}(r)
+	}
+	wg.Wait()
 }
 
 // settleQuiet and reclaimQuiet are the pass's settlement and reclaim: sent

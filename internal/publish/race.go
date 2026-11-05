@@ -154,6 +154,13 @@ type RaceOptions struct {
 	Fetch *http.Client
 	// Publish publishes failed challenges as outcome records.
 	Publish bool
+	// Parallel is how many open races a pass steps at once. A step is
+	// mostly waiting on providers, so one at a time held a gateway to
+	// about five races a minute. Zero or one steps them one at a time.
+	// Settlements and reclaims spend coins and stay one at a time either
+	// way. Challenges to one front go one at a time whatever this says
+	// (authPool); to different fronts at once.
+	Parallel int
 }
 
 func (p *Publisher) racesDir() string { return filepath.Join(p.cfg.Dir, "races") }
@@ -911,6 +918,13 @@ func (p *Publisher) drawOnce(ctx context.Context, r *Race, c *Cand, blobs []chir
 		}
 		c.Status = CandSeen
 		return true
+	case res.Busy:
+		// The front said try later: not a try against it, and not a
+		// draw. The same request goes again on the next pass.
+		if c.Status != CandFailed {
+			c.Status = CandSeen
+		}
+		return false
 	case !answered:
 		// Not answered: the same request goes again later.
 		c.Pending.Tries++

@@ -61,17 +61,32 @@ func newAuthClient(p *Publisher, hc *http.Client) *authClient {
 }
 
 // paymentTap keeps the x-bsv-payment header of the last request that
-// carried one. Calls are made one at a time, under the client's lock.
+// carried one, and the status of the last answer: the SDK turns an answer
+// that is not a BRC-104 message (a 429 or 503 from a limiter in front of
+// the auth layer) into an error, and the status says it was the server
+// being busy, not failing. Calls are made one at a time, under the
+// client's lock.
 type paymentTap struct {
-	base   http.RoundTripper
-	header string
+	base       http.RoundTripper
+	header     string
+	status     int
+	retryAfter string
 }
 
 func (t *paymentTap) RoundTrip(req *http.Request) (*http.Response, error) {
 	if v := req.Header.Get("x-bsv-payment"); v != "" {
 		t.header = v
 	}
-	return t.base.RoundTrip(req)
+	res, err := t.base.RoundTrip(req)
+	if res != nil {
+		t.status, t.retryAfter = res.StatusCode, res.Header.Get("Retry-After")
+	}
+	return res, err
+}
+
+// busy reports whether status is a server saying try later.
+func busy(status int) bool {
+	return status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable
 }
 
 // maxAnswer is the most any authenticated answer may be: a signed
@@ -209,7 +224,7 @@ func (a *authClient) once(ctx context.Context, method, url string, headers map[s
 		a.af = authhttp.New(a.paying, authhttp.WithoutLogging(), authhttp.WithHttpClient(a.hc))
 	}
 	a.paying.Purse = pu
-	a.sent.header = ""
+	a.sent.header, a.sent.status, a.sent.retryAfter = "", 0, ""
 	if v := headers["x-bsv-payment"]; v != "" {
 		a.sent.header = v
 	}
@@ -219,8 +234,15 @@ func (a *authClient) once(ctx context.Context, method, url string, headers map[s
 		// it whatever it answered: it is kept, never refunded, and its
 		// coin comes back only once the node shows it unspent long after
 		// (ReconcilePayments).
+		var paid *transaction.Transaction
 		if tx := pu.Settle(); tx != nil {
 			a.p.notePayment(tx, false, small)
+			paid = tx
+		}
+		if busy(a.sent.status) {
+			// The server answered before its auth layer: it is busy, and
+			// the caller waits as asked and asks again.
+			return &Call{Status: a.sent.status, retryAfter: a.sent.retryAfter, Payment: paid, PaymentHeader: a.sent.header}, nil
 		}
 		return nil, payErr(err)
 	}
