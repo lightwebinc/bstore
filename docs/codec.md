@@ -5,6 +5,14 @@ TypeScript, and both are held to one set of golden vectors that the Go codec
 generates. This page says where each piece lives, how the two are kept equal,
 and the readings the codec takes where [spec.md](spec.md) leaves a case open.
 
+```mermaid
+flowchart LR
+  G["Go codec<br/>storerec"] -->|generates| V["golden vectors<br/>testdata/vectors"]
+  V -->|read back, byte for byte| T["TypeScript twin<br/>host/src"]
+  V -->|checked on every run| G
+  O["oracle<br/>brute force over 38 million pages"] -.->|agrees with| G
+```
+
 ## Layout
 
 | Path | What it is |
@@ -28,6 +36,8 @@ What the codec takes from elsewhere:
   for step (`advert.go`, `advert.ts`).
 
 ## Building and checking
+
+*Check both codecs against the vectors, the oracle and each other.*
 
 ```sh
 cd host && npm ci && cd ..
@@ -82,8 +92,9 @@ flowchart LR
 ## Readings the codec takes
 
 These are readings of the spec, pinned by the vectors. Rows C1 to C5 of
-frozen.md section 14 are clarifications the owner signed;
-everything below is the codec's.
+frozen.md section 14 are signed clarifications; everything below is the
+codec's. Each paragraph names what it reads and the label a refusal
+carries.
 
 **Types and rules.** A fixed-length byte string of another length is
 `type` (the table's type is `bytes(32)`); an identity key that is a byte

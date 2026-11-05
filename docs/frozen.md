@@ -1,5 +1,15 @@
 # Frozen at first publish
 
+**How to read this document.** This is the list of what cannot change
+without a new identifier or a new record version: every value here is
+normative and the tables are the signed text. Sections 1 to 12 are the
+frozen values, grouped as the contract groups them; section 13 says what is
+deliberately not frozen; section 14 holds the signed clarifications (a
+clarification rewords a signed rule where the signed wording left a case
+open) and section 15 the amendments (a change to a signed rule). The rows
+marked "vectors" are pinned byte for byte by the golden vectors. Read it
+beside [spec.md](spec.md), which the rows cite by section.
+
 Every item below is hashed into a key or an identifier, written into a
 record, named by a host or a provider, or checked by a reader against bytes
 already published. Once one record using it is on a public host, readers
@@ -198,6 +208,19 @@ least 1024. As ceilings, not floors: the BEEF ceilings of section 2.
   bounty, part buffering.
 
 ## 14. Clarifications
+
+Illustrative, not normative: where the rows below sit between the signed
+contract and the code that follows them. The text of the rows is the
+contract.
+
+```mermaid
+flowchart LR
+  S["spec.md<br/>signed rules"] --> C["clarifications C1 to C31<br/>reword an open case"]
+  S --> A["amendment A1<br/>changes a signed rule, vectors regenerated"]
+  C --> V["golden vectors<br/>pin the reading"]
+  A --> V
+  V --> I["Go codec, TypeScript twin,<br/>host module, provider, gateway, command line"]
+```
 
 A clarification rewords a signed rule where the signed wording leaves a
 case open. Rows C1 to C31 are signed by the owner. The

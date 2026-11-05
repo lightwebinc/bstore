@@ -1,13 +1,15 @@
 # Limits
 
 What an object may be, what a put, a race, a challenge and a renewal cost,
-how fast the pieces move, and what bstore does not do. The record bounds
-every reader accepts ([spec.md](spec.md) section 19.1) are the contract's
-and sit above everything here. The rest is policy: defaults and caps of the
-command line ([usage.md](usage.md)), the provider
+how fast the pieces move, and what bstore does not do.
+
+The record bounds every reader accepts ([spec.md](spec.md) section 19.1)
+are the contract's and sit above everything here. The rest is policy:
+defaults and caps of the command line ([usage.md](usage.md)), the provider
 ([provider.md](provider.md)), the S3 gateway ([s3.md](s3.md)) and the host
 module ([host.md](host.md)), none of them a wire format or a frozen bound
 ([frozen.md](frozen.md)); a later version may change any of them.
+Throughput and latency at scale are in [benchmarks.md](benchmarks.md).
 
 Each number below is one of three kinds, said in its row:
 
@@ -320,9 +322,11 @@ not do, stated so that nobody finds it by accident.
     incumbent server's published HTTP descriptions, not against the
     incumbent server itself, whose wallet storage, chain services and
     advertisement broadcast reach only public networks.
-14. **The images are not published yet.** The command, provider, host and
-    local chain images are built from a checkout (`make docker-build`,
-    `make docker-build-host`) until the repositories are public.
+14. **Images are published per release.** The command, provider, host and
+    local chain images are published by a manual workflow once a release
+    is tagged ([configuration.md](configuration.md#container-images)); in
+    between, build them from a checkout (`make docker-build`, `make
+    docker-build-host`).
 15. **The fees were measured at the older rate.** The sizes here were
     measured at 1 satoshi a byte, ten times the 100 satoshis per 1000
     bytes mainnet miners take. The default is now the network's rate,

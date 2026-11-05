@@ -1,5 +1,17 @@
 # bstore: the storage market contract
 
+**How to read this document.** This is the contract: every byte format,
+rule and bound a compatible implementation must meet, in RFC 2119
+language. Sections 1 and 2 name the objects and the conventions; 3 to 8
+define the records (buckets, entries, pieces, the proof tree, challenges,
+outcomes and front statements); 9 and 10 the market (holding, the race,
+settlement, the provider's routes and who pays whom); 11 and 12 the host
+(lookups and admission); 13 to 17 carriers, delivery, reading, the S3
+mapping and the backend seam; 18 to 22 patterns followed, bounds, what the
+contract does not do, the registry and the vectors. What cannot change
+once published is listed in [frozen.md](frozen.md). The diagrams in this
+document are illustrative; the text is normative.
+
 bstore is object storage as a market on the BEEF object plane. A **bucket**
 belongs to an owner (an identity key) and has two topics: a records topic,
 `tm_bstore_<name>_<suffix>`, that overlay hosts carry, and a blob topic,
