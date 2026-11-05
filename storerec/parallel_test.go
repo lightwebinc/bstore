@@ -97,3 +97,21 @@ func TestBlobSubtreeIsSegmentRoot(t *testing.T) {
 		}
 	}
 }
+
+// TestSegmentRootOf: the in-place segment root is commit.SegmentRoot at
+// SegmentSize, for every shape of blob.
+func TestSegmentRootOf(t *testing.T) {
+	for _, n := range []int{0, 1, SegmentSize - 1, SegmentSize, SegmentSize + 1, 3*SegmentSize + 7, 4 << 20} {
+		b := make([]byte, n)
+		for i := range b {
+			b[i] = byte(i*7 + n)
+		}
+		want, err := commit.SegmentRoot(b, SegmentSize)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := SegmentRootOf(b); got != want {
+			t.Fatalf("%d bytes: %x, want %x", n, got[:4], want[:4])
+		}
+	}
+}

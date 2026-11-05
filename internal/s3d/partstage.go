@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 
 	"github.com/lightwebinc/bcommon/chirp"
 
@@ -54,16 +55,24 @@ type partSink interface {
 }
 
 // partWriter cuts a part into blob files under dir as it is written and
-// hashes each blob as completion will need it.
+// hashes each blob as completion will need it. Every hash of the part
+// runs over the blob buffers as they fill, once each: a worker hashes a
+// blob (HashBlob) and writes it, the content hash taken on inline takes
+// it in order (runq), and the body's digests take it in order through
+// tee. A buffer comes free when the last of them is done with it.
 type partWriter struct {
 	dir     string
 	writers chan struct{} // the gateway's writer slots; nil is unbounded
 	run     hash.Hash     // the content hash taken on inline; nil when not
-	cur     []byte
-	work    chan blobJob
-	free    chan []byte
-	made    int
-	wg      sync.WaitGroup
+	// tee is given each blob in order (bodyHashes.feed) and calls done once
+	// it has hashed it; nil when the caller hashes the bytes itself.
+	tee  func(p []byte, done func())
+	cur  []byte
+	work chan blobJob
+	runq chan blobJob
+	free chan []byte
+	made int
+	wg   sync.WaitGroup
 
 	mu     sync.Mutex
 	hashes [][32]byte
@@ -71,9 +80,11 @@ type partWriter struct {
 	err    error
 }
 
+// blobJob is one blob buffer; left counts those still hashing it.
 type blobJob struct {
-	i int
-	b []byte
+	i    int
+	b    []byte
+	left *atomic.Int32
 }
 
 func newPartWriter(dir string, writers chan struct{}, run hash.Hash) (*partWriter, error) {
@@ -85,7 +96,26 @@ func newPartWriter(dir string, writers chan struct{}, run hash.Hash) (*partWrite
 	for range partWorkers {
 		go w.worker()
 	}
+	if run != nil {
+		w.runq = make(chan blobJob, partWorkers+1)
+		w.wg.Add(1)
+		go func() {
+			defer w.wg.Done()
+			for j := range w.runq {
+				w.run.Write(j.b)
+				w.release(j)
+			}
+		}()
+	}
 	return w, nil
+}
+
+// release returns a blob's buffer to the free list once the last hash of
+// it is done.
+func (w *partWriter) release(j blobJob) {
+	if j.left.Add(-1) == 0 {
+		w.free <- j.b[:0]
+	}
 }
 
 func blobFile(dir string, i int) string { return filepath.Join(dir, fmt.Sprintf("%06d", i)) }
@@ -111,7 +141,7 @@ func (w *partWriter) worker() {
 			w.hashes[j.i], w.segs[j.i] = h, seg
 			w.mu.Unlock()
 		}
-		w.free <- j.b[:0]
+		w.release(j)
 	}
 }
 
@@ -152,24 +182,64 @@ func (w *partWriter) buffer() []byte {
 	return <-w.free
 }
 
+// dispatch hands the current blob to every hash of it at once.
 func (w *partWriter) dispatch() {
 	w.mu.Lock()
 	i := len(w.hashes)
 	w.hashes = append(w.hashes, [32]byte{})
 	w.segs = append(w.segs, [32]byte{})
 	w.mu.Unlock()
-	w.work <- blobJob{i: i, b: w.cur}
+	j := blobJob{i: i, b: w.cur, left: new(atomic.Int32)}
 	w.cur = nil
+	n := int32(1)
+	if w.runq != nil {
+		n++
+	}
+	if w.tee != nil {
+		n++
+	}
+	j.left.Store(n)
+	w.work <- j
+	if w.runq != nil {
+		w.runq <- j
+	}
+	if w.tee != nil {
+		w.tee(j.b, func() { w.release(j) })
+	}
 }
 
+// ReadFrom reads r to its end straight into the blob buffers: the one
+// copy of the bytes, which every hash then takes from there.
+func (w *partWriter) ReadFrom(r io.Reader) (int64, error) {
+	var n int64
+	for {
+		if err := w.failed(); err != nil {
+			return n, err
+		}
+		if w.cur == nil {
+			w.cur = w.buffer()
+		}
+		k, err := r.Read(w.cur[len(w.cur):chirp.ChunkSize])
+		w.cur = w.cur[:len(w.cur)+k]
+		n += int64(k)
+		if len(w.cur) == chirp.ChunkSize {
+			w.dispatch()
+		}
+		if err == io.EOF {
+			return n, nil
+		}
+		if err != nil {
+			return n, err
+		}
+	}
+}
+
+// Write copies p into the blob buffers.
 func (w *partWriter) Write(p []byte) (int, error) {
 	if err := w.failed(); err != nil {
 		return 0, err
 	}
 	n := len(p)
-	if w.run != nil {
-		w.run.Write(p)
-	}
 	for len(p) > 0 {
 		if w.cur == nil {
 			w.cur = w.buffer()
@@ -184,15 +254,21 @@ func (w *partWriter) Write(p []byte) (int, error) {
 	return n, nil
 }
 
-// stop waits for the workers and returns every buffer to the pool.
+// stop waits for the workers, and for every hash of every blob, and
+// returns every buffer to the pool.
 func (w *partWriter) stop() {
 	close(w.work)
+	if w.runq != nil {
+		close(w.runq)
+	}
 	w.wg.Wait()
 	if w.cur != nil {
-		w.free <- w.cur
+		b := w.cur[:0]
 		w.cur = nil
+		blobBufs.Put(&b)
+		w.made--
 	}
-	for len(w.free) > 0 {
+	for ; w.made > 0; w.made-- {
 		b := <-w.free
 		blobBufs.Put(&b)
 	}

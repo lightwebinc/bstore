@@ -20,9 +20,7 @@ import (
 // HashBlob is what Stage computes of each blob: its SHA-256, which names
 // it, and its segment subtree root, which the proof root is composed of.
 func HashBlob(b []byte) (h, seg [32]byte, err error) {
-	h = sha256.Sum256(b)
-	seg, err = commit.SegmentRoot(b, storerec.SegmentSize)
-	return h, seg, err
+	return sha256.Sum256(b), storerec.SegmentRootOf(b), nil
 }
 
 // LinkedBlob is one blob of content already on disk outside the store, as

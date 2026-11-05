@@ -349,7 +349,15 @@ func (s *Server) uploadPart(ctx context.Context, w http.ResponseWriter, r *http.
 			up.discard(n, part)
 		}
 	}()
-	if _, err := io.Copy(pw, io.LimitReader(bd.r, bd.length+1)); err != nil {
+	// Blobs are read straight into the part writer's buffers, and every
+	// digest takes each blob from there; a part kept in one file streams
+	// through the digests instead.
+	src := io.LimitReader(bd.r, bd.length+1)
+	if w, ok := pw.(*partWriter); ok {
+		w.tee = bd.hashes.feed
+		src = io.LimitReader(bd.src, bd.length+1)
+	}
+	if _, err := io.Copy(pw, src); err != nil {
 		pw.abort()
 		return bodyError(err)
 	}
@@ -702,16 +710,14 @@ func (s *Server) assemble(ctx context.Context, up *upload, names []int, recs []p
 // its body, and checks the whole object's checksums the completion
 // declared.
 func (s *Server) stageRead(ctx context.Context, files []string, total uint64, whole http.Header) (*publish.Staged, *s3Error, error) {
-	var r io.Reader = &partsReader{files: files}
 	sums := newSums(whole)
 	defer sums.sync()
-	if sums.any() {
-		r = sums.reader(r)
-	}
-	staged, err := s.store.Stage(ctx, r, total)
+	sums.sha256Staged()
+	staged, err := s.store.StageTee(ctx, &partsReader{files: files}, total, sums.feed)
 	if err != nil {
 		return nil, nil, err
 	}
+	sums.setSHA256(staged.ContentHash)
 	return staged, sums.check(whole, nil), nil
 }
 
@@ -731,6 +737,7 @@ func (s *Server) stageLinked(ctx context.Context, up *upload, names []int, recs 
 	}
 	sums := newSums(whole)
 	defer sums.sync()
+	sums.sha256Staged()
 	var serr error
 	var wg sync.WaitGroup
 	if sums.any() {
@@ -748,6 +755,7 @@ func (s *Server) stageLinked(ctx context.Context, up *upload, names []int, recs 
 	if err != nil {
 		return nil, nil, err
 	}
+	sums.setSHA256(ch)
 	staged, err := s.store.StageLinked(ctx, blobs, ch)
 	if err != nil {
 		return nil, nil, err
