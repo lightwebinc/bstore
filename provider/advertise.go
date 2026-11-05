@@ -43,20 +43,26 @@ const advertMinLife = 3600
 // advertise is the native backend's Advertise: lease the closure through
 // until and mint an advertisement saying so, or a renewal of the live one.
 // It returns once the transaction is on the settlement leg, with the proof
-// when it mined within a few seconds. The one worker (noAdWait) goes on as
-// soon as the transaction is journaled, and at most maxAdSends are sent at
-// once behind it.
+// when it mined within a few seconds. A worker (noAdWait) goes on as soon
+// as the transaction is journaled, and at most limits.ad_sends are sent at
+// once behind the workers. Each stage is timed
+// (bstore_provider_advertise_seconds{stage}): mint (the signature), journal
+// (the row's sync), slot (the wait for a send slot), ancestors (unmined
+// inputs put on the leg first), submit (the leg's answer for the
+// advertisement).
 func (p *Provider) advertise(ctx context.Context, root [32]byte, until uint64) (*backend.Advert, error) {
 	pa, tx, known, err := p.mintAd(ctx, root, until)
 	if tx == nil {
 		return known, err
 	}
 	if ctx.Value(noAdWait{}) != nil {
+		at := time.Now()
 		select {
 		case p.adSends <- struct{}{}:
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
+		p.metrics.timed("bstore_provider_advertise_seconds", at, "stage=slot")
 		p.wg.Add(1)
 		go func() {
 			defer p.wg.Done()
@@ -108,6 +114,7 @@ func (p *Provider) sendAd(ctx context.Context, pa PendingAd, tx *transaction.Tra
 // caller until its row is journaled.
 func (p *Provider) mintAd(ctx context.Context, root [32]byte, until uint64) (PendingAd, *transaction.Transaction, *backend.Advert, error) {
 	var none PendingAd
+	minted := time.Now()
 	rootHex := hex.EncodeToString(root[:])
 	p.mu.Lock()
 	h := p.st.Holdings[rootHex]
@@ -203,9 +210,12 @@ func (p *Provider) mintAd(ctx context.Context, root [32]byte, until uint64) (Pen
 	}
 	pa := PendingAd{Root: rootHex, Txid: tx.TxID().String(), RawHex: hex.EncodeToString(tx.Bytes()), Expiry: until,
 		Tree: tree.TxID().String(), Vout: vout, Prev: prev, At: p.now().Unix()}
+	p.metrics.timed("bstore_provider_advertise_seconds", minted, "stage=mint")
+	at := time.Now()
 	if err := p.journalAd(pa); err != nil {
 		return none, nil, nil, err
 	}
+	p.metrics.timed("bstore_provider_advertise_seconds", at, "stage=journal")
 	what := "advertisement"
 	if prev != nil {
 		what = "renewal"
@@ -223,10 +233,6 @@ var adWait = 5 * time.Second
 // behind this one. The background finishes the advertisement once it mines.
 type noAdWait struct{}
 
-// maxAdSends bounds the advertisements on their way to the settlement leg
-// behind the worker.
-const maxAdSends = 64
-
 var errAdPending = errors.New("an advertisement for this root is pending; it is looked at again once it mines")
 
 // adFields are an advertisement's five fields before its signature.
@@ -234,12 +240,25 @@ func adFields(host []byte, root [32]byte, url string, expiry, fileSize uint64) [
 	return [][]byte{host, append([]byte(nil), root[:]...), []byte(url), storerec.CompactSize(expiry), storerec.CompactSize(fileSize)}
 }
 
+// ancestorEvery is how often one unmined ancestor is put on the leg again
+// ahead of a transaction that spends it.
+const ancestorEvery = 2 * time.Minute
+
 // send hands a transaction to the settlement leg, its unmined ancestors
-// first; one the network holds already is not an error.
+// first; one the network holds already is not an error. An ancestor is
+// sent once in ancestorEvery, not once per spender: a funding tree of 16
+// outputs reached the leg 16 times over (2026-11-05: Arcade counted as many
+// duplicates as new transactions), each a round trip in the worker's way.
 func (p *Provider) send(ctx context.Context, tx *transaction.Transaction) error {
+	at := time.Now()
 	for _, anc := range purse.Unmined(tx) {
-		_ = p.settler.Submit(ctx, anc)
+		if p.ancestorDue(anc.TxID().String()) {
+			_ = p.settler.Submit(ctx, anc)
+		}
 	}
+	p.metrics.timed("bstore_provider_advertise_seconds", at, "stage=ancestors")
+	at = time.Now()
+	defer p.metrics.timed("bstore_provider_advertise_seconds", at, "stage=submit")
 	if err := p.settler.Submit(ctx, tx); err != nil && !alreadyKnown(err) {
 		if why, ok := chainview.RefusedAnswer(err); ok {
 			return fmt.Errorf("the network refused %s: %s", short(tx.TxID().String()), why)
@@ -248,6 +267,24 @@ func (p *Provider) send(ctx context.Context, tx *transaction.Transaction) error 
 	}
 	return nil
 }
+
+// ancestorDue reports whether txid is to be put on the leg now, and
+// notes that it was; at most maxAncestors are remembered.
+func (p *Provider) ancestorDue(txid string) bool {
+	p.ancMu.Lock()
+	defer p.ancMu.Unlock()
+	now := p.now()
+	if at, ok := p.ancSent[txid]; ok && now.Sub(at) < ancestorEvery {
+		return false
+	}
+	if p.ancSent == nil || len(p.ancSent) >= maxAncestors {
+		p.ancSent = map[string]time.Time{}
+	}
+	p.ancSent[txid] = now
+	return true
+}
+
+const maxAncestors = 4096
 
 // alreadyKnown reports a leg's answer for a transaction the network holds
 // already; an input already spent is not that.
@@ -386,7 +423,9 @@ func (p *Provider) publishDue(ctx context.Context) {
 			beef, _ := hex.DecodeString(o.Beef)
 			err := errNoHost
 			if f := p.facadeFor(o.Host); f != nil {
+				at := time.Now()
 				_, err = f.Submit(ctx, o.Topic, beef)
+				p.metrics.timed("bstore_provider_publish_seconds", at, "host="+o.Host)
 			}
 			amu.Lock()
 			answers[row{o.Host, o.Topic, o.Txid}] = err

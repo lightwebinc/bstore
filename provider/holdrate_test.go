@@ -60,6 +60,16 @@ var rateTerms = testwriter.Terms{Sats: 5000, T: 1, K: 2, Retention: 86400, Deadl
 // header service across a network, not the same process.
 const chainDelay = 2 * time.Millisecond
 
+// adStages is where an advertisement's time went, a stage at a time.
+func (p *Provider) adStages() string {
+	var out []string
+	for _, st := range []string{"mint", "journal", "slot", "ancestors", "submit"} {
+		sum, n := p.metrics.sum("bstore_provider_advertise_seconds", "stage="+st)
+		out = append(out, fmt.Sprintf("%s %.1f ms over %.0f", st, 1000*sum/max(n, 1), n))
+	}
+	return "an advertisement's stages: " + strings.Join(out, "; ")
+}
+
 // rateRun skips a rate measurement unless BSTORE_HOLD_RATE is set: each
 // prepares hundreds of entries on the test chain and runs for a minute on
 // a loaded machine, and the provider's suite has a ten-minute budget on
@@ -569,6 +579,7 @@ func TestHoldRateLabShape(t *testing.T) {
 		size = st.Size()
 	}
 	t.Logf("during the run %.0f saves, %.2f s in all (%.0f ms each, %.0f ms of it copying under p.mu); submissions answered in %v at the 99th percentile, %v at most; mint lock held %.1f ms an advertisement over %.0f; one save of this state: %d MB in %v", saves, saveSecs, 1000*saveSecs/max(saves, 1), 1000*copySecs/max(saves, 1), p99.Round(time.Millisecond), slowest.Round(time.Millisecond), 1000*lockSecs/max(locks, 1), locks, size>>20, one.Round(time.Millisecond))
+	t.Log(p.adStages())
 	if floor := float64(envInt("BSTORE_HOLD_FLOOR", 100)); rate < floor && !raceDetector {
 		t.Fatalf("%.0f entries held a second, want at least %.0f", rate, floor)
 	}

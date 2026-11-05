@@ -194,6 +194,9 @@ type Limits struct {
 	// VerifyWorkers bounds the roots seen through at once for entries:
 	// each verified and then decided (held, advertised) by one worker.
 	VerifyWorkers int `json:"verify_workers"`
+	// AdSends bounds the advertisements on their way to the settlement leg
+	// at once, behind the workers.
+	AdSends int `json:"ad_sends"`
 	// RenewalsPerRootPerHour bounds paid renewals of one root.
 	RenewalsPerRootPerHour float64 `json:"renewals_per_root_per_hour"`
 	// SubmitsPerAddrPerSec and SubmitBurst bound submissions from one
@@ -311,6 +314,9 @@ func (c *Config) defaults() {
 	}
 	if l.VerifyWorkers == 0 {
 		l.VerifyWorkers = 4
+	}
+	if l.AdSends == 0 {
+		l.AdSends = 64
 	}
 	if l.ObjectReaders == 0 {
 		l.ObjectReaders = 32
@@ -457,6 +463,9 @@ func (c *Config) Check() error {
 	}
 	if c.Limits.InFlightPerAddr < 1 {
 		return errors.New("limits.in_flight_per_addr is at least 1")
+	}
+	if c.Limits.AdSends < 1 || c.Limits.AdSends > 1024 {
+		return errors.New("limits.ad_sends is 1 to 1024")
 	}
 	if c.TreeCount < 1 || c.TreeCount > 1023 {
 		return errors.New("tree_count is 1 to 1023")
