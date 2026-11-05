@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -179,6 +180,39 @@ func (s *Store) readStaged(h [32]byte) ([]byte, error) {
 		return s.Get(h)
 	}
 	return os.ReadFile(s.objectPath(h))
+}
+
+// readInto reads an object into buf (grown when too small), held to its
+// hash unless fresh: one a stage of this process wrote or found and still
+// holds was hashed as it was written, moments before.
+func (s *Store) readInto(h [32]byte, fresh bool, buf []byte) ([]byte, error) {
+	if fresh {
+		s.mu.Lock()
+		fresh = s.staged[h] > 0
+		s.mu.Unlock()
+	}
+	f, err := os.Open(s.objectPath(h))
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	n := int(fi.Size())
+	if cap(buf) < n {
+		buf = make([]byte, n)
+	}
+	buf = buf[:n]
+	if _, err := io.ReadFull(f, buf); err != nil {
+		return nil, err
+	}
+	if !fresh && sha256.Sum256(buf) != h {
+		_ = os.Remove(s.objectPath(h))
+		return nil, fmt.Errorf("publish: stored object %x does not hash to its name", h[:6])
+	}
+	return buf, nil
 }
 
 // pin keeps an object from Trim while something refers to it (an outbox

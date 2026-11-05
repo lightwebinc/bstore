@@ -166,10 +166,11 @@ func TestMintPiecePlacesTheObject(t *testing.T) {
 // PKAfter is a key above the piece's last defined one.
 const PKAfter = storerec.PKLast + 1
 
-// BenchmarkMintPiece mints one 4 MiB piece carrier as a put does, stage by
-// stage: read (the staged object) and mint (the record, the carrier, its
-// BEEF and the object's place in it) together, then outbox (the carrier
-// kept by reference, its line synced). The send is not here.
+// BenchmarkMintPiece mints one 4 MiB piece carrier as mintLater does, stage
+// by stage: read (the staged object, into a pooled buffer) and mint (the
+// record, the carrier, its BEEF into a pooled buffer and the object's place
+// in it) together, then outbox (the carrier kept by reference, its line
+// synced). The send is not here.
 func BenchmarkMintPiece(b *testing.B) {
 	r := newMintRig(b)
 	targets := r.p.cfg.Delivery.pieceTargets(testBucket)
@@ -177,13 +178,16 @@ func BenchmarkMintPiece(b *testing.B) {
 		b.ReportAllocs()
 		b.SetBytes(storerec.BlobSize)
 		for b.Loop() {
-			data, err := r.c.Object(r.ctx, r.blob)
+			data, err := r.p.readPiece(r.ctx, r.c, r.blob)
 			if err != nil {
 				b.Fatal(err)
 			}
-			if _, _, at, err := r.p.mintPiece(r.ctx, testBucket, r.root, data, r.tree, r.vout); err != nil || at < 0 {
+			_, beef, at, err := r.p.mintPiece(r.ctx, testBucket, r.root, data, r.tree, r.vout)
+			putObject(data)
+			if err != nil || at < 0 {
 				b.Fatalf("minted: %v, the object at %d", err, at)
 			}
+			putBEEF(beef)
 		}
 	})
 	b.Run("outbox", func(b *testing.B) {
@@ -313,3 +317,4 @@ func TestPieceBEEFMatchesSDK(t *testing.T) {
 		t.Fatalf("on an unmined tree: equal %v, carrier at %d of %d", bytes.Equal(got, want), at, len(got))
 	}
 }
+

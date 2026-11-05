@@ -172,7 +172,7 @@ func (p *Publisher) Kill(ctx context.Context) ([]SweepRecord, error) {
 		errs = append(errs, err)
 	}
 	// What the sweeps retract is never sent again.
-	p.outbox.Drop("piece", "entry", "outcome")
+	p.outbox.Drop("piece", "entry", "outcome", whatMint)
 	return done, errors.Join(errs...)
 }
 

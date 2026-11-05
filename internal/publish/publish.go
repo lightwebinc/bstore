@@ -199,6 +199,10 @@ type Publisher struct {
 	payMu   sync.Mutex
 	splitMu sync.Mutex
 	coins   *bwallet.Pool // the payment coins, under payMu
+	// trees are the mined funding trees the pieces minted later spend,
+	// under treeMu (cacheTree).
+	treeMu sync.Mutex
+	trees  map[string]*transaction.Transaction
 }
 
 type state struct {
@@ -356,6 +360,8 @@ func Open(ctx context.Context, cfg Config) (*Publisher, error) {
 		return nil, err
 	}
 	p.outbox.Max = cfg.OutboxMax
+	p.outbox.minter = p.mintLater
+	p.trees = map[string]*transaction.Transaction{}
 	p.auth = newAuthClient(p, cfg.Delivery.HTTP)
 	fh := cfg.FrontHTTP
 	if fh == nil {

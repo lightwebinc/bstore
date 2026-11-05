@@ -534,15 +534,22 @@ func TestPutKilledMidwayResumes(t *testing.T) {
 	if owed < 1 {
 		t.Fatalf("nothing owed after the kill (%d carriers reached the target)", before)
 	}
+	// Each piece owed is minted already, by reference, or a record to
+	// mint it on its reserved output.
 	var owedIDs []string
+	owedPieces := 0
 	for _, it := range p.Outbox().load() {
 		if it.What == "entry" {
 			continue // minted before the answer, kept whole
 		}
-		if it.Ref == "" || len(it.Head) == 0 {
-			t.Fatalf("carrier %s kept whole, not by reference", short(it.ID))
+		owedPieces++
+		switch {
+		case it.What == whatMint && it.Ref != "" && it.Tree != "":
+		case it.What == "piece" && it.Ref != "" && len(it.Head) > 0 && it.Txid != "":
+			owedIDs = append(owedIDs, it.Txid)
+		default:
+			t.Fatalf("carrier %s: neither by reference nor to mint later: %+v", it.name(), it)
 		}
-		owedIDs = append(owedIDs, it.ID)
 	}
 	// Trim cannot take an object the outbox still owes.
 	if _, err := store.Trim(0); err != nil {
@@ -561,7 +568,19 @@ func TestPutKilledMidwayResumes(t *testing.T) {
 			t.Errorf("carrier %s owed after the kill was not delivered by the retry", short(id))
 		}
 	}
+	// Every piece reached the target once: those minted before the kill
+	// and those minted by the retry (the target refuses an output two
+	// carriers spend, and a carrier sent again with other bytes).
+	taken := 0
+	for id := range target.ok {
+		if _, piece := target.got[id]; piece {
+			taken++
+		}
+	}
 	target.mu.Unlock()
+	if taken != 11 || len(target.funding) != 11 {
+		t.Fatalf("%d pieces taken on %d funding outputs after the retry, want 11 (%d owed after the kill)", taken, len(target.funding), owedPieces)
+	}
 	// The next put spends fresh outputs: the target refuses a funding
 	// output two carriers spend.
 	st, err := store.Stage(ctx, bytes.NewReader(content), 1<<30)
