@@ -36,6 +36,10 @@ type PieceCarrier struct {
 // bytes, so that what it keeps is a writer's signed piece and not anyone's
 // junk. The bytes are trusted for nothing else: an object is named by its
 // hash, and the closure check decides what it is.
+//
+// The PieceCarrier returned aliases beef (chaintoken.ReadWireInPlace): its
+// piece is the carrier's output script where it lies in beef. beef must not
+// be reused or changed while the carrier or its piece is in use.
 func CheckPieceCarrier(ctx context.Context, beef []byte, bucket string, headers chaintracker.ChainTracker) (*PieceCarrier, error) {
 	if CheckBucket(bucket) != nil {
 		return nil, fmt.Errorf("%w: bucket identifier breaks the grammar", ErrHostConfig)
@@ -43,7 +47,10 @@ func CheckPieceCarrier(ctx context.Context, beef []byte, bucket string, headers 
 	if len(beef) > MaxPieceBEEF {
 		return nil, fmt.Errorf("%w: a piece carrier's BEEF of %d bytes", ErrBEEF, len(beef))
 	}
-	w, err := chaintoken.ReadWire(beef, MaxPieceBEEF)
+	// Read in place: the carrier's 4 MiB output stays in beef rather than
+	// being copied out of it, so the PieceCarrier (its Piece above all)
+	// aliases beef, which the caller keeps unchanged while it is used.
+	w, err := chaintoken.ReadWireInPlace(beef, MaxPieceBEEF)
 	if err != nil {
 		return nil, err
 	}

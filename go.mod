@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.7
 	github.com/aws/smithy-go v1.28.8
 	github.com/bsv-blockchain/go-sdk v1.7.1
-	github.com/lightwebinc/bcommon v0.33.6
+	github.com/lightwebinc/bcommon v0.33.8-0.20261105211518-20b2cdd49040
 	github.com/lightwebinc/bcommon/devkit v0.1.0
 )
 
