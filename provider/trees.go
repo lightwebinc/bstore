@@ -168,11 +168,11 @@ func (p *Provider) recoverTrees(ctx context.Context) error {
 }
 
 // spendTree is the funding output the next advertisement spends, its tree
-// marked used past it in the same save.
+// marked used past it in the same save. The caller holds mintMu. The tip
+// is the one last read (every bounty check and background pass reads it):
+// a round trip here was one more per entry, in a row.
 func (p *Provider) spendTree(ctx context.Context) (*transaction.Transaction, uint32, error) {
-	if _, err := p.tip(ctx); err == nil {
-		p.payer.Tip = p.lastTip.Load()
-	}
+	p.payer.Tip = p.lastTip.Load()
 	if err := p.promoteAhead(); err != nil {
 		return nil, 0, err
 	}

@@ -188,10 +188,14 @@ type Provider struct {
 	ledger  *ledger
 	uploads *uploads
 
-	kept   *producer.Kept
-	payer  *producer.Payer
-	trees  *producer.Trees
-	mintMu sync.Mutex // one advertisement or renewal minted at a time
+	kept  *producer.Kept
+	payer *producer.Payer
+	trees *producer.Trees
+	// mintMu keeps the funding outputs taken one at a time (spendTree);
+	// minting are the roots an advertisement is being signed and
+	// journaled for (under mu).
+	mintMu  sync.Mutex
+	minting map[string]bool
 	// adSends bounds the advertisements being sent behind the worker;
 	// adSweep is the tip resumeAds last looked at every pending one for;
 	// adFiles are the journal rows the next save covers (journal.go).
@@ -227,6 +231,10 @@ type Provider struct {
 	// scanned is when each entry's hold output was last looked at for a
 	// payout (under mu).
 	scanned map[string]scanMark
+	// claims are the hold outputs the entries being decided name, each
+	// the entry deciding on it (under mu): two workers never take two
+	// entries on one output.
+	claims map[string]string
 	// rechecked is when each damaged root was last looked at again, for a
 	// front (under mu).
 	rechecked map[string]time.Time

@@ -168,7 +168,9 @@ type Terms struct {
 }
 
 // maxVerifyWorkers bounds limits.verify_workers: each verification reads
-// one 4 MiB blob at a time and its walk keeps at most 4 MiB ahead.
+// one 4 MiB blob at a time and its walk keeps at most 4 MiB ahead. The
+// same workers decide: a hold is a few chain reads and a journal sync,
+// so more workers hold more small entries a second.
 const maxVerifyWorkers = 64
 
 // Limits are the routes' hardening; zero takes the default.
@@ -189,8 +191,8 @@ type Limits struct {
 	FreePerWriterPerMin      float64 `json:"free_per_writer_per_min"`
 	// ChallengeWorkers bounds the challenges answered at once.
 	ChallengeWorkers int `json:"challenge_workers"`
-	// VerifyWorkers bounds the closures verified at once for entries; the
-	// decisions stay one root at a time, in arrival order.
+	// VerifyWorkers bounds the roots seen through at once for entries:
+	// each verified and then decided (held, advertised) by one worker.
 	VerifyWorkers int `json:"verify_workers"`
 	// RenewalsPerRootPerHour bounds paid renewals of one root.
 	RenewalsPerRootPerHour float64 `json:"renewals_per_root_per_hour"`
