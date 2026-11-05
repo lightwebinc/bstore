@@ -460,7 +460,7 @@ how readers reach the bytes.
 | Challenges | `challenges_per_buyer_per_min` with `challenge_burst` per buyer, `free_per_writer_per_min` free ones per writer, `challenge_workers` answered at once |
 | Roots verified and decided | `verify_workers` at once (1 to 64), each reading one 4 MiB blob at a time while verifying, and each holding and advertising for the root it verified |
 | Renewals | `renewals_per_root_per_hour` per root |
-| Submissions | `submits_per_addr_per_sec`, `submit_burst` per address; `in_flight_per_addr` in flight from one address, uploads included (a connection from one of the `feeders` skips both); 64 bodies read or held at once, a feeder's held until its take is done; 16 processed at once, a slot taken only once the body is read; 8 of a feeder's takes at once, after their answers |
+| Submissions | `submits_per_addr_per_sec`, `submit_burst` per address; `in_flight_per_addr` in flight from one address, uploads included, one past it waiting up to 2 s for a slot before a `429` (a connection from one of the `feeders` skips both); 64 bodies read or held at once, a feeder's held until its take is done; 16 processed at once, a slot taken only once the body is read; 8 of a feeder's takes at once, after their answers |
 | Funding outpoints remembered | 200,000, each for seven days, recorded only for a carrier taken |
 | Reads | `object_readers` objects read at once, the slot released before the answer is written; `object_reads_per_addr_per_sec`, `object_read_burst` per address |
 | Upload sessions | `upload_sessions` open, 4 per identity and 8 per address, 60 opened an hour from one address, `upload_session_seconds` each, 65,536 objects each |

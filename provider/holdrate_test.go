@@ -1,13 +1,19 @@
 package provider
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,6 +28,10 @@ type holdRun struct {
 	r    *rig
 	p    *Provider
 	puts []*testwriter.Put
+	// order is what goes first: "pieces" (then the entries), "entries"
+	// (then the pieces), or "mixed" (each put's entry and then its pieces,
+	// puts side by side, as the plane hands them in).
+	order string
 }
 
 // rateTerms are bounty's terms with a deadline the test chain, which mines
@@ -91,13 +101,26 @@ func (run *holdRun) run(t *testing.T) float64 {
 		}
 		wg.Wait()
 	}
-	each(func(put *testwriter.Put) {
+	pieces := func(put *testwriter.Put) {
 		for _, pc := range put.Object.Pieces {
 			run.submit(t, blob, pc)
 		}
-	})
-	start := time.Now()
-	each(func(put *testwriter.Put) { run.submit(t, recs, put.BEEF) })
+	}
+	entry := func(put *testwriter.Put) { run.submit(t, recs, put.BEEF) }
+	var start time.Time
+	switch run.order {
+	case "entries":
+		start = time.Now()
+		each(entry)
+		each(pieces)
+	case "mixed":
+		start = time.Now()
+		each(func(put *testwriter.Put) { entry(put); pieces(put) })
+	default:
+		each(pieces)
+		start = time.Now()
+		each(entry)
+	}
 	submitted := time.Since(start)
 	held := func() int {
 		p.mu.Lock()
@@ -119,7 +142,7 @@ func (run *holdRun) run(t *testing.T) float64 {
 	}
 	took := time.Since(start)
 	rate := float64(len(run.puts)) / took.Seconds()
-	t.Logf("%d entries held in %v (%.0f a second; submitted in %v)", len(run.puts), took.Round(time.Millisecond), rate, submitted.Round(time.Millisecond))
+	t.Logf("%d entries held in %v (%.0f a second; %s first, submitted in %v)", len(run.puts), took.Round(time.Millisecond), rate, cmp.Or(run.order, "pieces"), submitted.Round(time.Millisecond))
 	return rate
 }
 
@@ -129,6 +152,10 @@ func rateConfig(t *testing.T, r *rig) *Config {
 	cfg.Limits.InFlightPerAddr = 64
 	cfg.TreeCount = 1023
 	cfg.Limits.VerifyWorkers = envInt("BSTORE_HOLD_WORKERS", 0)
+	if os.Getenv("BSTORE_HOLD_FEEDER") != "" {
+		// The plane's path: answered before the take, takes 8 at a time.
+		cfg.Feeders = []string{"127.0.0.1/32"}
+	}
 	return cfg
 }
 
@@ -141,9 +168,30 @@ func TestHoldRate(t *testing.T) {
 	cfg := rateConfig(t, r)
 	p := r.startWith(cfg, true, Options{})
 	run := prepareHoldRun(t, r, p, n)
+	run.order = os.Getenv("BSTORE_HOLD_ORDER")
 	rate := run.run(t)
 	if floor := float64(envInt("BSTORE_HOLD_FLOOR", 100)); rate < floor && !raceDetector {
 		t.Fatalf("%.0f entries held a second, want at least %.0f", rate, floor)
+	}
+}
+
+// The same with the entries before their pieces, and with each put's entry
+// and pieces side by side: an entry whose pieces come after it is held when
+// the last of them lands, not when a pass looks again.
+func TestHoldRateEntriesFirst(t *testing.T) {
+	for _, order := range []string{"entries", "mixed"} {
+		t.Run(order, func(t *testing.T) {
+			n := envInt("BSTORE_HOLD_N", 300)
+			r := newSlowRig(t, chainDelay)
+			cfg := rateConfig(t, r)
+			p := r.startWith(cfg, true, Options{})
+			run := prepareHoldRun(t, r, p, n)
+			run.order = order
+			rate := run.run(t)
+			if floor := float64(envInt("BSTORE_HOLD_FLOOR", 100)); rate < floor && !raceDetector {
+				t.Fatalf("%.0f entries held a second, want at least %.0f", rate, floor)
+			}
+		})
 	}
 }
 
@@ -247,5 +295,150 @@ func TestEntriesAnsweredSurviveACrash(t *testing.T) {
 		if st.Entries[put.C] == nil {
 			t.Fatalf("entry %s answered 200 is not on disk", short(put.C))
 		}
+	}
+}
+
+// post is one submission as the gateway makes it: the answer's status,
+// the seconds it asked to wait on a 429 or 503, and whether the topic was
+// taken.
+func (run *holdRun) post(t *testing.T, topic string, beef []byte) (code, wait int, ok bool) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, "https://"+run.p.Addr()+"/submit", bytes.NewReader(beef))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("x-topics", topic)
+	res, err := run.r.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusOK {
+		wait, _ = strconv.Atoi(res.Header.Get("Retry-After"))
+		return res.StatusCode, wait, false
+	}
+	var ans map[string]any
+	if err := json.Unmarshal(body, &ans); err != nil {
+		t.Fatal(err)
+	}
+	ok, _ = testwriter.Admitted(ans, topic)
+	return res.StatusCode, 0, ok
+}
+
+// gatewaySubmit submits as the gateway's Delivery.submit does: a 429 or
+// 503 is tried again after Retry-After (at least 100 ms), ten times, and
+// then given up on, for the outbox to send again later.
+func (run *holdRun) gatewaySubmit(t *testing.T, topic string, beef []byte, busy *atomic.Int64) bool {
+	for try := 0; ; try++ {
+		code, wait, ok := run.post(t, topic, beef)
+		if code == http.StatusOK {
+			return ok
+		}
+		if code != http.StatusTooManyRequests && code != http.StatusServiceUnavailable {
+			t.Errorf("submit: %d", code)
+			return false
+		}
+		busy.Add(1)
+		if try >= 10 {
+			return false
+		}
+		time.Sleep(max(time.Duration(wait)*time.Second, 100*time.Millisecond))
+	}
+}
+
+// runAsGateway sends every put as the gateway does: a goroutine a put,
+// each sending its pieces at once and then its entry, and whatever a
+// target would not take in ten tries sent again afterwards, one at a time
+// (the outbox's retry). It returns the entries held a second.
+func (run *holdRun) runAsGateway(t *testing.T) float64 {
+	t.Helper()
+	blob, recs := storerec.BlobTopic(testBucket), storerec.RecordsTopic(testBucket)
+	type item struct {
+		topic string
+		beef  []byte
+	}
+	var busy atomic.Int64
+	var lmu sync.Mutex
+	var left []item
+	start := time.Now()
+	var wg sync.WaitGroup
+	for _, put := range run.puts {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var pw sync.WaitGroup
+			for _, pc := range put.Object.Pieces {
+				pw.Add(1)
+				go func() {
+					defer pw.Done()
+					if !run.gatewaySubmit(t, blob, pc, &busy) {
+						lmu.Lock()
+						left = append(left, item{blob, pc})
+						lmu.Unlock()
+					}
+				}()
+			}
+			pw.Wait()
+			if !run.gatewaySubmit(t, recs, put.BEEF, &busy) {
+				lmu.Lock()
+				left = append(left, item{recs, put.BEEF})
+				lmu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	firstPass := time.Since(start)
+	for _, it := range left {
+		for !run.gatewaySubmit(t, it.topic, it.beef, &busy) {
+		}
+	}
+	took := run.waitHeld(t, start)
+	rate := float64(len(run.puts)) / took.Seconds()
+	t.Logf("%d entries held in %v (%.0f a second) as the gateway sends: first pass %v, %d busy answers, %d sent again", len(run.puts), took.Round(time.Millisecond), rate, firstPass.Round(time.Millisecond), busy.Load(), len(left))
+	return rate
+}
+
+// waitHeld waits for every put to be held and returns the time since start.
+func (run *holdRun) waitHeld(t *testing.T, start time.Time) time.Duration {
+	t.Helper()
+	p := run.p
+	held := func() int {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		n := 0
+		for _, put := range run.puts {
+			if e := p.st.Entries[put.C]; e != nil && e.Decision == decisionHeld {
+				n++
+			}
+		}
+		return n
+	}
+	end := time.Now().Add(5 * time.Minute)
+	for held() < len(run.puts) {
+		if time.Now().After(end) {
+			t.Fatalf("%d of %d held\n%s", held(), len(run.puts), run.r.said())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return time.Since(start)
+}
+
+// The gateway sends unicast with a goroutine a put and sixteen piece
+// workers each, from one address: more in flight than
+// limits.in_flight_per_addr allows. A submission past the allowance waits
+// its turn here rather than being sent away for a second, so the rate is
+// the provider's, not the backoff's.
+func TestHoldRateAsGatewaySends(t *testing.T) {
+	n := envInt("BSTORE_HOLD_N", 300)
+	r := newSlowRig(t, chainDelay)
+	cfg := rateConfig(t, r)
+	cfg.Limits.InFlightPerAddr = 32
+	p := r.startWith(cfg, true, Options{})
+	run := prepareHoldRun(t, r, p, n)
+	rate := run.runAsGateway(t)
+	if floor := float64(envInt("BSTORE_HOLD_FLOOR", 100)); rate < floor && !raceDetector {
+		t.Fatalf("%.0f entries held a second, want at least %.0f", rate, floor)
 	}
 }

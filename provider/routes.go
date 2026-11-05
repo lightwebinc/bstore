@@ -56,7 +56,7 @@ type routeLimits struct {
 func newRouteLimits(c *Config, now func() time.Time) (*routeLimits, error) {
 	l := c.Limits
 	var err error
-	r := &routeLimits{inflight: &perAddr{max: l.InFlightPerAddr, n: map[string]int{}}, work: make(chan struct{}, l.ChallengeWorkers), readers: make(chan struct{}, l.ObjectReaders),
+	r := &routeLimits{inflight: &perAddr{max: l.InFlightPerAddr, slots: map[string]*addrSlots{}}, work: make(chan struct{}, l.ChallengeWorkers), readers: make(chan struct{}, l.ObjectReaders),
 		ingest: make(chan struct{}, 16), verifyMu: make(chan struct{}, l.VerifyWorkers), commits: make(chan struct{}, 1), bodies: make(chan struct{}, maxBodies),
 		takes: make(chan struct{}, maxTakes)}
 	if r.buyers, err = auth104.NewKeyed(auth104.Budget{Rate: l.ChallengesPerBuyerPerMin / 60, Burst: l.ChallengeBurst}, 100000, now); err != nil {
@@ -332,25 +332,66 @@ const maxTakes = 8
 
 // perAddr bounds the requests one address has in flight.
 type perAddr struct {
-	mu  sync.Mutex
-	max int
-	n   map[string]int
+	mu    sync.Mutex
+	max   int
+	slots map[string]*addrSlots
 }
 
-func (a *perAddr) enter(k string) bool {
+// addrSlots are one address's slots (a channel of max) and the requests
+// holding or waiting for one; the entry goes when none is left.
+type addrSlots struct {
+	ch    chan struct{}
+	users int
+}
+
+// inflightWait is how long a submission past its address's allowance
+// waits for a slot before it is sent away with a 429. A gateway sends a
+// put's pieces at once, a goroutine a put, from one address: sent away, it
+// sleeps Retry-After (a second) and tries again, and a burst of puts was
+// taken at the pace of those retries (2026-11-05: 36 small puts a second
+// from a provider that holds 200). Waiting here costs it the queue's turn
+// instead; a flood that fills the wait too is still refused.
+const inflightWait = 2 * time.Second
+
+// enter takes one of k's slots, waiting up to inflightWait for one.
+func (a *perAddr) enter(ctx context.Context, k string) bool {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.n[k] >= a.max {
-		return false
+	s := a.slots[k]
+	if s == nil {
+		s = &addrSlots{ch: make(chan struct{}, a.max)}
+		a.slots[k] = s
 	}
-	a.n[k]++
-	return true
+	s.users++
+	a.mu.Unlock()
+	select {
+	case s.ch <- struct{}{}:
+		return true
+	default:
+	}
+	t := time.NewTimer(inflightWait)
+	defer t.Stop()
+	select {
+	case s.ch <- struct{}{}:
+		return true
+	case <-t.C:
+	case <-ctx.Done():
+	}
+	a.release(k, s)
+	return false
 }
 
 func (a *perAddr) leave(k string) {
 	a.mu.Lock()
+	s := a.slots[k]
+	a.mu.Unlock()
+	<-s.ch
+	a.release(k, s)
+}
+
+func (a *perAddr) release(k string, s *addrSlots) {
+	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.n[k]--; a.n[k] <= 0 {
-		delete(a.n, k)
+	if s.users--; s.users <= 0 && a.slots[k] == s {
+		delete(a.slots, k)
 	}
 }
