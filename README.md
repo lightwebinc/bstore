@@ -105,14 +105,14 @@ xychart-beta
   title "A 4 GiB put, end to end (seconds)"
   x-axis ["Acknowledged by S3", "Carried to every provider", "Verified by every provider"]
   y-axis "seconds" 0 --> 25
-  bar [3.75, 5.8, 17]
+  bar [3.75, 4.7, 15]
 ```
 
 | Measure | Result |
 | --- | --- |
 | A 4 GiB put acknowledged by the S3 gateway | 3.75 s, about 1,145 MB/s |
-| The same put carried over the multicast plane, lossless | 744 MB/s |
-| Every provider verified the object | 17 s after the put |
+| The same put carried over the multicast plane, lossless | 919 MB/s |
+| Every provider verified the object | 15 s after the put |
 | Small puts answered `200` by one gateway | 400 a second |
 | Roots held and advertised by one provider | about 150 a second |
 
