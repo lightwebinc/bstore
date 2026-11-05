@@ -29,6 +29,34 @@ flowchart LR
 
 ## What it does
 
+How an object moves through a provider, from the ways in to the
+advertisement (each step is a section below):
+
+```mermaid
+flowchart LR
+  subgraph in["Ways in"]
+    SUB["POST /submit<br/>the plane's feeder, or a writer"]
+    UP["upload sessions<br/>/chirp/v1/uploads"]
+  end
+  SUB -->|"blob topic"| PR["piece rules<br/>carrier, signature,<br/>funding tree mined"]
+  SUB -->|"records topic"| ER["host admission rules<br/>put entries kept"]
+  UP --> ST
+  PR --> ST[("store<br/>unclaimed until<br/>an entry names the root")]
+  ST --> WALK["closure walk as pieces arrive<br/>segment leaves hashed once"]
+  ER --> EV
+  WALK --> EV["evaluate: root, closure,<br/>proof root"]
+  EV --> POL{"policy and<br/>bounty checks"}
+  POL -->|"declined"| DEC["reason recorded"]
+  POL -->|"taken"| LEASE["lease the closure<br/>through the expiry"]
+  LEASE --> AD["advertisement minted<br/>from a funding tree"]
+  AD --> OUT["hosts' records topics,<br/>the facade, tm_uhrp"]
+  %% The last node is an invisible spacer in the rightmost rank: the rendered
+  %% viewer places its zoom and pan controls over the bottom-right corner.
+  AD ~~~ pad
+  pad["&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;"]:::pad
+  classDef pad fill:none,stroke:none,color:transparent
+```
+
 ### Receiving
 
 A provider subscribes to both topics of each bucket it serves (spec section
@@ -507,7 +535,7 @@ how readers reach the bytes.
 | Advertisements a transaction | `ad_batch` (1 to 1,024) roots in one advertisement transaction, an output each, collected for `ad_batch_ms` behind the first root asked for; renewals are minted one a transaction. The fee is the floor plus a few satoshis an output, paid from as many funding outputs as it needs; the leg sees one transaction for the batch; each root's row is finished when the one proof arrives, and the records topic receives the transaction once per root with that proof |
 | The leg's verdict | `ad_verdict`: `proof` (the default) sends an advertisement and goes on once arcade has taken it, the Merkle proof the background watches for being the evidence that it stands, a refusal showing when the transaction is sent again; `network` waits for the network's verdict before the send slot is released, which bounds the rate at what one node announces (about 150 transactions a second) |
 | Renewals | `renewals_per_root_per_hour` per root |
-| Submissions | `submits_per_addr_per_sec`, `submit_burst` per address; `in_flight_per_addr` in flight from one address, uploads included, one past it waiting up to 2 s for a slot before a `429` (a connection from one of the `feeders` skips both); 64 bodies read or held at once, a feeder's held until its take is done; 16 processed at once, a slot taken only once the body is read; 8 of a feeder's takes at once, after their answers |
+| Submissions | `submits_per_addr_per_sec`, `submit_burst` per address; `in_flight_per_addr` in flight from one address, uploads included, one past it waiting up to 2 s for a slot before a `429` (a connection from one of the `feeders` skips both); 64 bodies read or held at once, a feeder's held until its take is done; 16 processed at once, a slot taken only once the body is read; 8 of a feeder's takes at once, after their answers; `undecided_per_writer` put entries from one writer kept waiting for their closures, one past it refused for room (a feeder reads no refusal: a writer bursting while this host's closures pause loses what arrives over it, so size it for the burst a pause can hold back) |
 | Funding outpoints remembered | 200,000, each for seven days, recorded only for a carrier taken |
 | Reads | `object_readers` objects read at once, the slot released before the answer is written; `object_reads_per_addr_per_sec`, `object_read_burst` per address |
 | Upload sessions | `upload_sessions` open, 4 per identity and 8 per address, 60 opened an hour from one address, `upload_session_seconds` each, 65,536 objects each |
@@ -611,7 +639,7 @@ GorillaPool's public arcade.
 | `terms.min_age` | 0 | 0 to 1008 blocks |
 | `terms.renew_per_gib_day`, `terms.renew_minimum` | 250, 500 | this provider's price, for a renewal and for what an even share of a bounty must cover; a renewal's minimum, at least the fee floor |
 | `terms.max_renew_seconds` | 366 days | the furthest a renewal runs |
-| `limits.*` | as the table above | `handshakes_per_sec` 32, `handshake_burst` 64, `handshakes_per_addr_per_sec` 1, `handshake_addr_burst` 4, `responses_per_sec` 5, `response_burst` 20, `sessions` 10000, `session_ttl_seconds` 600, `challenges_per_buyer_per_min` 6, `challenge_burst` 6, `free_per_writer_per_min` 12, `challenge_workers` 4, `verify_workers` 4, `ad_sends` 64, `ad_batch` 64, `ad_batch_ms` 20, `ad_verdict` `proof`, `renewals_per_root_per_hour` 4, `submits_per_addr_per_sec` 1024, `submit_burst` 4096, `in_flight_per_addr` 32, `object_readers` 32, `object_reads_per_addr_per_sec` 50, `object_read_burst` 200, `upload_sessions` 64, `upload_session_seconds` 3600 |
+| `limits.*` | as the table above | `handshakes_per_sec` 32, `handshake_burst` 64, `handshakes_per_addr_per_sec` 1, `handshake_addr_burst` 4, `responses_per_sec` 5, `response_burst` 20, `sessions` 10000, `session_ttl_seconds` 600, `challenges_per_buyer_per_min` 6, `challenge_burst` 6, `free_per_writer_per_min` 12, `challenge_workers` 4, `verify_workers` 4, `ad_sends` 64, `ad_batch` 64, `ad_batch_ms` 20, `ad_verdict` `proof`, `undecided_per_writer` 4096, `renewals_per_root_per_hour` 4, `submits_per_addr_per_sec` 1024, `submit_burst` 4096, `in_flight_per_addr` 32, `object_readers` 32, `object_reads_per_addr_per_sec` 50, `object_read_burst` 200, `upload_sessions` 64, `upload_session_seconds` 3600 |
 | `tree_count`, `tree_sats` | 1023, 200 | the funding trees; `tree_sats` at least twice the fee floor, and past that only what an advertisement overpays |
 | `fee` | 100 satoshis per 1000 bytes, floor 100, cap 100/1000 | the miner fee policy ([the fee block](configuration.md#the-fee-block)); `source: arc` follows the broadcaster's published rate |
 | `fee_sat_per_byte`, `fee_floor` | none | the older fee keys, still read as `fee.rate {n, 1}` and `fee.floor`, the rate capped at `fee.max_rate` |

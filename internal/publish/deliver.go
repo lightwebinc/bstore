@@ -54,6 +54,10 @@ type Delivery struct {
 	// `bstore_publish_piece_seconds{stage}` for each piece carrier's read,
 	// mint, outbox and send.
 	Observe func(name string, seconds float64)
+	// Local, when set, is a provider in this process (a storage node): every
+	// piece is also handed to it as a function call (LocalPiece), beside the
+	// facade and the providers named, and is owed to it as to any target.
+	Local func(ctx context.Context, lp LocalPiece) error
 }
 
 // observe reports a step that began at since.
@@ -70,6 +74,8 @@ func (t Target) kind() string {
 		return "plane"
 	case t.Host:
 		return "host"
+	case t.Local:
+		return "local"
 	}
 	return "provider"
 }
@@ -78,9 +84,11 @@ func (t Target) kind() string {
 type Target struct {
 	Base  string `json:"base"`
 	Topic string `json:"topic"`
-	// Plane marks the facade; Host a host (not a provider).
+	// Plane marks the facade; Host a host (not a provider); Local the
+	// provider in this process (Delivery.Local), whose Base is "local".
 	Plane bool `json:"plane,omitempty"`
 	Host  bool `json:"host,omitempty"`
+	Local bool `json:"local,omitempty"`
 }
 
 func trim(b string) string { return strings.TrimRight(b, "/") }
@@ -98,6 +106,9 @@ func (d *Delivery) pieceTargets(bucket string) []Target {
 	for _, p := range d.Providers {
 		out = append(out, Target{Base: trim(p), Topic: topic})
 	}
+	if d.Local != nil {
+		out = append(out, Target{Base: "local", Topic: topic, Local: true})
+	}
 	return out
 }
 
@@ -111,6 +122,11 @@ func (d *Delivery) recordTargets(bucket string, entry bool) []Target {
 	}
 	for _, h := range d.Hosts {
 		out = append(out, Target{Base: trim(h), Topic: topic, Host: true})
+	}
+	if d.Local != nil {
+		// The provider in this process hears of every record, as one beside
+		// a facade does through the facade's route.
+		out = append(out, Target{Base: "local", Topic: topic, Local: true})
 	}
 	if entry {
 		for _, p := range d.Providers {
@@ -271,6 +287,9 @@ type Outbox struct {
 	owedAt time.Time
 	// minter mints a piece kept to mint later (the publisher's mintLater).
 	minter func(ctx context.Context, it *outItem, c Closure) ([]byte, error)
+	// writer is the publisher's identity, the writer of every piece record
+	// it mints, for the local hand-off.
+	writer []byte
 }
 
 // DefaultOutboxMax is the bytes an identity's outbox may owe before a put
@@ -319,6 +338,9 @@ type outItem struct {
 	Done string `json:"done,omitempty"`
 
 	batch *outBatch
+	// local is what the local hand-off needs, from the item's mint to its
+	// send; an item read back from disk has none (sendLocal).
+	local *localMeta
 }
 
 // whatMint is a piece carrier to mint later, from the output reserved.
@@ -626,6 +648,17 @@ func (o *Outbox) sendAll(ctx context.Context, it *outItem, beef []byte) (ok, ref
 	}
 	ch := make(chan res, len(it.Targets))
 	for _, t := range it.Targets {
+		if t.Local {
+			go func(t Target) {
+				if o.d.Local == nil {
+					ch <- res{t, errors.New("no local provider in this process")}
+					return
+				}
+				defer o.d.observe(`bstore_publish_submit_seconds{target="local"}`, time.Now())
+				ch <- res{t, o.sendLocal(ctx, it, t, beef)}
+			}(t)
+			continue
+		}
 		go func(t Target) { ch <- res{t, o.d.submit(ctx, t, beef)} }(t)
 	}
 	var left []Target
@@ -731,8 +764,9 @@ func (o *Outbox) retry(ctx context.Context, all bool) {
 			o.remove(it)
 			continue
 		}
+		local := it.owesLocal()
 		o.send(ctx, it, beef)
-		if mint {
+		if mint && !local {
 			putBEEF(beef)
 		}
 	}

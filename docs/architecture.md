@@ -99,6 +99,28 @@ sequenceDiagram
 
 ## An object's life
 
+The numbered steps below, as messages between the parts:
+
+```mermaid
+sequenceDiagram
+  participant O as owner
+  participant W as writer
+  participant H as hosts
+  participant P as providers
+  participant R as reader
+  O->>H: 1. bucket new: chain tree and token seq 0, naming the writers
+  W->>W: 2. stream content into a CHIRP closure and a proof root
+  W->>P: pieces, by the plane or upload session
+  W->>H: signed entry, naming a hold output minted ahead
+  P->>P: 3. check the closure and proof root, decide by policy
+  P->>H: advertisement, mined
+  W->>P: 4. rank by first sight, challenge each, settle by rank
+  O->>H: 5. anchor: next token folds the entries into the key map
+  R->>H: 6. prove the key against the latest token
+  R->>P: fetch every blob, each held to its hash
+  R->>P: 7. buy a challenge or a renewal, any time
+```
+
 1. **Bucket.** The owner's `bstore bucket new` mines a chain tree and the
    first token, naming the writers. A host serves the chain once its
    operator adds the `served` line.

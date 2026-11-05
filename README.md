@@ -30,6 +30,10 @@ byte it gets. Readers and writers may speak S3.
 - **Anyone can buy time or proof.** A renewal extends a provider's holding;
   a challenge samples 4 KiB segments and proves each into the object's
   proof root.
+- **Two flows, one proof.** The bytes ride the data carrier, never mined;
+  what is mined is the proof: a 1 GiB put mines about 14 KB, and the link
+  between the two is provable from block headers alone
+  ([docs/limits.md](docs/limits.md#on-chain-and-off-chain)).
 - **The bucket proves its own listing.** The owner's chain of mined tokens
   commits to the whole key map, so a reader proves what a key names, that a
   key is absent and that a listing page is complete.
@@ -130,7 +134,7 @@ $ make module NODE=/path/to/node24  # host/bundle/bstore-module.js
 $ make docker-build                 # the images
 ```
 
-Go 1.27.2 and Node 24. bstore pins go-sdk v1.7.1 and bcommon v0.33.5
+Go 1.27.2 and Node 24. bstore pins go-sdk v1.7.1 and bcommon v0.33.8
 
 ## License
 

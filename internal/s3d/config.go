@@ -71,6 +71,10 @@ type Config struct {
 	Facade    string   `json:"facade,omitempty"`
 	Providers []string `json:"providers,omitempty"`
 	Quorum    int      `json:"quorum,omitempty"`
+	// LocalProvider, when set, runs a provider in this process: a storage
+	// node. Every piece is handed to it as a function call, beside the
+	// facade and the providers named, with no socket and no copy.
+	LocalProvider *LocalProvider `json:"local_provider,omitempty"`
 	// CA, when set, is a PEM file of certificates trusted, besides the
 	// system's, for TLS to hosts, providers and advertisers.
 	CA string `json:"ca,omitempty"`
@@ -329,8 +333,11 @@ func (c *Config) Check() error {
 	if len(c.Hosts) == 0 {
 		return errors.New("at least one host is required")
 	}
-	if c.Facade == "" && len(c.Providers) == 0 {
-		return errors.New("a facade or at least one provider is required to deliver pieces")
+	if c.Facade == "" && len(c.Providers) == 0 && c.LocalProvider == nil {
+		return errors.New("a facade, a provider or a local provider is required to deliver pieces")
+	}
+	if c.LocalProvider != nil && c.LocalProvider.Config == "" {
+		return errors.New("local_provider.config names the provider's configuration file")
 	}
 	if c.Quorum < 0 || c.Quorum > len(c.Hosts) {
 		return errors.New("quorum is at most the number of hosts")
@@ -471,3 +478,19 @@ func validName(n string) bool {
 	}
 	return true
 }
+
+// LocalProvider is a provider run in the gateway's process (Config).
+type LocalProvider struct {
+	// Config is the provider's configuration file, as bstore-provider run
+	// takes it; the provider listens and advertises as it would alone.
+	Config string `json:"config"`
+	// Verify, true unless set false, checks every piece the gateway hands
+	// over as any submission is checked. False takes the gateway's own
+	// account of each piece it minted (its hash, record, funding output and
+	// txid) as given, which saves the provider most of its work per piece:
+	// the operator's choice for a provider that trusts only its own gateway.
+	Verify *bool `json:"verify,omitempty"`
+}
+
+// Verifies reports whether the local provider checks what it is handed.
+func (l *LocalProvider) Verifies() bool { return l.Verify == nil || *l.Verify }

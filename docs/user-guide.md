@@ -55,6 +55,24 @@ paid by its own key. Current uhrp-server-basic releases need a one-line fix
 to commit CHIRP roots; the bridge checks before it pays
 ([bstore-bridge](https://github.com/lightwebinc/bstore-bridge)).
 
+Who sends what to whom:
+
+```mermaid
+flowchart LR
+  OW["owner<br/>bucket new, anchor"] -->|"bucket tokens"| HO
+  WR["writer<br/>put, rm, cp"] -->|"entry"| HO["overlay hosts"]
+  WR -->|"pieces"| PV["providers"]
+  PV -->|"advertisement"| HO
+  WR -.->|"bounty, by rank"| PV
+  RD["reader<br/>get, ls"] -->|"prove the key"| HO
+  RD -->|"fetch and check the bytes"| PV
+  %% The last node is an invisible spacer in the rightmost rank: the rendered
+  %% viewer places its zoom and pan controls over the bottom-right corner.
+  RD ~~~ pad
+  pad["&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;"]:::pad
+  classDef pad fill:none,stroke:none,color:transparent
+```
+
 ## 2. What it protects, and what it does not
 
 It protects:

@@ -77,6 +77,26 @@ func HashBlob(blob []byte) (hash [32]byte, leaves []byte, sub [32]byte) {
 	return [32]byte(d.Sum(nil)), leaves, b.Root()
 }
 
+// LeavesOf is HashBlob without the blob's own SHA-256, for a caller that
+// already knows it: the segment leaves and their subtree root, the same as
+// HashBlob's.
+func LeavesOf(blob []byte) (leaves []byte, sub [32]byte) {
+	l := sha256.New()
+	leaves = make([]byte, 0, 32*((len(blob)+SegmentSize-1)/SegmentSize))
+	var b commit.Builder
+	for len(blob) > 0 {
+		k := min(SegmentSize, len(blob))
+		seg := blob[:k]
+		blob = blob[k:]
+		l.Reset()
+		l.Write(leafPrefix[:])
+		l.Write(seg)
+		leaves = l.Sum(leaves)
+		b.Add([32]byte(leaves[len(leaves)-32:]))
+	}
+	return leaves, b.Root()
+}
+
 // leafPrefix is RFC 6962's leaf domain separator, as commit.HashLeaf writes it.
 var leafPrefix = [1]byte{0x00}
 

@@ -100,18 +100,13 @@ func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(bodyDeadline))
-	// A submission only on blob topics is read into a pooled buffer, which
-	// goes back to the pool once every piece is checked: a checked carrier
-	// keeps nothing of the bytes it was read from (the transaction parse
-	// copies them), and a blob topic's take reads only the checked carrier.
-	// A records topic's take reads the body, so such a submission is read
-	// into a buffer of its own.
-	beef, held, err := readBody(w, r, bound, blobsOnly)
-	release := func() {
-		putBody(held)
-		held, beef = nil, nil
-	}
-	defer release()
+	// The body is read into a buffer of its own, which the checked carriers
+	// alias (storerec.CheckPieceCarrier parses in place): a piece is the
+	// carrier's output where it lies in the body, and is kept by reference
+	// (the recent pieces, the walk) after the take. Pooling the body was the
+	// way to skip zeroing a fresh 4 MiB buffer while the parse copied the
+	// piece into one of its own anyway; now the body is that one buffer.
+	beef, err := readBody(w, r, bound)
 	if err == nil {
 		select {
 		case p.limits.ingest <- struct{}{}:
@@ -144,7 +139,7 @@ func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		pieces[t] = pc
 	}
 	if blobsOnly {
-		release()
+		beef = nil // the carriers hold what they need of it
 	}
 	if feeder {
 		// A feeder (the local bridge) is answered once every piece has
@@ -281,16 +276,9 @@ func (p *Provider) take(ctx context.Context, topic string, beef []byte, pc *stor
 				return []int{}, "", "piece: " + why(err)
 			}
 		}
-		if !writerAllowed(b, pc.Piece.Writer) {
-			return []int{}, "", "writer: not a writer this provider takes for the bucket"
-		}
-		if !p.fundingFree(pc.Funding, pc.Commitment) {
-			return []int{}, "", "funding: a second carrier on one funding output"
-		}
-		if why := p.keepPiece(pc.Piece.Piece, hex.EncodeToString(pc.Piece.Root[:]), b.Bucket, hex.EncodeToString(pc.Piece.Writer)); why != "" {
+		if why := p.takePiece(b, pc, nil); why != "" {
 			return []int{}, "", why
 		}
-		p.claimFunding(pc.Funding, pc.Commitment)
 		return []int{0}, "", ""
 	}
 	if len(beef) > maxRecordsBEEF {
@@ -345,11 +333,9 @@ func (p *Provider) fundingFree(op transaction.Outpoint, c [32]byte) bool {
 
 func writerAllowList(b *BucketConfig) bool { return len(b.Writers) > 0 }
 
-// The most undecided entries kept, from one writer and in all.
-const (
-	maxUndecidedPerWriter = 4096
-	maxUndecided          = 10000
-)
+// The most undecided entries kept in all; one writer's most is
+// limits.undecided_per_writer.
+const maxUndecided = 10000
 
 // noteEntry records a put entry, once, and asks for its root to be looked
 // at.
@@ -361,7 +347,7 @@ func (p *Provider) noteEntry(c string, e *storerec.Entry, listed bool) string {
 		mine, all := p.index.writers[w], p.index.total
 		// A writer a bucket's allow-list names is never shut out by the
 		// total that strangers fill.
-		if mine >= maxUndecidedPerWriter || (!listed && all >= maxUndecided) {
+		if mine >= p.cfg.Limits.UndecidedPerWriter || (!listed && all >= maxUndecided) {
 			p.mu.Unlock()
 			return "room: too many entries waiting for their closures"
 		}
@@ -422,14 +408,42 @@ func (p *Provider) pruneEntries() {
 // it: an error of this provider's, not a refusal of the piece.
 const storeFailed = "store: the piece could not be stored"
 
+// takePiece takes a checked piece carrier, or one its gateway in this
+// process vouches for (TakeLocal): the writer and the funding output are
+// held to the bucket's rules, and the piece kept. known is the piece's
+// SHA-256 when the caller has it. It returns why nothing was taken.
+func (p *Provider) takePiece(b *BucketConfig, pc *storerec.PieceCarrier, known *[32]byte) string {
+	if !writerAllowed(b, pc.Piece.Writer) {
+		return "writer: not a writer this provider takes for the bucket"
+	}
+	if !p.fundingFree(pc.Funding, pc.Commitment) {
+		return "funding: a second carrier on one funding output"
+	}
+	if why := p.keepPiece(pc.Piece.Piece, known, hex.EncodeToString(pc.Piece.Root[:]), b.Bucket, hex.EncodeToString(pc.Piece.Writer)); why != "" {
+		return why
+	}
+	p.claimFunding(pc.Funding, pc.Commitment)
+	return ""
+}
+
 // keepPiece stores a piece's bytes as unclaimed, if there is room. The
 // piece's three hashes (its SHA-256, which names it; its segment leaves and
 // subtree root, for the proofs) come from one pass over its bytes, and the
 // bytes go to the store and the closure walk as they are, copied nowhere
 // here. The carrier's own hashes (its txid, the record's signature) were
-// taken over other bytes by the carrier check and are not repeated.
-func (p *Provider) keepPiece(data []byte, rootHex, bucket, writer string) string {
-	h, leaves, sub := storerec.HashBlob(data)
+// taken over other bytes by the carrier check and are not repeated. known,
+// when set, is the piece's SHA-256 from a caller that computed it (a
+// gateway in this process), and only the leaves are hashed.
+func (p *Provider) keepPiece(data []byte, known *[32]byte, rootHex, bucket, writer string) string {
+	var h [32]byte
+	var leaves []byte
+	var sub [32]byte
+	if known != nil {
+		h = *known
+		leaves, sub = storerec.LeavesOf(data)
+	} else {
+		h, leaves, sub = storerec.HashBlob(data)
+	}
 	hh := hex.EncodeToString(h[:])
 	if p.front != nil {
 		// A front keeps no second copy of what it handed to the backend.
@@ -838,68 +852,19 @@ func writeEngineError(w http.ResponseWriter, code int, msg string, hdr ...string
 // was even parsed (memmove and memclr were a third of the provider's CPU on
 // the lab edge). A body longer than its declared length is refused by the
 // extra read; a shorter one is an error from ReadFull.
-//
-// With pooled set, a body of at least pooledBody bytes is read into a buffer
-// from bodyPool, returned as held: a new buffer of 4 MiB is zeroed before the
-// body overwrites it (memclr was a sixth of the provider's CPU on the lab
-// edge), a pooled one is not. The caller hands held back with putBody once
-// nothing reads the body any more, and the body is not read after that.
-func readBody(w http.ResponseWriter, r *http.Request, bound int64, pooled bool) (body []byte, held *[]byte, err error) {
+func readBody(w http.ResponseWriter, r *http.Request, bound int64) ([]byte, error) {
 	lr := http.MaxBytesReader(w, r.Body, bound)
 	n := r.ContentLength
 	if n <= 0 || n > bound {
-		body, err = io.ReadAll(lr)
-		return body, nil, err
+		return io.ReadAll(lr)
 	}
-	var buf []byte
-	if pooled && n >= pooledBody && n <= storerec.MaxPieceBEEF {
-		held = getBody()
-		buf = (*held)[:n]
-	} else {
-		buf = make([]byte, n)
-	}
+	buf := make([]byte, n)
 	if _, err := io.ReadFull(lr, buf); err != nil {
-		putBody(held)
-		return nil, nil, err
+		return nil, err
 	}
 	var extra [1]byte
 	if m, _ := lr.Read(extra[:]); m > 0 {
-		putBody(held)
-		return nil, nil, errors.New("body longer than its Content-Length")
+		return nil, errors.New("body longer than its Content-Length")
 	}
-	return buf, held, nil
-}
-
-// bodyPool holds buffers of a piece carrier's bound for submission bodies:
-// a free list of at most maxBodies, which is how many are out at once (the
-// bodies slot), so it holds what readBody would otherwise allocate and
-// nothing more. A sync.Pool is emptied by every collection, and a provider
-// taking pieces collects often, so each emptied buffer came back as a new
-// 4 MiB allocation, zeroed; these stay.
-var bodyPool = make(chan *[]byte, maxBodies)
-
-// getBody is a pooled buffer, or a new one.
-func getBody() *[]byte {
-	select {
-	case held := <-bodyPool:
-		return held
-	default:
-		b := make([]byte, storerec.MaxPieceBEEF)
-		return &b
-	}
-}
-
-// pooledBody is the least body read into a pooled buffer: a piece carrier
-// of a full piece is about 4 MiB, a root's or a records topic's far less.
-const pooledBody = 64 << 10
-
-// putBody hands a pooled body's buffer back; nil is nothing.
-func putBody(held *[]byte) {
-	if held == nil {
-		return
-	}
-	select {
-	case bodyPool <- held:
-	default:
-	}
+	return buf, nil
 }
