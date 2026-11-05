@@ -5,8 +5,27 @@
 a bucket's objects, checks each closure, decides by its own policy whether
 to hold it, races for the bounty by advertising at once, answers
 challenges, renewals and settlement remittances on its front, and serves
-the bytes on BRC-167's object routes. This page is in two parts: what the
-provider does, and an operator's guide.
+the bytes on BRC-167's object routes.
+
+A provider earns in three ways: the bounties it wins by holding an object
+and passing the writer's settlement challenge, the renewals anyone buys to
+keep an object held, and the challenges anyone pays for. It pays for its
+disk, for the bytes delivered to it, and for one mined advertisement per
+hold. Nothing it holds is taken on trust: every piece is held to its hash
+and every closure is checked before an advertisement is minted.
+
+This page is in two parts: what the provider does, and an operator's guide.
+
+```mermaid
+flowchart LR
+  R["receive pieces<br/>and the entry"] --> V["verify the closure,<br/>recompute the proof root"]
+  V --> D{"hold policy and<br/>bounty checks"}
+  D -->|decline| X["declined,<br/>pieces released"]
+  D -->|hold| L["lease, then mint<br/>the advertisement"]
+  L --> S["settlement leg,<br/>then the proof"]
+  S --> A["publish the advertisement<br/>to every host"]
+  A --> C["answer challenges,<br/>renewals, remittances"]
+```
 
 ## What it does
 
@@ -18,38 +37,43 @@ There are two ways in, and the provider is the same behind both.
 
 - **The plane, or a writer that submits directly.** `POST /submit`, the
   overlay engine's own submit shape: the BEEF as the body, `x-topics` naming
-  the topic (one name, or a JSON array of up to four). On
-  `tm_bstoreblob_<bucket>` a piece carrier is held to a carrier's rules
-  (shape, its BEEF and the funding tree's minimal path within 4,259,840
+  the topic (one name, or a JSON array of up to four).
+
+  On `tm_bstoreblob_<bucket>` a piece carrier is held to a carrier's rules:
+  shape, its BEEF and the funding tree's minimal path within 4,259,840
   bytes, the piece record, the bucket, not mineable, one signature push,
   the PushDrop under `derive(writer, "piece")`, its field signature, the
-  writer's funding output and its value) and its funding tree must be
-  mined in the provider's headers: what the provider keeps is a writer's
-  signed piece, paid for with a mined output, never anyone's junk. One
-  funding output pays for one carrier (spec section 13.2): a second,
-  different carrier on an outpoint already seen, piece or entry, is
-  refused, so a mined output buys one piece or one entry. On
-  `tm_bstore_<bucket>` the provider runs the host's admission rules (spec
-  section 12.1) and takes put entries; everything else a records topic
-  carries is a host's business and is passed over. The answer is the
-  engine's, per topic, with a `refused` reason when nothing was taken.
-  A piece is held to its rules first, on any blob topic, served or not,
-  before this provider's own policy, and answered as an engine answers: a
-  carrier that breaks a rule is a `400` with `{"error": "piece: <rule>"}`
-  and nothing is taken on any topic of the submission; one whose funding
-  tree is not yet in the provider's headers is a `503` with `Retry-After`;
-  a valid piece is a `200` whether or not this provider keeps it (a
-  bucket it does not serve, a writer it does not take, a full store), with
-  the `refused` reason. So an overlay bridge whose facade routes a blob
-  topic here publishes exactly the valid pieces, and a bridge that feeds
-  the provider from the plane retries a header lag and never a refusal.
-  A feeder's submission (on `feed_listen`, or from a `feeders` address) is
-  answered as soon as every piece has passed its check, and stored right
-  after, at most eight takes at a time, each holding its body's slot of
-  the 64 until it is done; a writer that submits directly is answered
-  after its take, since it reads the `refused` reason. A crash between a
-  feeder's answer and the store loses the piece, as it loses one the next
-  background pass (every 5 s) had not yet recorded.
+  writer's funding output and its value. Its funding tree must be mined in
+  the provider's headers. What the provider keeps is a writer's signed
+  piece, paid for with a mined output, never anyone's junk. One funding
+  output pays for one carrier (spec section 13.2): a second, different
+  carrier on an outpoint already seen, piece or entry, is refused, so a
+  mined output buys one piece or one entry.
+
+  On `tm_bstore_<bucket>` the provider runs the host's admission rules
+  (spec section 12.1) and takes put entries; everything else a records
+  topic carries is a host's business and is passed over.
+
+  The answer is the engine's, per topic, with a `refused` reason when
+  nothing was taken. A piece is held to its rules first, on any blob topic,
+  served or not, before this provider's own policy:
+
+  | Answer | When |
+  | --- | --- |
+  | `400` `{"error": "piece: <rule>"}` | the carrier breaks a rule; nothing is taken on any topic of the submission |
+  | `503` with `Retry-After` | the funding tree is not yet in the provider's headers |
+  | `200`, with a `refused` reason when it keeps nothing | a valid piece, whether or not this provider keeps it (a bucket it does not serve, a writer it does not take, a full store) |
+
+  So an overlay bridge whose facade routes a blob topic here publishes
+  exactly the valid pieces, and a bridge that feeds the provider from the
+  plane retries a header lag and never a refusal. A feeder's submission (on
+  `feed_listen`, or from a `feeders` address) is answered as soon as every
+  piece has passed its check, and stored right after, at most eight takes
+  at a time, each holding its body's slot of the 64 until it is done. A
+  writer that submits directly is answered after its take, since it reads
+  the `refused` reason. A crash between a feeder's answer and the store
+  loses the piece, as it loses one the next background pass (every 5 s)
+  had not yet recorded.
 - **Unicast upload sessions** (spec section 14, BRC-167's baseline
   profile), over BRC-104: `POST <public>/chirp/v1/uploads` opens a
   session bound to the caller's identity; `PUT` (and `HEAD`)
@@ -90,70 +114,79 @@ the root's own size and content hash:
    subtree root of each blob kept, and the proof root over them compared
    with the entry's.
 
-The work is done as the pieces arrive: each piece is hashed by the request
-that brings it (its SHA-256, its segment leaves and subtree root, from one
-pass over its bytes, on whatever core serves it) and handed to the root's
-closure walk (bcommon
-`chirp.Incremental`), which checks the closure as `chirp.Verify` does as
-far as the pieces on hand allow, the content hash advancing over the blobs
-in order. When the entry is evaluated, the walk is finished from where it
-stopped and the proof files are written from the leaves already hashed.
-Closures with branch nodes (over 1 GiB) are walked the same way. A walk
-starts when its root's piece arrives. A root whose walk is not kept, after
-a restart for instance, has its walk started by the evaluation, which reads
-back the pieces already held, once each, and continues as more arrive. A
-piece the store already held is read from the store, not taken from the
-request that sent it again. Leaves are kept for at most 1,024 pieces and
-walks for 64 roots (the least recently used dropped first). The pieces
-stored last, 128 MiB of them across all walks, are kept until their walk
-comes to wait for each and handed to it then with the hash the provider
-computed, so a piece taken out of order is neither read back nor hashed
-again; one dropped from that budget is read back from the store when the
-walk reaches it.
+**Work as the pieces arrive.** Each piece is hashed by the request that
+brings it (its SHA-256, its segment leaves and subtree root, from one pass
+over its bytes, on whatever core serves it) and handed to the root's
+closure walk (bcommon `chirp.Incremental`). The walk checks the closure as
+`chirp.Verify` does, as far as the pieces on hand allow, the content hash
+advancing over the blobs in order. When the entry is evaluated, the walk is
+finished from where it stopped and the proof files are written from the
+leaves already hashed. Closures with branch nodes (over 1 GiB) are walked
+the same way.
 
-A closure that fails is the writer's fault: every entry it fails is
-declined, and the reason recorded. One that is not complete yet is waited
-for. Up to `limits.verify_workers` roots (default 4) are seen through at
-once, each taken in the order it was queued and verified and then decided
-(the hold policy, the bounty's checks, the hold and the advertisement) by
-the one worker that took it; a root's entries are decided oldest first,
-and no root waits for a root queued before it. The chain reads, the
-signature and the journal sync of each hold run side by side across the
-workers, so small entries are held at a rate that grows with the workers
-(2 ms to the node: about 50 a second with one, 200 with 4, 550 with 16)
-and does not fall with the number waiting. Bounded memory throughout: one blob
-at a time for each closure being verified, and the provider keeps
-for each held root, under `roots/<root>/`, the leaf hash of every segment
-(32 bytes per 4 KiB, 1/128 of the data), each blob position's subtree root
-and object hash, and the closure's objects in order and sorted.
+A walk starts when its root's piece arrives. A root whose walk is not kept,
+after a restart for instance, has its walk started by the evaluation, which
+reads back the pieces already held, once each, and continues as more
+arrive. A piece the store already held is read from the store, not taken
+from the request that sent it again. Leaves are kept for at most 1,024
+pieces and walks for 64 roots (the least recently used dropped first). The
+pieces stored last, 128 MiB of them across all walks, are kept until their
+walk comes to wait for each and handed to it then with the hash the
+provider computed, so a piece taken out of order is neither read back nor
+hashed again; one dropped from that budget is read back from the store
+when the walk reaches it.
+
+**Deciding.** A closure that fails is the writer's fault: every entry it
+fails is declined, and the reason recorded. One that is not complete yet is
+waited for. Up to `limits.verify_workers` roots (default 4) are seen
+through at once, each taken in the order it was queued and verified and
+then decided (the hold policy, the bounty's checks, the hold and the
+advertisement) by the one worker that took it. A root's entries are decided
+oldest first, and no root waits for a root queued before it. The chain
+reads, the signature and the journal sync of each hold run side by side
+across the workers, so small entries are held at a rate that grows with the
+workers (with a chain view 2 ms away: about 50 a second with one worker,
+200 with 4, 550 with 16) and does not fall with the number waiting.
+
+**Bounded memory throughout.** One blob at a time for each closure being
+verified. For each held root the provider keeps, under `roots/<root>/`, the
+leaf hash of every segment (32 bytes per 4 KiB, 1/128 of the data), each
+blob position's subtree root and object hash, and the closure's objects in
+order and sorted.
 
 ### The hold policy and the bounty
 
 An entry is taken when the provider's policy allows it (`policy` below:
-size, retention, and whether it holds without a bounty; an entry dated
+size, retention, and whether it holds without a bounty). An entry dated
 more than ten minutes ahead of the provider's clock is declined, and the
-advertisement it asks for must end within `max_retention_seconds` of now)
-and, for a bounty,
-when the provider's own checks of spec section 9.3 pass with its own chain
-view and headers: the hold output exists, is mined (its proof verifies in the
-provider's headers), is locked to `derive(writer, "hold")`, holds exactly
-`satoshis`, is unspent by positive evidence from the chain view (one that
-does not answer is not evidence), is worth at least `min_bounty`, pays this
-provider's price (an even share among the hold's `K` ranks covers
-`renew_per_gib_day` for the object's size and the hold's retention, since a
-provider cannot know its rank), and the entry's `deadline` is at least
-`min_deadline_blocks` ahead of the tip. One
-hold output settles one entry (spec section 9.2): a second entry naming a
-hold output that backs an entry the provider took is declined. An entry
+advertisement it asks for must end within `max_retention_seconds` of now.
+
+For a bounty, the provider's own checks of spec section 9.3 must pass with
+its own chain view and headers. The hold output:
+
+- exists and is mined (its proof verifies in the provider's headers);
+- is locked to `derive(writer, "hold")` and holds exactly `satoshis`;
+- is unspent by positive evidence from the chain view (one that does not
+  answer is not evidence);
+- is worth at least `min_bounty` and pays this provider's price: an even
+  share among the hold's `K` ranks covers `renew_per_gib_day` for the
+  object's size and the hold's retention, since a provider cannot know its
+  rank;
+- backs an entry whose `deadline` is at least `min_deadline_blocks` ahead
+  of the tip.
+
+One hold output settles one entry (spec section 9.2): a second entry naming
+a hold output that backs an entry the provider took is declined. An entry
 whose bounty fails is declined, or held without racing when
-`hold_unbountied` is on; a check the chain view or the header source could not
-answer decides nothing (a hold transaction the node does not know or has
-not mined yet included), and the entry is looked at again for
-`unclaimed_seconds`, then declined. An entry the
-provider took is checked against the closure it holds: another size,
-content hash or proof root is declined. A closure is checked once for all
-the entries waiting on it, and the proof root decides every one of them in
-the same pass. An entry whose closure has not arrived within
+`hold_unbountied` is on. A check the chain view or the header source could
+not answer decides nothing (a hold transaction the node does not know or
+has not mined yet included), and the entry is looked at again for
+`unclaimed_seconds`, then declined.
+
+An entry the provider took is checked against the closure it holds: another
+size, content hash or proof root is declined. A closure is checked once for
+all the entries waiting on it, and the proof root decides every one of them
+in the same pass. An entry whose closure has not arrived within
 `unclaimed_seconds` is declined, and one of whose root not even the root
 node came within five minutes. A writer a bucket's `writers` names is never
 shut out by the total of waiting entries strangers fill.
@@ -162,15 +195,22 @@ shut out by the total of waiting entries strangers fill.
 
 The writer ranks advertisements by when its own client first sees them
 (spec section 9.4), so the provider advertises the instant a closure is
-checked: the lease runs through the expiry it will advertise, then one
-advertisement is minted, exactly as the SDK makes it (BRC-26, `[2, "uhrp
+checked. The lease runs through the expiry it will advertise, then the
+advertisement is minted exactly as the SDK makes it (BRC-26, `[2, "uhrp
 advertisement"]` key id `1`, the CHIRP URL of the root, `fileSize` the root
-node's length), in a transaction of its own that spends one output of the
-provider's funding tree for its fee. Its expiry is the entry's
-`floor(created / 1000) + retention`, and never less than an hour from now.
-The transaction goes to the settlement leg at once; once it mines it is
-submitted, alone with its own minimal proof, to the records topic of every
-bucket the root is held for at every configured host, to the plane's
+node's length). Its expiry is the entry's `floor(created / 1000) +
+retention`, and never less than an hour from now.
+
+Roots checked close together share one transaction: the minter collects
+the roots asked for within `limits.ad_batch_ms` behind the first, up to
+`limits.ad_batch`, and signs one transaction with an advertisement output
+per root, its fee paid from as many of the provider's funding outputs as it
+needs. A renewal is minted one a transaction, since it spends the
+advertisement it renews.
+
+The transaction goes to the settlement leg at once. Once it mines it is
+submitted, with its own minimal proof, to the records topic of every
+bucket each root is held for at every configured host, to the plane's
 facade when one is set, and to `tm_uhrp` when `uhrp_topic` is on. A host it
 cannot reach is tried again, each time later.
 
@@ -179,25 +219,25 @@ when it lasts long enough; when it does not, it is renewed to.
 
 **Funding trees.** Advertisements and renewals are paid from funding trees
 of `tree_count` outputs of `tree_sats` each, locked to the wallet's fund
-key; the next tree is minted before the current one runs out. An
+key; the next tree is minted before the current one runs out. A lone
 advertisement pays all of its output in fee and keeps no change, so
-`tree_sats` is the most one costs. A tree is
-recorded with its fee coin before it reaches the settlement leg (bcommon
-`producer`'s `Prepare`), as a row of the state log (the state is never
-written whole on the hold path: a 250 MB state took a second a write,
-twice a tree, under the mint lock), so a provider that
-stops between the leg and the adoption finds the record on its next start
-and settles it (`Recover`):
-the tree adopted when it is on the chain, held behind the current tree,
-its coin taken out of the pool when another transaction spent it, or its
-coin returned when the chain view does not know the tree, the record then kept
-for one more start and dropped on the second. A tree the library already
-holds is never recovered twice. An advertisement is persisted as its own transaction
-(its funding tree and, for a renewal, the advertisement it renews are kept
-already), with its funding output marked used and the lease extended,
-before it reaches the leg; a start finds it and records it once mined, sends the same bytes
-again when the chain view never saw it, or advertises afresh when its funding
-output went to another transaction.
+`tree_sats` is the most one costs; a batch spends several.
+
+A tree is recorded with its fee coin before it reaches the settlement leg
+(bcommon `producer`'s `Prepare`), as a row of the state log, so a provider
+that stops between the leg and the adoption finds the record on its next
+start and settles it (`Recover`): the tree adopted when it is on the chain,
+held behind the current tree; its coin taken out of the pool when another
+transaction spent it; or its coin returned when the chain view does not
+know the tree, the record then kept for one more start and dropped on the
+second. A tree the library already holds is never recovered twice.
+
+An advertisement is persisted as its own transaction (its funding tree
+and, for a renewal, the advertisement it renews are kept already), with
+its funding outputs marked used and the lease extended, before it reaches
+the leg. A start finds it and records it once mined, sends the same bytes
+again when the chain view never saw it, or advertises afresh when a
+funding output went to another transaction.
 
 ### Renewals
 
@@ -268,8 +308,8 @@ not at all if the payment is double-spent first).
 
 A refusal of a request that came with a payment the provider did not take
 (any answer but `200`, `402` and `409`) carries a signed
-**payment-not-taken note** as `"notTaken"` (spec section 10.4, row C30,
-pending the owner's confirmation of its bytes): the payment's txid, the
+**payment-not-taken note** as `"notTaken"` (spec section 10.4, row C30):
+the payment's txid, the
 SHA-256 of the request, the refusal's reason and the time, under
 `derive(provider, "challenge")`. The buyer gives its coin back at once on
 it. Only a payment that passed the payment check (this provider's own
@@ -485,6 +525,9 @@ such puts an hour.
 
 ### Build and initialize
 
+*Build the binary and create the provider's identity; the key printed is
+what advertisements, challenge responses and payouts are bound to.*
+
 ```console
 $ make verify
 $ go build -o bstore-provider ./cmd/bstore-provider
@@ -513,11 +556,10 @@ minutes when something changed, or sooner once the log passes 256 MB, and
 on a stop: it turns the log over and copies the state in one critical
 section (tens of milliseconds for 25,000 holdings) and encodes and writes
 the copy outside it, then removes the logs the checkpoint covers. Nothing
-on the hold path or the feed writes the state whole (2026-11-05: on a lab
-provider with a 150 MB state the whole-state saves ran back to back and
-everything queued behind them). A data directory from before the log
-loads as it is: the checkpoint, then the rows under `ads/`, which the
-first checkpoint drops.
+on the hold path or the feed writes the state whole: a large state written
+whole on every change queued everything behind the write. A data directory
+from before the log loads as it is: the checkpoint, then the rows under
+`ads/`, which the first checkpoint drops.
 
 ### Configure
 
@@ -587,6 +629,9 @@ GorillaPool's public arcade.
 
 ### Fund
 
+*Print the fund address and the pool, then import a payment you made to
+it, from the BEEF your wallet handed over or by its txid once mined.*
+
 ```console
 $ ./bstore-provider address -config provider.json
 identity 02...
@@ -617,9 +662,21 @@ finds no ordinary payment.
 
 ### Run
 
+*Start the provider, and check from the outside that its chain view,
+header source, settlement leg, hosts and front answer; `doctor` changes
+nothing.*
+
 ```console
 $ ./bstore-provider run -config provider.json
 $ ./bstore-provider doctor -config provider.json   # reads only
+```
+
+*Read the provider's own numbers (with `metrics_listen` set to
+`127.0.0.1:9095`): holdings, store bytes, advertisements and where an
+advertisement's time goes.*
+
+```console
+$ curl -s http://127.0.0.1:9095/metrics | grep -E '^bstore_provider_(holdings|store_bytes|advertisements_total|advertise_seconds)'
 ```
 
 `doctor` prints the identity, the pool, what the store holds, the fee
@@ -637,7 +694,10 @@ Behind a TLS proxy, route to the provider:
 **On the plane.** A provider subscribes through an overlay bridge (one
 consumer subscription per site): the bridge routes the bucket's blob topic
 to the provider's `/submit`, and hands the records topic to the provider as
-an `also` target beside the site's engine, if it runs one:
+an `also` target beside the site's engine, if it runs one.
+
+*The bridge's routes: pieces to the provider, records to the engine and
+the provider both.*
 
 ```text
 overlay-bridge ... \
@@ -685,6 +745,8 @@ closure names and no record keeps is removed at the start, and its writer
 sends it again.
 
 ### Test it end to end
+
+*Run two providers, a writer and a host on a local test chain, end to end.*
 
 ```console
 $ make provider-e2e REFERENCE_HOST=/path/to/reference-host NODE=/path/to/node24

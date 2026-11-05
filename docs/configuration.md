@@ -8,6 +8,14 @@ their guides and are linked here: the provider's in
 [host.md](host.md#configuration). [usage.md](usage.md) says what each
 command does.
 
+| Looking for | Section |
+| --- | --- |
+| which chain services every configuration names, and the no-node defaults | [Networks and endpoints](#networks-and-endpoints) |
+| the `bstore` command's flags, environment and `config.json` | [bstore](#bstore) |
+| the gateway's and the provider's commands and keys | [bstore s3d](#bstore-s3d), [bstore-provider](#bstore-provider) |
+| the host module's `BSTORE_` variables | [The host module](#the-host-module) |
+| the local test chain and the container images | [devchain](#devchain), [Container images](#container-images) |
+
 ## Networks and endpoints
 
 The same settings recur in every configuration: the network, the chain view
@@ -25,7 +33,8 @@ better chain view.
 | headers | the header source proofs are checked against: `woc:main` or `woc:test` (the public WhatsOnChain API, the default for the network), `bhs:<url>` (a [block-headers-service](https://github.com/bsv-blockchain/block-headers-service); `headers_token` is its bearer token), `arcade:<url>` (the header server an arcade installation embeds), `chaintracks:<url>` (a chaintracks v2 service), or a bridge URL (an overlay bridge's native `/v1/root/<height>` and `/v1/tip`, which carries no proof of work to check). Every kind but a bridge serves the header fields, and every header is hashed and held to the proof of work its bits claim |
 | fee | the miner fee policy, a block (below); the default is the network's rate, 100 satoshis per 1000 bytes, with a 100 satoshi floor, never more than 100 per 1000 bytes. The older keys `fee_sat_per_byte` and `fee_floor` still work, held to the same cap |
 
-The zero-infrastructure profile, what an unset network gets:
+The zero-infrastructure profile is what an unset network gets: public
+services, nothing of your own to run.
 
 | Role | mainnet | testnet |
 | --- | --- | --- |
@@ -144,8 +153,8 @@ serves all three).
 | `accept_payer_limit`, `accept_total_limit`, `accept_window_seconds`, `accept_watch_seconds` | one and ten thresholds, 3600, 0 | the rest of the acceptance rule, as for a provider ([provider.md](provider.md)) |
 | `buckets`, `bucket` | none | the chains this home reads and writes (`{"bucket", "owner", "id"}`), and the one used unless `-bucket` names another |
 
-A mainnet home with no node (WhatsOnChain and GorillaPool's arcade by
-default):
+*A mainnet home with no node: WhatsOnChain and GorillaPool's arcade by
+default.*
 
 ```json
 {
@@ -156,8 +165,8 @@ default):
 }
 ```
 
-The same home with a node of its own as the chain view and its own
-arcade:
+*The same home with a node of its own as the chain view and its own
+arcade.*
 
 ```json
 {
@@ -278,6 +287,8 @@ Each image carries the licenses under `/usr/share/doc/bstore/` (`LICENSE`,
 directory starts owned by nonroot; a bind mount keeps the host directory's
 owner, so make it writable by uid 65532 or run with `--user`.
 
+*Build the command image, create a home in a named volume, and fund it.*
+
 ```console
 $ docker build -t bstore .
 $ docker run --rm -v bstore-home:/home/nonroot/.bstore bstore init -network main \
@@ -287,7 +298,9 @@ $ docker run --rm -i -v bstore-home:/home/nonroot/.bstore bstore fund -beef - < 
 $ docker run --rm -v bstore-home:/home/nonroot/.bstore bstore fund -txid <txid>
 ```
 
-`ghcr.io/lightwebinc/bstore` is published by a manual workflow
-(`.github/workflows/image-publish.yml`) once a release is tagged; build the
-provider, devchain and host images from a checkout (`make docker-build`,
-`make docker-build-host REFERENCE_HOST_IMAGE=...`).
+The four images are published by a manual workflow
+(`.github/workflows/image-publish.yml`) once a release is tagged, for
+amd64 and arm64. To build them from a checkout instead: `make
+docker-build` (the command, provider and devchain images) and `make
+docker-build-host REFERENCE_HOST_IMAGE=...` (the host image on a reference
+overlay host image).

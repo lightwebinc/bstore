@@ -1,9 +1,15 @@
 # Architecture
 
-bstore is object storage as a market. This page names the parts, what each
-holds and trusts, how an object moves through them, and where each lives in
-the code. The contract (every byte format and rule a compatible
-implementation must meet) is [spec.md](spec.md); this page is the map.
+bstore is object storage as a market. A writer publishes an object once;
+every provider that subscribes to the bucket receives it, decides whether
+to hold it, and competes for the writer's bounty by advertising on chain and
+passing a sampled proof of possession. Readers verify everything themselves
+and see S3 through a gateway.
+
+This page names the parts, what each holds and trusts, how an object moves
+through them, and where each lives in the code. The contract, every byte
+format and rule a compatible implementation must meet, is
+[spec.md](spec.md); this page is the map.
 
 ## The parts
 
@@ -57,8 +63,39 @@ flowchart LR
 | The chain | a chain view (WhatsOnChain by default, or a node's asset API), a settlement leg (GorillaPool's arcade by default), a header source (WhatsOnChain by default) | mined funding trees, hold outputs, bucket tokens, advertisements, settlements | |
 
 Nobody is believed on their word. A host is a replica of records anyone
-can check; a provider's bytes are held to their hashes; a reader proves a
+can check. A provider's bytes are held to their hashes. A reader proves a
 key against the owner's latest token and its own headers.
+
+## What moves where
+
+Two topics carry a bucket. The records topic (`tm_bstore_<bucket>`) carries
+the small, self-verifying records: tokens, entries, advertisements, outcomes,
+front statements. The blob topic (`tm_bstoreblob_<bucket>`) carries the
+bytes, as pieces, and only providers subscribe to it. A directory host is
+never delivered, or billed for, an object's bytes.
+
+```mermaid
+sequenceDiagram
+  participant C as S3 client
+  participant G as gateway (bstore s3d)
+  participant F as facade (plane)
+  participant P as provider
+  participant H as host
+  participant B as chain
+  C->>G: PutObject (SigV4, body streams)
+  G->>G: closure + proof root while the body streams
+  G-->>C: 200 once the put is committed to the outbox
+  G->>F: pieces (blob topic), one publish
+  F->>P: every subscribed provider receives the pieces
+  G->>F: entry (records topic)
+  F->>H: hosts take the entry
+  P->>P: check the closure, recompute the proof root, hold
+  P->>B: advertisement (mined)
+  P->>H: advertisement with its proof
+  G->>P: settlement challenge (c samples)
+  P-->>G: signed response
+  G->>B: settle the hold output by rank
+```
 
 ## An object's life
 
@@ -71,14 +108,14 @@ key against the owner's latest token and its own headers.
    the signed entry rides another. Pieces go to the providers (by the
    plane, as piece carriers to each provider's `/submit`, or by BRC-167
    upload session); the entry goes to the hosts. With a bounty, a hold
-   output minted ahead is named in the entry. The S3 gateway answers once
-   the put is committed to its outbox: the hold taken, a funding output
-   reserved and recorded used for each piece, a record to mint each piece
-   from written, the entry minted and written, all synced. It mints and
-   sends the pieces from those records in the background and the entry
-   after them ([s3.md](s3.md)); a restart mints what is left on the
-   outputs reserved, never fresh ones, and the state keeps a funding
-   tree while a record names it. `bstore put` waits for the first send.
+   output minted ahead is named in the entry.
+   The S3 gateway answers once the put is committed to its outbox: the hold
+   taken, a funding output reserved and recorded used for each piece, a
+   record to mint each piece from written, the entry minted and written,
+   all synced. It mints and sends the pieces from those records in the
+   background and the entry after them ([s3.md](s3.md)). A restart mints
+   what is left on the outputs reserved, never fresh ones. `bstore put`
+   waits for the first send.
 3. **Hold.** Each provider checks the closure and the proof root, decides
    by its policy, and advertises (a mined BRC-26 advertisement).
 4. **Race.** The writer's client ranks advertisers by first sight,
@@ -94,6 +131,16 @@ key against the owner's latest token and its own headers.
 7. **Time and proof.** Anyone buys a challenge (samples proven into the
    proof root) or a renewal (a successor advertisement spending the old).
 
+```mermaid
+flowchart LR
+  E["entry published<br/>(hold terms name a bounty)"] --> S["providers advertise<br/>first sight ranks them"]
+  S --> Q["settlement challenge<br/>min(checkC, freeC) samples, free"]
+  Q -->|pass| K{"K passed, or the<br/>window closed with t?"}
+  Q -->|fail| N["next candidate"] --> Q
+  K -->|yes| T["settle: one transaction,<br/>sqrt-weighted by rank"]
+  K -->|deadline, under t| L["bounty lapses:<br/>the writer reclaims"]
+```
+
 ## Money
 
 Every mined transaction is paid from the pool of the identity that makes
@@ -103,9 +150,41 @@ own wallet and importing the payment with `fund -txid`
 funding outputs, the hold output's transaction and the bounty, not block
 space for its bytes. [limits.md](limits.md) gives measured sizes and fees.
 
+| Who pays | For | To |
+| --- | --- | --- |
+| The owner | bucket tokens | miners |
+| The writer | funding trees, hold outputs, settlements, the bounty | miners; the first `k` advertisers to pass |
+| The provider | advertisements and renewals | miners |
+| Anyone | a challenge or a renewal | the provider, by a 402 |
+| Every subscriber | delivered bytes | the plane operator |
+
 The `-blocks` and `-from` funding flags, the `devchain` binary and
 `internal/testwriter` are coinbase: only on a regtest chain you run
 (development and tests).
+
+## Three commands
+
+*Create a bucket, fund the owner, and name a gateway's identity as a writer.*
+
+```bash
+bstore init -network main -hosts https://overlay.example.com
+bstore fund -txid <txid>
+bstore bucket new photos -writers 03...
+```
+
+*Put an object through the S3 gateway with the AWS CLI; the answer comes
+once the gateway holds the put durably.*
+
+```bash
+aws --endpoint-url https://s3.example.com s3 cp ./photo.jpg s3://photos-hmqzvtkwrx/albums/photo.jpg
+```
+
+*Buy a proof that a provider still holds an object: 30 sampled segments,
+each proven into the entry's proof root.*
+
+```bash
+bstore challenge albums/photo.jpg -provider 02... -c 30
+```
 
 ## The code
 
@@ -127,6 +206,7 @@ The `-blocks` and `-from` funding flags, the `devchain` binary and
 | `internal/efleg` | attaching inputs' source transactions for Extended Format settlement legs |
 | `internal/acceptcfg` | the payment acceptance settings shared by every configuration |
 | `host/` | the TypeScript host module: topic managers, `ls_bstore`, the terms route, retention |
+| `module/` | the Go host module, the same contract for Go overlay hosts |
 | `deploy/quickstart` | the development sandbox's Compose file |
 
 bstore builds on [bcommon](https://github.com/lightwebinc/bcommon) (wallet,
@@ -134,3 +214,14 @@ carriers, minting, fee policy, headers, the chain views, payment acceptance) and
 [go-sdk](https://github.com/bsv-blockchain/go-sdk). The Go codec in
 `storerec` and the TypeScript twin in `host/src` read the same golden
 vectors ([codec.md](codec.md)).
+
+## Where to go next
+
+| To | Read |
+| --- | --- |
+| run a provider and sell storage | [provider.md](provider.md) |
+| put an S3 front on a bucket | [s3.md](s3.md) |
+| carry a bucket's records on an overlay host | [host.md](host.md) |
+| look up a flag, a key or an image | [configuration.md](configuration.md) |
+| know what an object may be and what a put costs | [limits.md](limits.md) |
+| read the contract | [spec.md](spec.md), [frozen.md](frozen.md) |

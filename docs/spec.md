@@ -1,5 +1,17 @@
 # bstore: the storage market contract
 
+**How to read this document.** This is the contract: every byte format,
+rule and bound a compatible implementation must meet, in RFC 2119
+language. Sections 1 and 2 name the objects and the conventions; 3 to 8
+define the records (buckets, entries, pieces, the proof tree, challenges,
+outcomes and front statements); 9 and 10 the market (holding, the race,
+settlement, the provider's routes and who pays whom); 11 and 12 the host
+(lookups and admission); 13 to 17 carriers, delivery, reading, the S3
+mapping and the backend seam; 18 to 22 patterns followed, bounds, what the
+contract does not do, the registry and the vectors. What cannot change
+once published is listed in [frozen.md](frozen.md). The diagrams in this
+document are illustrative; the text is normative.
+
 bstore is object storage as a market on the BEEF object plane. A **bucket**
 belongs to an owner (an identity key) and has two topics: a records topic,
 `tm_bstore_<name>_<suffix>`, that overlay hosts carry, and a blob topic,
@@ -56,6 +68,29 @@ never mined. A bucket pays one mined transaction per token; a writer pays one
 funding output per carrier and one mined transaction per funding tree, and
 one hold output per bounty; a provider pays one mined advertisement per hold
 and per renewal.
+
+Illustrative, not normative: what is mined and what only travels.
+
+```mermaid
+flowchart TB
+  subgraph mined["Mined (block space)"]
+    T["bucket tokens"]
+    F["funding trees"]
+    H["hold outputs"]
+    AD["advertisements"]
+    ST["settlements"]
+  end
+  subgraph plane["Travels on the plane, never mined"]
+    E["entries"]
+    P["pieces (the bytes)"]
+    O["outcomes, front statements"]
+  end
+  F -->|one output each| E
+  F -->|one output each| P
+  F -->|one output each| O
+  H -->|named by| E
+  AD -->|published with its proof| plane
+```
 
 ```text
  writer ── pieces (CHIRP closure) ──────────────▶ tm_bstoreblob_<b> ──▶ every subscribed provider
@@ -633,6 +668,26 @@ provider that answers for itself needs no statement: its front is derived
 from its advertisement (section 10.1).
 
 ## 9. Holding, the race and settlement
+
+Illustrative, not normative: the race from the entry to the settlement, as
+sections 9.3 to 9.6 define it.
+
+```mermaid
+sequenceDiagram
+  participant W as writer's client
+  participant H as hosts
+  participant P as provider (advertiser)
+  participant B as chain
+  W->>H: entry with hold terms (t, K, checkC, deadline)
+  P->>P: checks of 9.3: closure, proof root, the hold output
+  P->>B: advertisement, mined
+  P->>H: advertisement with its proof
+  W->>H: ads for the root; first sight ranks, ties by tieKey
+  W->>P: settlement challenge, min(checkC, freeC) samples, free
+  P-->>W: signed response
+  W->>B: settle: sqrt-weighted outputs by rank (9.5), or reclaim after deadline (9.6)
+  W->>P: remittance, unicast, to the settle route
+```
 
 ### 9.1 Advertisements
 
