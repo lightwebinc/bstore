@@ -4,19 +4,56 @@ A bstore host is an ordinary overlay host that loads the bstore module: one
 file, `host/bundle/bstore-module.js`, which mounts the topic manager
 `tm_bstore_<bucket>` for each bucket it carries, `tm_bstoreblob_<bucket>`
 where the host's topics name one, and the lookup service `ls_bstore` for
-all of them ([spec.md](spec.md) sections 11 and 12). The module imports
-nothing but `@bsv/sdk` (the host's own copy) and Node's built-ins; bcommon
-is inlined. The terms route, its BRC-104 hardening, the payee ledger and
-payment acceptance are bcommon's shared host module
+all of them ([spec.md](spec.md) sections 11 and 12).
+
+A host is the bucket's directory. It carries the small records (tokens,
+entries, advertisements, outcomes, front statements), answers questions
+about them with proofs a reader checks against its own headers, and may
+sell the bulk walks. It holds no bytes of any object, fetches nothing a
+record names, and broadcasts nothing.
+
+The module imports nothing but `@bsv/sdk` (the host's own copy) and Node's
+built-ins; bcommon is inlined. The terms route, its BRC-104 hardening, the
+payee ledger and payment acceptance are bcommon's shared host module
 (`@lightwebinc/bcommon/host`), bound to bstore's service, classes, settle
 protocol and `bstore` metric names, with the `payee` ledger layout and a
 session's response budget taken before the request's signature is
-verified. It holds no bytes of any object, fetches nothing a record
-names, and broadcasts nothing.
+verified.
+
+What happens to a submission, from admission to the answer:
+
+```mermaid
+flowchart LR
+  IN["submissions<br/>the plane, owners, writers, providers"] --> TM{"tm_bstore_#lt;id#gt;<br/>codec rules and headers"}
+  IN --> TB["tm_bstoreblob_#lt;id#gt;<br/>refuses every piece"]
+  TM -->|"refused, raised"| RF["nothing stored<br/>decided again if offered again"]
+  TM -->|"admitted"| SG[("engine storage<br/>bstore-rows.jsonl")]
+  SG --> IX["ls_bstore index<br/>chains and maps, entries,<br/>ads, sweeps and marks"]
+  RET["retention, hourly"] -.->|"drops"| SG
+  IX --> LK["BRC-24 /lookup<br/>free classes"]
+  IX --> RT["module route, BSTORE_LISTEN<br/>priced classes over BRC-104"]
+  %% The last node is an invisible spacer in the rightmost rank: the rendered
+  %% viewer places its zoom and pan controls over the bottom-right corner.
+  IX ~~~ pad
+  pad["&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;"]:::pad
+  classDef pad fill:none,stroke:none,color:transparent
+```
 
 This page is in two parts: what the module does, and an operator's guide.
 
+```mermaid
+flowchart LR
+  S["submission<br/>(BEEF, x-topics)"] --> A["tm_bstore_&lt;bucket&gt;<br/>admit or raise"]
+  A -->|admitted| I["ls_bstore index<br/>tokens, maps, entries, ads"]
+  A -->|refused| X["nothing stored;<br/>decided afresh next time"]
+  I --> Q["/lookup<br/>free classes with proofs"]
+  I --> P["module route<br/>priced classes over BRC-104"]
+  I --> T["retention<br/>floors, hourly"]
+```
+
 ## Build and deploy
+
+*Build the one-file module from the TypeScript source.*
 
 ```console
 $ (cd host && npm ci)   # once
@@ -25,7 +62,10 @@ $ make module NODE=/path/to/node24   # writes host/bundle/bstore-module.js
 
 Copy the file into a directory beside the host's `node_modules` (for
 example `<host>/modules/bstore/bstore-module.js`) and name it by absolute
-path:
+path.
+
+*The least a host needs: the topic, the module, the bucket, a state
+directory, a header source, and the chain it serves.*
 
 ```sh
 OVERLAY_TOPICS=tm_bstore_example_photos_hmqzvtkwrx
@@ -82,15 +122,20 @@ needs `BSTORE_PAYEE_KEY`. Any mistake stops the host before its port opens.
 
 `tm_bstore_<bucket>` runs the codec's transaction rules (spec section 12.1)
 on the submission's bytes and the host's headers, and on nothing else:
-never another topic, another record, or anything the topic holds. It
-admits entry, outcome and front carriers, bucket tokens, advertisements and
-hold outputs (mined, at most 1,024 a transaction) and output 0 of sweeps. A
-piece is refused (`piece`), and so is a transaction that only spends held
-outputs (`not-bstore`). Every refusal is raised, so the engine stores
-nothing for it and the same txid offered again is decided again: a copy in
-a worse BEEF cannot suppress the genuine object, and a token refused while
-the host's headers lagged is admitted once they catch up. Every input that
-spends an output the topic holds is retained.
+never another topic, another record, or anything the topic holds.
+
+| It admits | It refuses |
+| --- | --- |
+| entry, outcome and front carriers | a piece (`piece`) |
+| bucket tokens | a transaction that only spends held outputs (`not-bstore`) |
+| advertisements and hold outputs, mined, at most 1,024 a transaction | anything over its BEEF bound or ceiling (`beef`) |
+| output 0 of a sweep | |
+
+Every refusal is raised, so the engine stores nothing for it and the same
+txid offered again is decided again: a copy in a worse BEEF cannot suppress
+the genuine object, and a token refused while the host's headers lagged is
+admitted once they catch up. Every input that spends an output the topic
+holds is retained.
 
 `tm_bstoreblob_<bucket>` is mounted only where `OVERLAY_TOPICS` names it,
 and refuses every submission (`piece`): a host holds no bytes, and the blob
@@ -436,6 +481,12 @@ bucket, owner, id, `seq`, txid and reason; a served map that is incomplete
 
 ### Setting up a host for a bucket
 
+*Check the module mounted as configured.*
+
+```console
+$ grep 'bstore module mounted' /var/log/overlay-host.log
+```
+
 1. Learn the bucket identifier (`<name>_<suffix>`), and, for a bucket you
    serve, the owner's key and the bucket id from its first token.
 2. Add `tm_bstore_<bucket>` to `OVERLAY_TOPICS`, the bundle to
@@ -481,10 +532,16 @@ would be lost, and a retracted carrier replayed could be answered.
 
 ### Settling payments
 
-Settle `payments.jsonl` promptly with `bstore payee settle
-<payments.jsonl>...` from the home whose identity is `BSTORE_PAYEE_KEY`
-(`bstore payee key -out FILE` writes that line); it records each payment
-settled in the home's `payee.json`. See [the host module](https://github.com/lightwebinc/bcommon/blob/main/docs/host-module.md#settling).
+*Take the host's paid questions into the payee's wallet, from the home
+whose identity is `BSTORE_PAYEE_KEY`.*
+
+```console
+$ bstore payee key -out payee.key
+$ bstore payee settle /var/lib/bstore/payments.jsonl
+```
+
+`settle` records each payment settled in the home's `payee.json`. See
+[the host module](https://github.com/lightwebinc/bcommon/blob/main/docs/host-module.md#settling).
 
 ## What the module does not do
 
@@ -508,6 +565,12 @@ reader's or a provider's checks (spec section 15); the host neither checks
 nor filters them.
 
 ## Tests
+
+*Run the module's tests on the compiled tree and on the bundle.*
+
+```console
+$ make module-test NODE=/path/to/node24
+```
 
 `make module-test` (and `make test`) runs the module's tests on the
 compiled tree and on the bundle: every transaction vector through the topic

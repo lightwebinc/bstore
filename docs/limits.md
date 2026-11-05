@@ -1,13 +1,15 @@
 # Limits
 
 What an object may be, what a put, a race, a challenge and a renewal cost,
-how fast the pieces move, and what bstore does not do. The record bounds
-every reader accepts ([spec.md](spec.md) section 19.1) are the contract's
-and sit above everything here. The rest is policy: defaults and caps of the
-command line ([usage.md](usage.md)), the provider
+how fast the pieces move, and what bstore does not do.
+
+The record bounds every reader accepts ([spec.md](spec.md) section 19.1)
+are the contract's and sit above everything here. The rest is policy:
+defaults and caps of the command line ([usage.md](usage.md)), the provider
 ([provider.md](provider.md)), the S3 gateway ([s3.md](s3.md)) and the host
 module ([host.md](host.md)), none of them a wire format or a frozen bound
 ([frozen.md](frozen.md)); a later version may change any of them.
+Throughput and latency at scale are in [benchmarks.md](benchmarks.md).
 
 Each number below is one of three kinds, said in its row:
 
@@ -51,6 +53,38 @@ spending one mined funding output.
 | A 100 MiB `PutObject` through the gateway | 7.9 s from the first byte to the `200`, with no block wait (hold outputs and funding trees minted ahead; staging hashed on several cores) | measured (v0.5.0; 9.8 s on v0.3.0) |
 | Staging 100 MiB (closure, proof root, store writes) | 0.6 to 0.8 s locally, was 2.9 to 3.3 s on one core | measured (v0.5.0) |
 | A provider's closure check once the entry arrives, 100 MiB | 0.05 to 0.08 s, the closure walked as the pieces arrived (about 1.7 s spread over the piece requests); 2.6 to 2.9 s when every piece is read back, as after a restart | measured (v0.8.0) |
+
+## On chain and off chain
+
+An object's bytes ride carriers, which are never mined; what is mined is
+the proof of the object: one funding output per piece and one for the
+entry, the hold output's transaction and the settlement. So the bytes mined
+for a put are a few hundred bytes to a few kilobytes whatever its size, and
+the ratio between the object and what the chain carries for it grows with
+the object, up to about 80,000 to 1 (one 52-byte funding output per 4 MiB
+blob). The link between the two flows holds either way: a carrier spends a
+mined output only its writer can spend, and the entry's commitment, its
+carrier's txid, is what the bucket's mined token names (spec sections 3.4,
+13.2 and 13.4; [Paper 011, the data carrier](https://1bsv.net/papers/data-carrier.pdf)).
+
+![Bytes mined per object against its size: the object mined as data grows with the object; the object carried, its proof mined, stays between 0.8 KB and 14 KB from 4 KiB to 1 GiB](figures/on-chain-off-chain.svg)
+
+| Object | Pieces | Mined to carry it | Mined as data | Ratio | Kind |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 4 KiB | 2 | 804 bytes | 4.3 KB | 5 to 1 | contract arithmetic |
+| 1 MiB | 2 | 804 bytes | 1.05 MB | 1,300 to 1 | contract arithmetic |
+| 100 MiB | 26 | 2.1 KB | 105 MB | 51,000 to 1 | contract arithmetic; 1.4 KB of funding measured |
+| 1 GiB | 257 | 14.1 KB | 1.07 GB | 76,000 to 1 | contract arithmetic; 12.9 KB of funding measured, and 1,727 satoshis on chain against 107,374,183 to mine the bytes at 100 satoshis per 1,000: 62,000 to 1 in fees, the floors of the small transactions counted |
+| 1 TiB | 263,173 | 13.7 MB | 1.1 TB | 80,000 to 1 | contract arithmetic |
+
+The arithmetic: 52 mined bytes per funding output (measured above), one per
+piece and one for the entry, plus the hold output's transaction (241
+bytes) and a three-payee settlement (407 bytes); "mined as data" is the
+object in one output plus a transaction's 200 bytes. More objects cost
+more proofs, not more bytes per byte stored; the proof is a real share of
+the object only below about 1 MiB, which is part of why small objects cost
+more here than at S3 (known limit below). The figure is drawn by the
+pattern's `figs.py` in the 1bsv-ops patterns tooling from these formulas.
 
 ## The hold race and the bounty
 
@@ -288,9 +322,11 @@ not do, stated so that nobody finds it by accident.
     incumbent server's published HTTP descriptions, not against the
     incumbent server itself, whose wallet storage, chain services and
     advertisement broadcast reach only public networks.
-14. **The images are not published yet.** The command, provider, host and
-    local chain images are built from a checkout (`make docker-build`,
-    `make docker-build-host`) until the repositories are public.
+14. **Images are published per release.** The command, provider, host and
+    local chain images are published by a manual workflow once a release
+    is tagged ([configuration.md](configuration.md#container-images)); in
+    between, build them from a checkout (`make docker-build`, `make
+    docker-build-host`).
 15. **The fees were measured at the older rate.** The sizes here were
     measured at 1 satoshi a byte, ten times the 100 satoshis per 1000
     bytes mainnet miners take. The default is now the network's rate,

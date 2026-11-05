@@ -5,6 +5,14 @@ TypeScript, and both are held to one set of golden vectors that the Go codec
 generates. This page says where each piece lives, how the two are kept equal,
 and the readings the codec takes where [spec.md](spec.md) leaves a case open.
 
+```mermaid
+flowchart LR
+  G["Go codec<br/>storerec"] -->|generates| V["golden vectors<br/>testdata/vectors"]
+  V -->|read back, byte for byte| T["TypeScript twin<br/>host/src"]
+  V -->|checked on every run| G
+  O["oracle<br/>brute force over 38 million pages"] -.->|agrees with| G
+```
+
 ## Layout
 
 | Path | What it is |
@@ -29,6 +37,8 @@ What the codec takes from elsewhere:
 
 ## Building and checking
 
+*Check both codecs against the vectors, the oracle and each other.*
+
 ```sh
 cd host && npm ci && cd ..
 make verify NODE=/path/to/node24
@@ -42,6 +52,24 @@ change to the contract's goldens. `make fuzz` runs each decoder and the
 advertisement check under the Go fuzzer.
 
 ## How the two codecs are kept equal
+
+One contract, two codecs, one set of goldens:
+
+```mermaid
+flowchart LR
+  GO["storerec<br/>the Go codec"] --> GEN["cmd/vectors<br/>every check it makes"]
+  GEN --> VEC[("testdata/vectors<br/>golden JSON")]
+  GEN -.->|"make verify: regenerated<br/>in memory, byte compare"| VEC
+  VEC --> TS["host/src<br/>the TypeScript twin"]
+  TS --> EQ["same bytes, same values,<br/>same refusal labels"]
+  OR["brute-force oracle<br/>about 38 million pages"] --> PC["page checks"]
+  GO --> PC
+  %% The last node is an invisible spacer in the rightmost rank: the rendered
+  %% viewer places its zoom and pan controls over the bottom-right corner.
+  TS ~~~ pad
+  pad["&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;"]:::pad
+  classDef pad fill:none,stroke:none,color:transparent
+```
 
 - Every record vector decodes in TypeScript to the Go codec's view and
   re-encodes to the Go bytes; every refusal vector is refused for the same
@@ -64,8 +92,9 @@ advertisement check under the Go fuzzer.
 ## Readings the codec takes
 
 These are readings of the spec, pinned by the vectors. Rows C1 to C5 of
-frozen.md section 14 are clarifications the owner signed;
-everything below is the codec's.
+frozen.md section 14 are signed clarifications; everything below is the
+codec's. Each paragraph names what it reads and the label a refusal
+carries.
 
 **Types and rules.** A fixed-length byte string of another length is
 `type` (the table's type is `bytes(32)`); an identity key that is a byte

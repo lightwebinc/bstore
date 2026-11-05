@@ -9,8 +9,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.7
 	github.com/aws/smithy-go v1.28.8
 	github.com/bsv-blockchain/go-sdk v1.7.1
-	github.com/lightwebinc/bcommon v0.33.5
+	github.com/lightwebinc/bcommon v0.33.8
 	github.com/lightwebinc/bcommon/devkit v0.1.0
+	github.com/minio/crc64nvme v1.1.1
 )
 
 require (
@@ -28,10 +29,12 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.39.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.44.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.51.7 // indirect
+	github.com/klauspost/cpuid/v2 v2.2.9 // indirect
 	github.com/mrz1836/go-whatsonchain v1.3.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/net v0.62.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
 )
