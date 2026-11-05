@@ -238,19 +238,16 @@ not do, stated so that nobody finds it by accident.
    again against its own headers, without asking a host, and asks only for
    the rest. A chain longer than the file holds asks hosts again for the
    part past it.
-8. **A retry is the same entry only while it is recent and the key's
-   newest.** A put whose entry was not taken in time answers `503
-   SlowDown` and the entry stays in the outbox, to be delivered. The same
-   write sent again (same identity, key, content, content type, ETag and
-   metadata) within an hour, while that entry is still the key's newest
-   pending one at the gateway, is answered `200` from it, and no second
-   entry is made. Only an entry answered `503` is reused: a write answered
-   `200` and sent again is a new write. A retry after another write to
-   the key at this gateway, after the hour, after a gateway restart, or at
-   another gateway makes a second entry for the same content; the later
-   one decides the key, and the owner's anchor consumes the earlier. A
-   retry answered from its entry does not make it newer than a write to
-   the key made at another gateway in between.
+8. **A retry is the same entry only while the first is still publishing.**
+   A put answers `200` once its carriers are in the outbox, whether or not
+   a target has taken them yet, so a write answered `200` and sent again
+   is a new write. The same write (same identity, key, content, content
+   type, ETag and metadata) sent again while the first is still being
+   committed at this gateway waits for it and is answered from its entry,
+   and no second entry is made. A retry after that, after a gateway
+   restart, or at another gateway makes a second entry for the same
+   content; the later one decides the key, and the owner's anchor consumes
+   the earlier.
 9. **A provider that stays down stops the gateway's puts at a bound.**
    Every piece a target has not taken is kept and sent again, the same
    bytes, for a week, pinned in the local store while it is owed. Past

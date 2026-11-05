@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"slices"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/bsv-blockchain/go-sdk/chainhash"
@@ -66,8 +65,14 @@ type Receipt struct {
 	Txid string
 	// Sent is whether the entry counts as sent (spec section 14): the
 	// facade took it, or a quorum of the hosts. What a target did not take
-	// is sent again from the outbox either way.
+	// is sent again from the outbox either way. A put's entry is sent in
+	// the background: Sent is valid once Delivered is closed.
 	Sent bool
+	// Delivered is closed once the first send of the entry and, for a put,
+	// of every piece carrier has been answered; the outbox keeps sending
+	// what was not taken.
+	Delivered <-chan struct{}
+	delivered chan struct{}
 	// Pieces is how many piece carriers were minted.
 	Pieces int
 	// Uploads are the providers' answers when the closure went by upload
@@ -80,13 +85,35 @@ type Receipt struct {
 // ErrKilled is a write after the kill switch swept this identity's trees.
 var ErrKilled = errors.New("publish: the kill switch swept this identity's trees; it publishes nothing more")
 
-// ErrNotSent is a put whose entry no facade or host quorum took while the
-// request waited; the outbox keeps sending it.
+// ErrNotSent is an entry no facade or host quorum took on its first send;
+// the outbox keeps sending it.
 var ErrNotSent = errors.New("publish: the entry was minted but no facade or host quorum took it yet")
+
+// Wait returns once the receipt's first send is answered: nil when the
+// entry counts as sent, ErrNotSent when no facade or host quorum took it
+// yet, or ctx's error.
+func (r *Receipt) Wait(ctx context.Context) error {
+	select {
+	case <-r.Delivered:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if !r.Sent {
+		return ErrNotSent
+	}
+	return nil
+}
 
 // Put publishes obj under f: a hold output first when b asks for one, then
 // the closure's pieces on the bucket's blob topic (unless obj.Closure is
-// nil), then a put entry. It returns once the entry is sent.
+// nil), then a put entry. It returns once the put is committed: the hold
+// taken, every piece carrier and the entry minted on funding outputs
+// recorded used and written to the outbox, synced, and the entry logged
+// with its race. The sends run in the background, the pieces first and
+// the entry after them, PieceWorkers at a time, and what a target did not
+// take is sent again from the outbox, after a restart too; Wait reports
+// the first send. A closure that goes by upload session is uploaded before
+// Put returns, as the session answers for it.
 func (p *Publisher) Put(ctx context.Context, f Fields, obj Object, b *Bounty) (*Receipt, error) {
 	e := &storerec.Entry{Bucket: f.Bucket, ID: f.ID, Writer: p.Identity(), Key: f.Key, Kind: storerec.KindPut,
 		Created: uint64(f.Created.UnixMilli()), Size: obj.Size, Root: obj.Root, ContentHash: obj.ContentHash,
@@ -141,6 +168,7 @@ func (p *Publisher) Put(ctx context.Context, f Fields, obj Object, b *Bounty) (*
 	}
 	n := 0
 	var ups []UploadResult
+	var pb *pieceBatch
 	if obj.Closure != nil && obj.Size > 0 && p.cfg.Delivery.uploading() {
 		retention := uint64(7 * 24 * 3600)
 		if b != nil {
@@ -161,18 +189,60 @@ func (p *Publisher) Put(ctx context.Context, f Fields, obj Object, b *Bounty) (*
 			return nil, fmt.Errorf("pieces: no provider took the closure by upload session: %w", why)
 		}
 	} else if obj.Closure != nil {
-		if n, err = p.publishPieces(ctx, f.Bucket, obj.Root, obj.Closure); err != nil {
+		if pb, err = p.mintPieces(ctx, f.Bucket, obj.Root, obj.Closure); err != nil {
 			return nil, fmt.Errorf("pieces: %w", err)
 		}
+		n = len(pb.items)
 	}
-	r, err := p.publishEntry(ctx, e, rec, hold)
-	minted = r != nil
-	if r != nil {
-		r.Pieces = n
-		r.Uploads = ups
-		r.Hold = hold
+	r, it, beef, err := p.mintEntry(ctx, e, rec, hold)
+	if err != nil {
+		if pb != nil {
+			// No entry names the carriers: they leave the outbox, and a
+			// retry of the put mints its own.
+			pb.b.abandon()
+			pb.b.close()
+		}
+		return nil, err
 	}
-	return r, err
+	minted = true
+	r.Pieces = n
+	r.Uploads = ups
+	r.Hold = hold
+	p.senders.Add(1)
+	go p.deliver(pb, r, it, beef)
+	return r, nil
+}
+
+// deliver is a put's background send: every piece carrier, PieceWorkers
+// at a time, then the entry. A piece no target took stays in the outbox
+// and is sent again later; the entry goes after the first pass over the
+// pieces either way (a provider takes them in any order).
+func (p *Publisher) deliver(pb *pieceBatch, r *Receipt, it *outItem, beef []byte) {
+	defer p.senders.Done()
+	defer close(r.delivered)
+	ctx := p.run
+	if pb != nil {
+		p.sendMinted(ctx, pb)
+		pb.b.close()
+	}
+	r.Sent = p.cfg.Delivery.sent(p.outbox.send(ctx, it, beef))
+	if !r.Sent {
+		p.cfg.Logf("entry %s: %v", short(r.Txid), ErrNotSent)
+	}
+}
+
+// waitSenders waits up to wait for the puts' background sends to finish;
+// what is left stays in the outbox for the next start.
+func (p *Publisher) waitSenders(wait time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		p.senders.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(wait):
+	}
 }
 
 // noteBucket records a bucket this identity publishes carriers in.
@@ -206,21 +276,26 @@ func (p *Publisher) Delete(ctx context.Context, bucket string, id [32]byte, key 
 	return p.publishEntry(ctx, e, rec, nil)
 }
 
-// publishPieces mints one piece carrier per distinct object of the
-// closure and delivers each as it is made, PieceWorkers at a time: memory
-// holds one object and one carrier a worker. The outputs of each tree
-// spent are recorded used before the first carrier on them is signed, and
-// each carrier is written to the outbox, synced, before it is sent. A put
-// spends what the current tree has left before it switches to the next,
-// minted ahead. A piece that reaches no target stops the put: the next one
-// would only add to the backlog, and the carriers the put minted are
-// dropped from the outbox, since no entry names them and the client's
-// retry mints its own.
-func (p *Publisher) publishPieces(ctx context.Context, bucket string, root [32]byte, c Closure) (int, error) {
+// pieceBatch is a put's piece carriers, minted and in the outbox, to send.
+type pieceBatch struct {
+	b     *outBatch
+	items []*outItem
+}
+
+// mintPieces mints one piece carrier per distinct object of the closure,
+// PieceWorkers at a time: memory holds one object and one carrier a
+// worker. The outputs of each tree spent are recorded used before the
+// first carrier on them is signed, and each carrier is written to the
+// outbox, synced, before mintPieces returns; the batch stays the put's
+// (live) until its sends are done. A put spends what the current tree has
+// left before it switches to the next, minted ahead. A mint that fails
+// stops the put, and the carriers it minted are dropped from the outbox,
+// since no entry names them and the client's retry mints its own.
+func (p *Publisher) mintPieces(ctx context.Context, bucket string, root [32]byte, c Closure) (*pieceBatch, error) {
 	objs := c.Objects()
 	targets := p.cfg.Delivery.pieceTargets(bucket)
 	if len(targets) == 0 {
-		return 0, errors.New("no facade and no provider to deliver pieces to")
+		return nil, errors.New("no facade and no provider to deliver pieces to")
 	}
 	// A closure of the local store is kept in the outbox by reference.
 	byRef := false
@@ -229,10 +304,9 @@ func (p *Publisher) publishPieces(ctx context.Context, bucket string, root [32]b
 	}
 	b, err := p.outbox.newBatch()
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	defer b.close()
-	var minted atomic.Int64
+	pb := &pieceBatch{b: b, items: make([]*outItem, len(objs))}
 	done := 0
 	for done < len(objs) {
 		batch := min(len(objs)-done, mint.MaxFundingOutputs)
@@ -242,40 +316,40 @@ func (p *Publisher) publishPieces(ctx context.Context, bucket string, root [32]b
 			batch = min(batch, p.cfg.PieceTree)
 		}
 		tree, vout, err := p.spend(ctx, kindPiece, uint32(batch))
+		if err == nil {
+			err = p.eachPiece(ctx, len(objs[done:done+batch]), func(ctx context.Context, i int) error {
+				it, err := p.mintOne(ctx, bucket, root, c, objs[done+i], tree, vout+uint32(i), targets, b, byRef)
+				pb.items[done+i] = it
+				return err
+			})
+		}
 		if err != nil {
 			b.abandon()
-			return int(minted.Load()), err
-		}
-		if err := p.sendPieces(ctx, bucket, root, c, objs[done:done+batch], tree, vout, targets, b, byRef, &minted); err != nil {
-			b.abandon()
-			return int(minted.Load()), err
+			b.close()
+			return nil, err
 		}
 		done += batch
 	}
-	return int(minted.Load()), nil
+	return pb, nil
 }
 
-// sendPieces mints and sends the carriers of objs on consecutive outputs of
-// tree from vout, PieceWorkers at a time, and returns the first failure
-// after every worker has stopped.
-func (p *Publisher) sendPieces(ctx context.Context, bucket string, root [32]byte, c Closure, objs [][32]byte,
-	tree *transaction.Transaction, vout uint32, targets []Target, b *outBatch, byRef bool, minted *atomic.Int64) error {
+// eachPiece runs f over 0 to n-1, PieceWorkers at a time, and returns the
+// first failure after every worker has stopped. A step under way is run to
+// its end: only new steps stop after a failure.
+func (p *Publisher) eachPiece(ctx context.Context, n int, f func(ctx context.Context, i int) error) error {
 	wctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	jobs := make(chan int)
 	var mu sync.Mutex
 	var first error
-	firstAt := len(objs)
+	firstAt := n
 	var wg sync.WaitGroup
-	for w := 0; w < min(p.cfg.PieceWorkers, len(objs)); w++ {
+	for w := 0; w < min(p.cfg.PieceWorkers, n); w++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for i := range jobs {
-				// A carrier being sent is sent to the end: only new
-				// carriers stop after a failure.
-				err := p.sendPiece(ctx, bucket, root, c, objs[i], tree, vout+uint32(i), targets, b, byRef, minted)
-				if err != nil {
+				if err := f(ctx, i); err != nil {
 					mu.Lock()
 					if i < firstAt {
 						first, firstAt = err, i
@@ -286,7 +360,7 @@ func (p *Publisher) sendPieces(ctx context.Context, bucket string, root [32]byte
 			}
 		}()
 	}
-	for i := range objs {
+	for i := range n {
 		if wctx.Err() != nil {
 			break
 		}
@@ -303,24 +377,23 @@ func (p *Publisher) sendPieces(ctx context.Context, bucket string, root [32]byte
 	return first
 }
 
-// sendPiece mints one piece carrier, records it in the outbox and sends it.
-// Its transaction id is computed once, over the carrier's bytes where they
+// mintOne mints one piece carrier and records it in the outbox. Its
+// transaction id is computed once, over the carrier's bytes where they
 // lie in the BEEF, and kept on the transaction, so the outbox key hashes
 // the 4 MiB carrier no second time.
-func (p *Publisher) sendPiece(ctx context.Context, bucket string, root [32]byte, c Closure, h [32]byte,
-	tree *transaction.Transaction, out uint32, targets []Target, b *outBatch, byRef bool, minted *atomic.Int64) error {
+func (p *Publisher) mintOne(ctx context.Context, bucket string, root [32]byte, c Closure, h [32]byte,
+	tree *transaction.Transaction, out uint32, targets []Target, b *outBatch, byRef bool) (*outItem, error) {
 	d, t0 := p.cfg.Delivery, time.Now()
 	data, err := c.Object(ctx, h)
 	if err != nil {
-		return fmt.Errorf("object %x: %w", h[:6], err)
+		return nil, fmt.Errorf("object %x: %w", h[:6], err)
 	}
 	d.observe(pieceStage("read"), t0)
 	t0 = time.Now()
 	tx, beef, at, err := p.mintPiece(ctx, bucket, root, data, tree, out)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	minted.Add(1)
 	txid := tx.TxID()
 	d.observe(pieceStage("mint"), t0)
 	t0 = time.Now()
@@ -331,18 +404,30 @@ func (p *Publisher) sendPiece(ctx context.Context, bucket string, root [32]byte,
 		it, err = p.outbox.add(txid.String(), "piece", beef, targets)
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	b.track(it.ID)
-	data = nil
 	d.observe(pieceStage("outbox"), t0)
-	t0 = time.Now()
-	ok, refused := p.outbox.sendAll(ctx, it, beef)
-	d.observe(pieceStage("send"), t0)
-	if len(ok)+len(refused) == 0 {
-		return fmt.Errorf("piece %s reached no target", short(it.ID))
-	}
-	return nil
+	return it, nil
+}
+
+// sendMinted sends a put's piece carriers, PieceWorkers at a time, each
+// read back from the outbox (the stored object and the carrier's head and
+// tail). One no target took is logged by the outbox and sent again later.
+func (p *Publisher) sendMinted(ctx context.Context, pb *pieceBatch) {
+	_ = p.eachPiece(ctx, len(pb.items), func(ctx context.Context, i int) error {
+		it := pb.items[i]
+		beef, err := p.outbox.beefOf(it)
+		if err != nil {
+			p.cfg.Logf("piece %s: %v; it cannot be sent", short(it.ID), err)
+			p.outbox.remove(it)
+			return nil
+		}
+		t0 := time.Now()
+		p.outbox.sendAll(ctx, it, beef)
+		p.cfg.Delivery.observe(pieceStage("send"), t0)
+		return nil
+	})
 }
 
 // mintPiece mints the carrier of one object of a closure on output out of
@@ -464,26 +549,29 @@ func pieceBEEF(tx, tree *transaction.Transaction) ([]byte, int, error) {
 // pieceStage names the histogram of one step of a piece carrier.
 func pieceStage(stage string) string { return `bstore_publish_piece_seconds{stage="` + stage + `"}` }
 
-// publishEntry mints the entry carrier on an entry tree output recorded
-// used first, writes it to the outbox, and sends it.
-func (p *Publisher) publishEntry(ctx context.Context, e *storerec.Entry, rec []byte, hold *HoldRecord) (*Receipt, error) {
+// mintEntry mints the entry carrier on an entry tree output recorded used
+// first, marks the hold taken by it, registers its race, logs it and
+// writes it to the outbox, synced. It returns the receipt, the outbox item
+// and the carrier's BEEF to send.
+func (p *Publisher) mintEntry(ctx context.Context, e *storerec.Entry, rec []byte, hold *HoldRecord) (*Receipt, *outItem, []byte, error) {
 	targets := p.cfg.Delivery.recordTargets(e.Bucket, true)
 	if len(targets) == 0 {
-		return nil, errors.New("no facade, host or provider to deliver the entry to")
+		return nil, nil, nil, errors.New("no facade, host or provider to deliver the entry to")
 	}
 	tree, vout, err := p.spend(ctx, kindEntry, 1)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	tx, err := carrier.Mint(ctx, p.wallet, p.wallet.Originator, carrierParams(storerec.EntryDerivation), rec, tree, vout)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	beef, err := tx.AtomicBEEF(false)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
-	r := &Receipt{Entry: e, Record: rec, C: carrier.Commitment(tx), Txid: tx.TxID().String()}
+	done := make(chan struct{})
+	r := &Receipt{Entry: e, Record: rec, C: carrier.Commitment(tx), Txid: tx.TxID().String(), Delivered: done, delivered: done}
 	if hold != nil {
 		p.mu.Lock()
 		for i := range p.st.Holds {
@@ -494,33 +582,32 @@ func (p *Publisher) publishEntry(ctx context.Context, e *storerec.Entry, rec []b
 		err := p.saveLocked()
 		p.mu.Unlock()
 		if err != nil {
-			return nil, err
+			return nil, nil, nil, err
 		}
 		if err := p.registerRace(e, rec, r.Txid, hold); err != nil {
-			return nil, err
+			return nil, nil, nil, err
 		}
 	}
 	if err := p.logEntry(e, rec, r.Txid, beef); err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	it, err := p.outbox.add(r.Txid, "entry", beef, targets)
 	if err != nil {
+		return nil, nil, nil, err
+	}
+	return r, it, beef, nil
+}
+
+// publishEntry is mintEntry and one send, waited for: the entry counts as
+// sent once the facade or a host quorum takes it, and the outbox keeps
+// sending it otherwise (ErrNotSent).
+func (p *Publisher) publishEntry(ctx context.Context, e *storerec.Entry, rec []byte, hold *HoldRecord) (*Receipt, error) {
+	r, it, beef, err := p.mintEntry(ctx, e, rec, hold)
+	if err != nil {
 		return nil, err
 	}
-	// The entry counts as sent once the facade or a host quorum takes it.
-	// A put whose entry is minted is not given up lightly: a client that
-	// retries would mint a second entry, so the targets still owed it are
-	// asked again for a while before the put answers.
-	ok := p.outbox.send(ctx, it, beef)
-	for wait := time.Second; !p.cfg.Delivery.sent(ok) && len(it.Targets) > 0 && wait <= 8*time.Second; wait *= 2 {
-		select {
-		case <-ctx.Done():
-			return r, ErrNotSent
-		case <-time.After(wait):
-		}
-		ok = append(ok, p.outbox.send(ctx, it, beef)...)
-	}
-	r.Sent = p.cfg.Delivery.sent(ok)
+	r.Sent = p.cfg.Delivery.sent(p.outbox.send(ctx, it, beef))
+	close(r.delivered)
 	if !r.Sent {
 		return r, ErrNotSent
 	}

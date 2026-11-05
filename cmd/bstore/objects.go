@@ -26,8 +26,9 @@ from the ones minted ahead, marked taken before the entry is signed); then
 the closure on the bucket's blob topic as piece carriers, or by BRC-167
 upload session to each provider of config.json's uploads when there is no
 facade; then the put entry, to the facade or the hosts and every provider.
-It answers once the facade or a quorum of the hosts took the entry; what a
-target did not take stays in the outbox (bstore sync). A put is pending
+It answers once the facade or a quorum of the hosts took the entry, the
+pieces sent before it; what a target did not take stays in the outbox
+(bstore sync). A put is pending
 until the owner's next token anchors it. With no FILE, or -, the content
 is read from standard input.
 
@@ -94,6 +95,9 @@ func cmdPut(ctx context.Context, g *global, args []string) error {
 	rc, err := h.pub.Put(ctx, publish.Fields{Bucket: ch.Bucket, ID: ch.ID, Key: key, ContentType: ct, ETag: &etag, Meta: pairs},
 		publish.Object{Root: staged.Root, Size: staged.Size, ContentHash: staged.ContentHash, ProofRoot: staged.ProofRoot,
 			Closure: publish.StoreClosure{Store: h.store, Manifest: staged.Manifest, Staged: true}}, b)
+	if err == nil {
+		err = rc.Wait(ctx)
+	}
 	return h.reportPut(rc, err)
 }
 
@@ -490,5 +494,8 @@ func cmdCp(ctx context.Context, g *global, args []string) error {
 		}
 	}
 	rc, err := h.pub.Put(ctx, publish.Fields{Bucket: dst.Bucket, ID: dst.ID, Key: pos[1], ContentType: e.ContentType, ETag: e.ETag, Meta: e.Meta}, obj, b)
+	if err == nil {
+		err = rc.Wait(ctx)
+	}
 	return h.reportPut(rc, err)
 }

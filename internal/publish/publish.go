@@ -176,9 +176,11 @@ type Publisher struct {
 	tip atomic.Uint32
 	// run is the Publisher's own lifetime: what a put starts in the
 	// background (a funding tree minted ahead) outlives the request.
-	run    context.Context
-	stop   context.CancelFunc
-	holdMu sync.Mutex // one hold fill runs at a time
+	run  context.Context
+	stop context.CancelFunc
+	// senders are the puts' background sends (deliver).
+	senders sync.WaitGroup
+	holdMu  sync.Mutex // one hold fill runs at a time
 	// holdMark is where the next takeHold starts looking; under mu.
 	holdMark int
 	kept     *producer.Kept
@@ -399,6 +401,8 @@ func (p *Publisher) Close() {
 	// A split of payment coins started by a call is let reach the leg:
 	// once it has, its outputs are recorded.
 	p.waitFill(30 * time.Second)
+	// The puts' sends are let finish; what is left stays in the outbox.
+	p.waitSenders(30 * time.Second)
 	if p.stop != nil {
 		p.stop()
 	}

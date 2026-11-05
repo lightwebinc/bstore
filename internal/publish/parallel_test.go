@@ -457,9 +457,13 @@ func TestCrashChildPut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = p.Put(ctx, Fields{Bucket: testBucket, ID: sha256.Sum256([]byte("id")), Key: "crash", ContentType: "x/y"},
+	r, err := p.Put(ctx, Fields{Bucket: testBucket, ID: sha256.Sum256([]byte("id")), Key: "crash", ContentType: "x/y"},
 		Object{Root: st.Root, Size: st.Size, ContentHash: st.ContentHash, ProofRoot: st.ProofRoot,
 			Closure: StoreClosure{Store: store, Manifest: st.Manifest, Staged: true}}, nil)
+	if err == nil {
+		// The put answered; its sends run until the kill.
+		err = r.Wait(ctx)
+	}
 	t.Fatalf("the put was not killed: %v", err)
 }
 
@@ -532,6 +536,9 @@ func TestPutKilledMidwayResumes(t *testing.T) {
 	}
 	var owedIDs []string
 	for _, it := range p.Outbox().load() {
+		if it.What == "entry" {
+			continue // minted before the answer, kept whole
+		}
 		if it.Ref == "" || len(it.Head) == 0 {
 			t.Fatalf("carrier %s kept whole, not by reference", short(it.ID))
 		}
