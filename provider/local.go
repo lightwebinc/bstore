@@ -65,7 +65,9 @@ func (p *Provider) TakeLocal(ctx context.Context, lp publish.LocalPiece, verify 
 			Commitment: lp.Commitment, Funding: lp.Funding}
 		known = &lp.Hash
 	}
-	w := p.takePiece(b, pc, known)
+	// The piece is stored before the answer; with the gateway's account its
+	// leaves and the closure walk it moves run after (keepPiece's later).
+	w := p.takePiece(b, pc, known, known != nil)
 	switch {
 	case w == storeFailed:
 		p.metrics.inc("bstore_provider_local_takes_total", "result=error", "mode="+mode)
