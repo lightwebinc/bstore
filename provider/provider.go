@@ -208,11 +208,11 @@ type Provider struct {
 	// one or, for "proof", an arcade that waits for no verdict.
 	adAsks    chan adAsk
 	adSettler publish.Settler
-	ancMu   sync.Mutex
-	ancSent map[string]time.Time
-	adSweep uint32
-	adDir   string
-	adFiles []string
+	ancMu     sync.Mutex
+	ancSent   map[string]time.Time
+	adSweep   uint32
+	adDir     string
+	adFiles   []string
 	// log is the state log; checkpointAt is when the state was last
 	// written whole (journal.go).
 	log          *stateLog
