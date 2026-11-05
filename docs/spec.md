@@ -57,16 +57,65 @@ funding output per carrier and one mined transaction per funding tree, and
 one hold output per bounty; a provider pays one mined advertisement per hold
 and per renewal.
 
-```text
- writer ── pieces (CHIRP closure) ──────────────▶ tm_bstoreblob_<b> ──▶ every subscribed provider
-        ── hold output (mined) ─┐
-        ── entry E(key, root, size, contentHash, proofRoot, hold) ──▶ tm_bstore_<b> ──▶ every host
- owner  ── bucket chain: B_0 ──spend──▶ B_1 ──spend──▶ B_2 ...  (changes: key -> C; mapRoot)
- provider ── validate closure, recompute proofRoot, hold ── advertisement (mined) ──▶ tm_bstore_<b>, tm_uhrp
- writer ── rank by first sight ── challenge each (c = checkC) ── settle hold output by sqrt rank (BRC-29) ──▶ payees (unicast)
- anyone ── /bstore/v1/challenge (402) ──▶ answerer ──▶ c segments + paths to proofRoot, signed
-        ── outcome record (optional) ──▶ tm_bstore_<b>
- reader ── S3 GET ──▶ gateway ──▶ ls_bstore object {key} ──▶ token + E + map path ──▶ blobs from any advertiser ── verify
+On the plane, every publisher submits once and every subscriber of a topic
+receives the same bytes. Providers are both: they take pieces and entries,
+and publish their advertisements.
+
+```mermaid
+flowchart LR
+  subgraph pub["Publishers"]
+    O["owner"]
+    W["writer<br/>or an S3 gateway"]
+    PA["provider"]
+    A["anyone, a buyer"]
+  end
+  subgraph plane["The plane: one bucket's two topics"]
+    REC[["records topic<br/>tm_bstore_#lt;id#gt;"]]
+    BLOB[["blob topic<br/>tm_bstoreblob_#lt;id#gt;"]]
+  end
+  subgraph subs["Subscribers"]
+    H["overlay hosts<br/>index and answer ls_bstore"]
+    P["providers<br/>check, hold, advertise"]
+  end
+  O -->|"bucket tokens B0, B1, B2 ...<br/>mined, each spends the last"| REC
+  W -->|"entry E: key, root, size,<br/>contentHash, proofRoot, hold"| REC
+  W -->|"hold output, mined"| REC
+  W -->|"pieces: the CHIRP closure"| BLOB
+  PA -->|"advertisement, mined<br/>also to tm_uhrp"| REC
+  A -->|"outcome record, optional"| REC
+  REC --> H
+  REC -->|"entries"| P
+  BLOB --> P
+  %% The last node is an invisible spacer in the rightmost rank: the rendered
+  %% viewer places its zoom and pan controls over the bottom-right corner.
+  REC ~~~ pad
+  pad["&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;"]:::pad
+  classDef pad fill:none,stroke:none,color:transparent
+```
+
+Off the plane, everything is unicast HTTP or a mined payment: the race and
+its settlement, paid challenges and renewals, and reads.
+
+```mermaid
+flowchart LR
+  W["writer's client"]
+  A["anyone, a buyer"]
+  R["reader<br/>bstore get, or S3 at a gateway"]
+  F["provider's front<br/>#lt;url#gt;/bstore/v1"]
+  ADV["advertisers' CHIRP routes"]
+  H["overlay hosts<br/>ls_bstore"]
+  M["miners"]
+  W -->|"settlement challenge, c = checkC, free"| F
+  W -->|"settlement, by square-root rank"| M
+  W -->|"BRC-29 remittance per payee"| F
+  A -->|"challenge or renewal, paid on a 402"| F
+  R -->|"lookup: token, entry, map path"| H
+  R -->|"blobs, each held to its hash"| ADV
+  %% The last node is an invisible spacer in the rightmost rank: the rendered
+  %% viewer places its zoom and pan controls over the bottom-right corner.
+  A ~~~ pad
+  pad["&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;"]:::pad
+  classDef pad fill:none,stroke:none,color:transparent
 ```
 
 ## 2. Conventions
@@ -225,6 +274,33 @@ node as `SHA-256(0x01 || left || right)`, and the root of no leaves is
 leaf at index `i` together with paths for its neighbors proves both what a
 key names and that a key is absent (section 11.3).
 
+A bucket is a chain of spends rooted in one chain tree output, and each
+token commits to the whole map. Leaves sort by key bytes, so the paths of
+two adjacent leaves (`b.txt` and `c/d.png` below) also prove that a key
+between them, `b.zip`, is absent.
+
+```mermaid
+flowchart TD
+  CT["chain tree output<br/>locked to derive(owner, chain)"] -->|"spent by"| T0["token seq 0"]
+  CT -.->|"its outpoint names"| ID["bucket id"]
+  T0 -->|"spent by"| T1["token seq 1"]
+  T1 -->|"spent by"| T2["token seq 2, the latest<br/>writers, changes, mapRoot"]
+  T2 -->|"commits to"| MR
+  subgraph map["The map of seq 2: an RFC 6962 tree over leaves sorted by key bytes"]
+    MR(("mapRoot")) --- N0(("node"))
+    MR --- N1(("node"))
+    N0 --- L0["leaf 0<br/>a.jpg, C1"]
+    N0 --- L1["leaf 1<br/>b.txt, C2"]
+    N1 --- L2["leaf 2<br/>c/d.png, C3"]
+    N1 --- L3["leaf 3<br/>e.csv, C4"]
+  end
+  %% The last node is an invisible spacer in the bottom rank: the rendered
+  %% viewer places its zoom and pan controls over the bottom-right corner.
+  N1 ~~~ pad
+  pad["&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;"]:::pad
+  classDef pad fill:none,stroke:none,color:transparent
+```
+
 ### 3.5 Writers
 
 The owner writes entries and anchors them. It may name up to 16 further
@@ -361,6 +437,22 @@ throughout, as CHIRP; the prefixes keep a leaf from ever passing as a node.
 An object of 0 bytes has no segments and its `proofRoot` is `SHA-256` of the
 empty string.
 
+Segments group into one subtree per 4 MiB blob, and the proof root is the
+same construction over the blob subtree roots:
+
+```mermaid
+flowchart TD
+  PR(("proofRoot")) --- S0["blob 0 subtree root"] & S1["blob 1 subtree root"] & SB["blob b subtree root"]
+  S0 --- G0["segment 0<br/>4 KiB"] & G1["segment 1"] & GD["..."] & G1023["segment 1023"]
+  S1 --- G1024["segment 1024"] & GE["... 1,024 segments"]
+  SB --- GL["segments of the last blob"] & GN["segment n - 1<br/>the remainder, unpadded"]
+  %% The last node is an invisible spacer in the bottom rank: the rendered
+  %% viewer places its zoom and pan controls over the bottom-right corner.
+  SB ~~~ pad
+  pad["&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;"]:::pad
+  classDef pad fill:none,stroke:none,color:transparent
+```
+
 A provider recomputes `proofRoot` over the closure it validated before it
 advertises the root. A mismatch with the writer's signed entry is a reason
 to refuse to hold, and is attributable to the writer: anyone holding the
@@ -385,6 +477,32 @@ leaf to root; its length and every direction follow from `i` and `n`
 (RFC 9162 section 2.1.3.2 gives the verification), so neither is sent.
 
 ## 7. Challenges
+
+A challenge from the buyer's side, with the steps of section 7.4:
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant B as buyer
+  participant F as front, the answerer
+  participant U as advertised URL
+  participant H as hosts
+  B->>B: seedHeight and seedHash from its own headers, a fresh 16-byte nonce
+  B->>F: POST /challenge with request Q
+  F-->>B: 402 with the price, unless a settlement challenge
+  B->>F: the request again, with the BRC-105 payment
+  F->>F: idx_k = SHA-256(seedHash, proofRoot, provider, nonce, k) mod m
+  F-->>B: signed response: c samples, each a segment or null, and its siblings
+  B->>B: steps 1 to 3 once: signature, request, count
+  opt a sample answered by reference
+    B->>U: Range GET of the segment, or the whole blob
+    U-->>B: bytes, held to the blob's hash
+  end
+  B->>B: steps 4 to 6 per sample: fetch, segment, path to proofRoot
+  opt publish the outcome
+    B->>H: outcome record O on the records topic
+  end
+```
 
 ### 7.1 The request (magic `stq` `0x01`)
 
@@ -634,6 +752,35 @@ from its advertisement (section 10.1).
 
 ## 9. Holding, the race and settlement
 
+The race from the writer's side (sections 9.3 to 9.6):
+
+```mermaid
+sequenceDiagram
+  participant W as writer's client
+  participant M as miners
+  participant H as hosts
+  participant P as providers
+  W->>M: hold output, minted ahead
+  W->>P: pieces, on the blob topic or by upload session
+  W->>H: entry E naming the hold output
+  H->>P: entry E
+  P->>P: closure, proofRoot, bounty checked (9.3), closure leased
+  P->>M: advertisement
+  P->>H: advertisement, once mined
+  loop every look, until K pass, the window ends or deadline
+    W->>H: ads for root
+    H-->>W: advertisements: first sight, rank, ties by tieKey
+    W->>P: settlement challenge in rank order, c = min(checkC, freeC), free
+    P-->>W: signed response: pass, or skipped and the next moves up
+  end
+  alt at least t passed
+    W->>M: settlement: spends the hold output, rank i paid by weight sqrt(k - i + 1)
+    W->>P: BRC-29 remittance to each payee's settle route
+  else fewer than t
+    W->>M: after deadline: reclaim to the writer
+  end
+```
+
 ### 9.1 Advertisements
 
 A provider advertises a held root with a BRC-26 advertisement exactly as
@@ -747,6 +894,16 @@ weight(i) = sqrt(k - i + 1)                  (IEEE-754 binary64, as BRC-178)
 S         = weight(1) + ... + weight(k)
 payout(i) = floor(R * weight(i) / S)
 payout(1) += R - (payout(1) + ... + payout(k))
+```
+
+For example, three ranks paid from a 30,000 satoshi hold output (the
+measured shares of [limits.md](limits.md)):
+
+```mermaid
+pie showData title Three ranks paid from R = 30,000 satoshis
+  "rank 1, weight sqrt(3)" : 12533
+  "rank 2, weight sqrt(2)" : 10232
+  "rank 3, weight 1" : 7235
 ```
 
 A rank whose payout is 0 gets no output and its remainder goes to rank 1 by
@@ -1298,6 +1455,24 @@ what a topic manager refuses.
 
 Everything here is bcommon's, parameterized by the values in section 13.1.
 
+How the pieces of this section fit: a mined funding tree pays for many
+unmined carriers, one output each, and a sweep of its outputs retracts them.
+
+```mermaid
+flowchart TD
+  FT["funding tree, mined<br/>up to 1,023 equal outputs<br/>each derive(owner, k) OP_CHECKSIG, tag st 02"]
+  FT -->|"output 0, spent by"| K1["carrier K, never mined<br/>one input, one PushDrop output<br/>holding a record E, P, O or F"]
+  FT -->|"output 1, spent by"| K2["carrier K, never mined"]
+  FT -->|"used and unused outputs, spent by"| SW["sweep, mined"]
+  K1 -.->|"C = txid(K)"| C["commitment C<br/>the entry's identity"]
+  SW -.->|"retracts every carrier<br/>its outputs funded"| X["retracted at every host"]
+  %% The last node is an invisible spacer in the bottom rank: the rendered
+  %% viewer places its zoom and pan controls over the bottom-right corner.
+  SW ~~~ pad
+  pad["&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;"]:::pad
+  classDef pad fill:none,stroke:none,color:transparent
+```
+
 ### 13.1 Derivations and tags
 
 | What | Value |
@@ -1449,6 +1624,25 @@ a host does.
 | 8 | `content` | on a whole read, the content does not hash to `contentHash` (a terminal error after streaming, as BRC-167 says) |
 | 9 | `proof-root` | on a whole read, when asked: the recomputed proof root differs from the entry's |
 
+The checks in order, and whose fault each failure is:
+
+```mermaid
+flowchart LR
+  subgraph head["HeadObject: steps 1 to 5, hosts only"]
+    S1["1 bucket<br/>token chain verifies"] --> S2["2 map<br/>key proven into mapRoot"] --> S3["3 entry<br/>carrier, bucket, id, key"] --> S4["4 writer<br/>owner or a token writer"] --> S5["5 kind<br/>a put"]
+  end
+  subgraph get["GetObject adds steps 6 to 9, from advertisers"]
+    S6["6 root<br/>writer's fault"] --> S7["7 closure<br/>advertisers' fault"] --> S8["8 content<br/>writer's fault"] --> S9["9 proof-root, if asked<br/>writer's fault"]
+  end
+  S5 --> S6
+  S9 --> OK(["bytes released"])
+  %% The last node is an invisible spacer in the rightmost rank: the rendered
+  %% viewer places its zoom and pan controls over the bottom-right corner.
+  S9 ~~~ pad
+  pad["&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;"]:::pad
+  classDef pad fill:none,stroke:none,color:transparent
+```
+
 A failure at step 6, 8 or 9 is the writer's: the entry signs a root, a
 content hash and a proof root that the bytes do not match. A failure at
 step 7 is the advertisers': they advertised a closure they did not serve,
@@ -1537,6 +1731,27 @@ host targets a surface that does not move:
 | `ServeURL(root)` | the HTTPS URL the root's advertisement names: the root object's BRC-167 route at whoever serves the bytes |
 | `Advertise(root, until)` | make the closure held through `until` and return the advertisement that says so: for a native backend the front leases the closure and mints its own advertisement; for a bridge backend the incumbent commits or renews through its own routes and the bridge returns the incumbent's advertisement |
 
+Where the seam sits:
+
+```mermaid
+flowchart LR
+  subgraph front["Market front"]
+    direction TB
+    F1["receive from the plane"] --> F2["validate the closure,<br/>recompute proofRoot"] --> F3["decide to hold"] --> F4["advertise"]
+    F4 --> F5["answer challenge, renew, settle"]
+  end
+  IF{{"hold-backend interface, frozen<br/>Put, Has, Get, ServeURL, Advertise"}}
+  front --> IF
+  IF --> NB["native backend<br/>content-addressed store on local disk<br/>front leases and mints its own advertisement"]
+  IF --> BB["bridge backend, bstore-bridge<br/>keeps segment hashes only<br/>answers every sample by reference"]
+  BB -->|"upload sessions, renewal route"| INC["incumbent UHRP host<br/>keeps the bytes, advertises<br/>and is paid under its own key"]
+  %% The last node is an invisible spacer in the rightmost rank: the rendered
+  %% viewer places its zoom and pan controls over the bottom-right corner.
+  NB ~~~ pad
+  pad["&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;"]:::pad
+  classDef pad fill:none,stroke:none,color:transparent
+```
+
 `Advertise` is the seam for renewal pass-through; the other four are as the
 design names them. A native backend is a content-addressed store on local
 disk. A **bridge backend** (its own repository, which speaks the
@@ -1569,7 +1784,7 @@ advertise under another key, or keep a second copy of the bytes.
 | Advertisements as expiring mined tokens, spend = cancel | BRC-26, as the SDK validates it | mirrored onto the bucket's records topic as well as `tm_uhrp` |
 | Objects as CHIRP closures, complete hosts, object routes | BRC-167 Profile 1 | the closure travels on the plane once instead of to each host; the upload-session routes are the unicast fallback |
 | A compact inclusion proof and a sub-blob proof profile | BRC-167's deferred "compact serialized Merkle inclusion-proof format" and "proof-carrying sub-blob profile" | defined over a second tree of 4 KiB segments, because CHIRP's blob hashes are public and flat |
-| Small leaves sampled from a seed pinned to a block height | Sia v2 storage proofs (`V2StorageProof`, a 64-byte leaf, the index from the block at `ProofHeight`); a block hash as "a publicly traceable and uncontrollable random source" (sCrypt) | 4 KiB leaves and `c` samples a challenge, off chain, bought by anyone; a buyer nonce and the provider key in the seed |
+| Small leaves sampled from a seed pinned to a block height | Sia v2 storage proofs (`SiaFoundation/core` `types/types.go`, `V2StorageProof`: a 64-byte leaf, the index from the block at `ProofHeight`); a block hash as a "publicly traceable and uncontrollable randomness source" (Xiaohui Liu, sCrypt, "Pay for Storage using Proof of Retrievability on Bitcoin", 2022) | 4 KiB leaves and `c` samples a challenge, off chain, bought by anyone; a buyer nonce and the provider key in the seed |
 | Merkle trees with `0x00`/`0x01` prefixes | RFC 6962 section 2.1 | the proof tree's leaves are segments; the key map's leaves are `(key, C)` |
 | A race paid by rank with square-root weights, `t` and `K`, BRC-29 outputs bound by prefix and suffix | BRC-178 | applied to writes, which BRC-178 leaves open; the judge is the writer's client; the prefix is the entry's commitment and the suffix the rank |
 | A bounty the payer may reclaim | BRC-178 collection grants | a mined tagged output the writer's key spends, named by the entry |

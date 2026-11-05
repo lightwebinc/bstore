@@ -21,12 +21,35 @@ Third-Party Standards
   BRC-26:  Universal Hash Resolution Protocol
   BRC-29:  Simple Authenticated BSV P2PKH Payment Protocol
   BRC-42:  BSV Key Derivation Scheme (BKDS)
+  BRC-43:  Security Levels, Protocol IDs, Key IDs and Counterparties
+  BRC-48:  Pay to Push Drop
+  BRC-52:  Identity Certificates
+  BRC-60:  Simplifying State Machine Event Chains in Bitcoin
   BRC-62:  Background Evaluation Extended Format (BEEF) Transactions
+  BRC-87:  Standardized Naming Conventions for BRC-22 Topic Managers and BRC-24 Lookup Services
   BRC-103: Peer-to-Peer Mutual Authentication and Certificate Exchange Protocol
   BRC-104: HTTP Transport for BRC-103 Mutual Authentication
   BRC-105: HTTP Service Monetization Framework
   BRC-167: Chunked, Hashed, Interleaved Resolution Protocol (CHIRP)
+  BRC-171: Fixed-Width State in a Covenant's Own Locking Script
   BRC-178: Race-Settled Collection Markets for Overlay Lookups and Message Boxes
+  BRC-180: Overlay Service Discovery at an Internet Domain
+  (the BRC repository: https://github.com/bitcoin-sv/BRCs)
+
+  RFC 6962: Certificate Transparency (the Merkle tree construction of the
+            proof tree and the key map)
+  RFC 8949: Concise Binary Object Representation (the record encoding)
+  The Amazon S3 API and Signature Version 4 (the gateway's interface)
+
+=========================================================================
+Prior work the design follows (docs/spec.md section 18)
+
+  Sia v2 storage proofs: a small leaf proven into a Merkle root, the
+    index taken from the block at a pinned height
+    (SiaFoundation/core, types/types.go, V2StorageProof)
+  "Pay for Storage using Proof of Retrievability on Bitcoin"
+    (Xiaohui Liu, sCrypt, 2022): a block hash as the challenge's
+    "publicly traceable and uncontrollable randomness source"
 
 Third-party software is listed, with its licence text, in
 LICENSE-THIRD-PARTY (Go) and in host/package-lock.json (the host module,

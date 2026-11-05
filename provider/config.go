@@ -209,6 +209,11 @@ type Limits struct {
 	// "network" waits for the network's verdict first, which bounds the
 	// rate at what the network announces (about 150 a second on one node).
 	AdVerdict string `json:"ad_verdict"`
+	// UndecidedPerWriter is the most put entries from one writer kept
+	// waiting for their closures; one past it is refused for room, and a
+	// feeder reads no refusal, so a writer bursting while closures stall
+	// (a host or network pause) loses what arrives over it.
+	UndecidedPerWriter int `json:"undecided_per_writer"`
 	// RenewalsPerRootPerHour bounds paid renewals of one root.
 	RenewalsPerRootPerHour float64 `json:"renewals_per_root_per_hour"`
 	// SubmitsPerAddrPerSec and SubmitBurst bound submissions from one
@@ -338,6 +343,9 @@ func (c *Config) defaults() {
 	}
 	if l.AdVerdict == "" {
 		l.AdVerdict = "proof"
+	}
+	if l.UndecidedPerWriter == 0 {
+		l.UndecidedPerWriter = 4096
 	}
 	if l.ObjectReaders == 0 {
 		l.ObjectReaders = 32
@@ -496,6 +504,9 @@ func (c *Config) Check() error {
 	}
 	if c.Limits.AdVerdict != "proof" && c.Limits.AdVerdict != "network" {
 		return errors.New(`limits.ad_verdict is "proof" or "network"`)
+	}
+	if c.Limits.UndecidedPerWriter < 1 || c.Limits.UndecidedPerWriter > 1<<20 {
+		return errors.New("limits.undecided_per_writer is 1 to 1048576")
 	}
 	if c.TreeCount < 1 || c.TreeCount > 1023 {
 		return errors.New("tree_count is 1 to 1023")

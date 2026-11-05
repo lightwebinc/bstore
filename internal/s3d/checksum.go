@@ -8,12 +8,13 @@ import (
 	"encoding/hex"
 	"hash"
 	"hash/crc32"
-	"hash/crc64"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/minio/crc64nvme"
 )
 
 // The flexible checksums S3 clients send, in a header or a trailer
@@ -21,14 +22,17 @@ import (
 var checksumAlgos = map[string]func() hash.Hash{
 	"crc32":     func() hash.Hash { return crc32.NewIEEE() },
 	"crc32c":    func() hash.Hash { return crc32.New(crc32.MakeTable(crc32.Castagnoli)) },
-	"crc64nvme": func() hash.Hash { return crc64.New(crc64NVME) },
+	"crc64nvme": func() hash.Hash { return crc64nvme.New() },
 	"sha1":      sha1.New,
 	"sha256":    sha256.New,
 }
 
-// crc64NVME is CRC-64/NVME (reflected polynomial 0x9a6c9329ac4bc9b5, as
-// hash/crc64 takes it; initial and final value all ones).
-var crc64NVME = crc64.MakeTable(0x9a6c9329ac4bc9b5)
+// CRC-64/NVME is the AWS CLI's default checksum, so the gateway computes it
+// over nearly every body it takes. hash/crc64 runs a table at about 2.4 GB/s a
+// core; crc64nvme uses carry-less multiplication (PCLMULQDQ on amd64, PMULL
+// on arm64) at about 17 GB/s, the same digest (checksum_test.go holds it to
+// hash/crc64 with the NVMe polynomial). At 1 GB/s of puts the table was 11%
+// of the gateway's CPU.
 
 // bodyHashes are every digest a write checks, computed as the body streams.
 type bodyHashes struct {

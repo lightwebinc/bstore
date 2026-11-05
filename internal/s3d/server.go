@@ -32,6 +32,7 @@ import (
 	"github.com/lightwebinc/bstore/chaincfg"
 	"github.com/lightwebinc/bstore/internal/publish"
 	"github.com/lightwebinc/bstore/internal/reader"
+	"github.com/lightwebinc/bstore/provider"
 	"github.com/lightwebinc/bstore/storerec"
 )
 
@@ -48,13 +49,15 @@ type Options struct {
 
 // Server is one running gateway.
 type Server struct {
-	cfg     *Config
-	opts    Options
-	signer  *signer
-	reader  *reader.Reader
-	fetch   *http.Client
-	store   *publish.Store
-	pubs    map[string]*publish.Publisher
+	cfg    *Config
+	opts   Options
+	signer *signer
+	reader *reader.Reader
+	fetch  *http.Client
+	store  *publish.Store
+	pubs   map[string]*publish.Publisher
+	// local is the provider in this process (Config.LocalProvider).
+	local   *provider.Provider
 	buckets map[string]*bucket // by S3 name
 	order   []string
 	st      *state
@@ -137,6 +140,24 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Server, error) {
 	}
 	d := &publish.Delivery{Facade: cfg.Facade, Hosts: cfg.Hosts, Providers: cfg.Providers, HTTP: hostHTTP, Quorum: cfg.Quorum,
 		Observe: s.metrics.observe}
+	if lp := cfg.LocalProvider; lp != nil {
+		pc, err := provider.LoadConfig(lp.Config)
+		if err != nil {
+			return nil, fmt.Errorf("local provider: %w", err)
+		}
+		if s.local, err = provider.New(ctx, pc, provider.Options{}); err != nil {
+			return nil, fmt.Errorf("local provider: %w", err)
+		}
+		if err := s.local.Start(ctx); err != nil {
+			return nil, fmt.Errorf("local provider: %w", err)
+		}
+		verify := lp.Verifies()
+		d.Local = func(ctx context.Context, piece publish.LocalPiece) error {
+			return s.local.TakeLocal(ctx, piece, verify)
+		}
+		opts.Logf("local provider %s in this process, front %s; pieces it is handed are %s", s.local.Identity(), pc.FrontURL(),
+			map[bool]string{true: "checked", false: "taken on this gateway's account"}[verify])
+	}
 	publish.ObserveCommits(s.metrics.observe)
 	for _, name := range cfg.Identities {
 		p, err := publish.Open(ctx, publish.Config{Dir: cfg.IdentityDir(name), OutboxMax: cfg.OutboxBytes,
@@ -353,6 +374,9 @@ func (s *Server) Close() error {
 	s.wg.Wait()
 	for _, p := range s.pubs {
 		p.Close()
+	}
+	if s.local != nil {
+		_ = s.local.Close()
 	}
 	return nil
 }
