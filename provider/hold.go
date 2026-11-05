@@ -74,13 +74,6 @@ func (p *Provider) enqueue(rootHex string) {
 	}
 }
 
-// verifyJob is one queued root on its way through a verifier to the
-// decision worker; done carries its verification, sent once.
-type verifyJob struct {
-	root string
-	done chan verified
-}
-
 // verified is a root's verification half: the undecided entries it looked
 // at, oldest first, the entries it declined, in the order it declined them,
 // and whether the decisions go on (ok) or the root waits for its next look.
@@ -100,25 +93,24 @@ type pipelineHooks struct {
 	taken, verify, decided func(root string)
 }
 
-// worker looks at the queued roots: limits.verify_workers verifiers check
-// closures at once, each taking the next root in queue order, and one
-// decision worker takes their results in that same order, waiting for a
-// root still being verified before any root queued after it. So decisions,
-// holds and advertisements are made one root at a time in arrival order,
-// as they were with one worker, while the file reads, hashes and syncs of
-// several closures overlap. At most twice verify_workers roots wait for
-// their decisions.
+// worker looks at the queued roots: limits.verify_workers workers each
+// take the next root in queue order and see it through, verified and then
+// decided, so the file reads, hashes and syncs of several closures overlap,
+// and so do the chain reads, signatures and journal syncs of their holds
+// and advertisements. A root is in one worker at a time, and its entries
+// are decided oldest first; roots are independent of each other, so no
+// root waits for a root queued before it (2026-11-05: one decision worker
+// held small entries to about 60 a second, a few network round trips and a
+// sync each, in a row).
 func (p *Provider) worker(ctx context.Context) {
 	n := p.cfg.Limits.VerifyWorkers
-	jobs := make(chan *verifyJob)
-	order := make(chan *verifyJob, 2*n)
+	jobs := make(chan string)
 	var wg sync.WaitGroup
 	defer wg.Wait()
-	wg.Add(n + 1)
+	wg.Add(n)
 	for range n {
-		go func() { defer wg.Done(); p.verifier(ctx, jobs) }()
+		go func() { defer wg.Done(); p.decider(ctx, jobs) }()
 	}
-	go func() { defer wg.Done(); p.decider(ctx, order) }()
 	for {
 		var r string
 		select {
@@ -132,78 +124,52 @@ func (p *Provider) worker(ctx context.Context) {
 		if p.hooks.taken != nil {
 			p.hooks.taken(r)
 		}
-		// In the decision order first, then to a verifier: the decision
-		// worker waits on each job in the order the queue gave them.
-		j := &verifyJob{root: r, done: make(chan verified, 1)}
 		select {
 		case <-ctx.Done():
 			return
-		case order <- j:
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case jobs <- j:
+		case jobs <- r:
 		}
 	}
 }
 
-// verifier runs the verification half of the roots it is handed. done is
-// buffered, so a verifier never waits on the decision worker.
-func (p *Provider) verifier(ctx context.Context, jobs <-chan *verifyJob) {
+// decider verifies and decides the roots it is handed, one at a time.
+func (p *Provider) decider(ctx context.Context, jobs <-chan string) {
 	for {
+		var r string
 		select {
 		case <-ctx.Done():
 			return
-		case j := <-jobs:
-			if p.hooks.verify != nil {
-				p.hooks.verify(j.root)
-			}
-			j.done <- p.verify(ctx, j.root)
+		case r = <-jobs:
 		}
-	}
-}
-
-// decider makes each root's decisions, in queue order.
-func (p *Provider) decider(ctx context.Context, order <-chan *verifyJob) {
-	for {
-		var j *verifyJob
-		select {
-		case <-ctx.Done():
-			return
-		case j = <-order:
+		if p.hooks.verify != nil {
+			p.hooks.verify(r)
 		}
-		var v verified
-		select {
-		case <-ctx.Done():
-			return
-		case v = <-j.done:
-		}
+		v := p.verify(ctx, r)
 		if ctx.Err() != nil {
 			// Not decided: a start, or the next background pass, looks
 			// at it again.
 			return
 		}
-		if err := p.evaluate(ctx, j.root, v); err != nil && ctx.Err() == nil {
-			p.logf("root %s: %v", short(j.root), err)
+		if err := p.evaluate(ctx, r, v); err != nil && ctx.Err() == nil {
+			p.logf("root %s: %v", short(r), err)
 		}
 		if p.hooks.decided != nil {
-			p.hooks.decided(j.root)
+			p.hooks.decided(r)
 		}
 		p.qmu.Lock()
-		again := p.queued[j.root] == rootAgain
-		delete(p.queued, j.root)
+		again := p.queued[r] == rootAgain
+		delete(p.queued, r)
 		p.qmu.Unlock()
 		if again {
-			p.enqueue(j.root)
+			p.enqueue(r)
 		}
 	}
 }
 
 // verify is a root's verification half: its undecided entries, and its
 // closure verified when it is not held verified yet. It decides nothing:
-// the entries it declines are returned for the decision worker to decline,
-// in order. Verifiers run it for different roots at once.
+// the entries it declines are returned for evaluate to decline, in order.
+// Workers run it for different roots at once.
 func (p *Provider) verify(ctx context.Context, rootHex string) verified {
 	p.mu.Lock()
 	var undecided []*EntryRec
@@ -232,9 +198,8 @@ func (p *Provider) verify(ctx context.Context, rootHex string) verified {
 }
 
 // evaluate decides what to do for a root once verified: hold it, advertise
-// it, or wait for more of its closure. It runs on the one decision worker,
-// so one root at a time is decided and every advertisement is minted in
-// arrival order.
+// it, or wait for more of its closure. Workers run it for different roots
+// at once; a root's own entries are decided one at a time, oldest first.
 func (p *Provider) evaluate(ctx context.Context, rootHex string, v verified) error {
 	for _, d := range v.declined {
 		p.decide(d.c, d.why)
@@ -257,41 +222,71 @@ func (p *Provider) evaluate(ctx context.Context, rootHex string, v verified) err
 		return nil
 	}
 	for _, e := range undecided {
-		// A closure held already is the one its root names: an entry that
-		// says otherwise of its size, content or proof root is the writer's
-		// fault, and not taken.
-		p.mu.Lock()
-		h = p.st.Holdings[rootHex]
-		mismatch := h != nil && (e.Size != h.Size || e.ContentHash != h.ContentHash || e.ProofRoot != h.ProofRoot)
-		p.mu.Unlock()
-		if mismatch {
-			p.decide(e.C, "the entry's size, content hash or proof root is not the closure's")
-			continue
+		if err := p.decideEntry(ctx, rootHex, e); err != nil {
+			return err
 		}
-		until, why := p.policy(ctx, e)
-		if why == decisionRetry {
-			// Looked at again on the next pass, for as long as an
-			// unclaimed piece is kept, and then declined.
-			if p.now().UnixNano()-e.At > int64(time.Duration(p.cfg.UnclaimedSeconds)*time.Second) {
-				p.decide(e.C, "the bounty could not be checked in time")
-			}
-			continue
-		}
-		if why != "" {
-			p.decide(e.C, why)
-			p.logf("entry %s for root %s: declined: %s", short(e.C), short(rootHex), why)
-			continue
-		}
-		if err := p.holdFor(ctx, rootHex, e, until); err != nil {
-			if ctx.Err() != nil {
-				return err
-			}
-			p.logf("entry %s for root %s: %v; it is looked at again", short(e.C), short(rootHex), err)
-			continue
-		}
-		p.decide(e.C, decisionHeld)
 	}
 	p.dropUnheld(rootHex)
+	return nil
+}
+
+// decideEntry decides one entry of a verified root, its hold output claimed
+// for the while: a second entry naming the output, in another worker,
+// waits for this decision. It returns an error only when the run is over.
+func (p *Provider) decideEntry(ctx context.Context, rootHex string, e *EntryRec) error {
+	if e.Hold != nil {
+		op := e.Hold.Outpoint()
+		p.mu.Lock()
+		if p.claims == nil {
+			p.claims = map[string]string{}
+		}
+		if c := p.claims[op]; c != "" && c != e.C {
+			p.mu.Unlock()
+			return nil // looked at again on the next pass
+		}
+		p.claims[op] = e.C
+		p.mu.Unlock()
+		defer func() {
+			p.mu.Lock()
+			if p.claims[op] == e.C {
+				delete(p.claims, op)
+			}
+			p.mu.Unlock()
+		}()
+	}
+	// A closure held already is the one its root names: an entry that
+	// says otherwise of its size, content or proof root is the writer's
+	// fault, and not taken.
+	p.mu.Lock()
+	h := p.st.Holdings[rootHex]
+	mismatch := h != nil && (e.Size != h.Size || e.ContentHash != h.ContentHash || e.ProofRoot != h.ProofRoot)
+	p.mu.Unlock()
+	if mismatch {
+		p.decide(e.C, "the entry's size, content hash or proof root is not the closure's")
+		return nil
+	}
+	until, why := p.policy(ctx, e)
+	if why == decisionRetry {
+		// Looked at again on the next pass, for as long as an
+		// unclaimed piece is kept, and then declined.
+		if p.now().UnixNano()-e.At > int64(time.Duration(p.cfg.UnclaimedSeconds)*time.Second) {
+			p.decide(e.C, "the bounty could not be checked in time")
+		}
+		return nil
+	}
+	if why != "" {
+		p.decide(e.C, why)
+		p.logf("entry %s for root %s: declined: %s", short(e.C), short(rootHex), why)
+		return nil
+	}
+	if err := p.holdFor(ctx, rootHex, e, until); err != nil {
+		if ctx.Err() != nil {
+			return err
+		}
+		p.logf("entry %s for root %s: %v; it is looked at again", short(e.C), short(rootHex), err)
+		return nil
+	}
+	p.decide(e.C, decisionHeld)
 	return nil
 }
 
@@ -359,8 +354,8 @@ func (p *Provider) fetch(h [32]byte) ([]byte, error) {
 // and 2, as rows C1 to C4 of frozen.md section 14 have them. A closure not
 // yet complete is waited for (false, nil). A closure that fails for any
 // other reason is the writer's: every entry it fails is declined, through
-// decline, which the decision worker applies. It writes the proof tree's
-// files and the holding. Verifiers run it for different roots at once: what
+// decline, which evaluate applies. It writes the proof tree's
+// files and the holding. Workers run it for different roots at once: what
 // it writes is the root's own directory and, under p.mu, its holding.
 func (p *Provider) verifyRoot(ctx context.Context, rootHex string, entries []*EntryRec, decline func(c, why string)) (bool, error) {
 	root := mustHash(rootHex)

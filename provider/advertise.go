@@ -102,17 +102,22 @@ func (p *Provider) sendAd(ctx context.Context, pa PendingAd, tx *transaction.Tra
 
 // mintAd signs the root's advertisement and journals it. With no new
 // transaction to send it returns the advertisement that already answers, or
-// why there is none.
+// why there is none. Workers mint for different roots at once: only the
+// funding output is taken under mintMu; the signing and the journal's sync
+// run side by side, and a root being minted for is pending to any other
+// caller until its row is journaled.
 func (p *Provider) mintAd(ctx context.Context, root [32]byte, until uint64) (PendingAd, *transaction.Transaction, *backend.Advert, error) {
 	var none PendingAd
-	p.mintMu.Lock()
-	defer p.mintMu.Unlock()
 	rootHex := hex.EncodeToString(root[:])
 	p.mu.Lock()
 	h := p.st.Holdings[rootHex]
 	if h == nil || !h.Verified || h.Damaged {
 		p.mu.Unlock()
 		return none, nil, nil, errors.New("the closure is not held verified")
+	}
+	if p.minting[rootHex] {
+		p.mu.Unlock()
+		return none, nil, nil, errAdPending
 	}
 	for _, pa := range p.st.PendingAds {
 		if pa.Root == rootHex {
@@ -139,7 +144,16 @@ func (p *Provider) mintAd(ctx context.Context, root [32]byte, until uint64) (Pen
 	h.Lease = max(h.Lease, until)
 	p.dirty = true
 	rootLen := h.RootLen
+	if p.minting == nil {
+		p.minting = map[string]bool{}
+	}
+	p.minting[rootHex] = true
 	p.mu.Unlock()
+	defer func() {
+		p.mu.Lock()
+		delete(p.minting, rootHex)
+		p.mu.Unlock()
+	}()
 
 	lock, err := storerec.AdDerivation.Lock(ctx, p.wallet, p.wallet.Originator, adFields(p.signer.Identity.Compressed(), root, p.be.ServeURL(root), until, rootLen), true)
 	if err != nil {
@@ -156,7 +170,17 @@ func (p *Provider) mintAd(ctx context.Context, root [32]byte, until uint64) (Pen
 		}
 		prevIn = &mint.Input{Tx: ptx, Vout: prev.Vout, Unlocker: storerec.AdDerivation.Unlocker(ctx, p.wallet, p.wallet.Originator)}
 	}
+	// The output is marked taken before the next mint asks for one: the
+	// library hands out the state's next (treeState.Current). A mint that
+	// fails past this point leaves its output unused.
+	p.mintMu.Lock()
 	tree, vout, err := p.spendTree(ctx)
+	if err == nil {
+		p.mu.Lock()
+		p.st.markSpent(tree.TxID().String(), vout)
+		p.mu.Unlock()
+	}
+	p.mintMu.Unlock()
 	if err != nil {
 		return none, nil, nil, err
 	}

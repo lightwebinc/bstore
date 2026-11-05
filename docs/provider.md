@@ -113,11 +113,15 @@ walk reaches it.
 
 A closure that fails is the writer's fault: every entry it fails is
 declined, and the reason recorded. One that is not complete yet is waited
-for. Up to `limits.verify_workers` closures (default 4) are verified at
-once, each root taken in the order it was queued; the decisions (the hold
-policy, the bounty's checks, the hold and the advertisement) are still
-made one root at a time in that same order, a root waiting for any root
-queued before it to finish verifying. Bounded memory throughout: one blob
+for. Up to `limits.verify_workers` roots (default 4) are seen through at
+once, each taken in the order it was queued and verified and then decided
+(the hold policy, the bounty's checks, the hold and the advertisement) by
+the one worker that took it; a root's entries are decided oldest first,
+and no root waits for a root queued before it. The chain reads, the
+signature and the journal sync of each hold run side by side across the
+workers, so small entries are held at a rate that grows with the workers
+(2 ms to the node: about 50 a second with one, 200 with 4, 550 with 16)
+and does not fall with the number waiting. Bounded memory throughout: one blob
 at a time for each closure being verified, and the provider keeps
 for each held root, under `roots/<root>/`, the leaf hash of every segment
 (32 bytes per 4 KiB, 1/128 of the data), each blob position's subtree root
@@ -454,7 +458,7 @@ how readers reach the bytes.
 | Sessions | `sessions` kept, `session_ttl_seconds` idle; every request identifier a session was answered for is remembered while the session is, so a signed request sent again is refused (`401`); past the bound on remembered requests the least recently used session is forgotten whole, which makes its requests unverifiable too |
 | Signed answers | `responses_per_sec`, `response_burst` per session, taken before a request is verified |
 | Challenges | `challenges_per_buyer_per_min` with `challenge_burst` per buyer, `free_per_writer_per_min` free ones per writer, `challenge_workers` answered at once |
-| Closures verified | `verify_workers` at once (1 to 64), each reading one 4 MiB blob at a time; at most twice that many roots waiting for their decisions |
+| Roots verified and decided | `verify_workers` at once (1 to 64), each reading one 4 MiB blob at a time while verifying, and each holding and advertising for the root it verified |
 | Renewals | `renewals_per_root_per_hour` per root |
 | Submissions | `submits_per_addr_per_sec`, `submit_burst` per address; `in_flight_per_addr` in flight from one address, uploads included (a connection from one of the `feeders` skips both); 64 bodies read or held at once, a feeder's held until its take is done; 16 processed at once, a slot taken only once the body is read; 8 of a feeder's takes at once, after their answers |
 | Funding outpoints remembered | 200,000, each for seven days, recorded only for a carrier taken |

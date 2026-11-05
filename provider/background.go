@@ -56,6 +56,7 @@ func (p *Provider) background(ctx context.Context) {
 	defer t.Stop()
 	settling := make(chan struct{}, 1)
 	scanning := make(chan struct{}, 1)
+	resuming := make(chan struct{}, 1)
 	for {
 		select {
 		case <-ctx.Done():
@@ -64,7 +65,18 @@ func (p *Provider) background(ctx context.Context) {
 		}
 		_, _ = p.tip(ctx)
 		p.collectChange(ctx)
-		p.waitPending(ctx)
+		// Reads of the node, a few to a pending advertisement: thousands
+		// pending behind a slow block, and the pass does not wait for them.
+		select {
+		case resuming <- struct{}{}:
+			p.wg.Add(1)
+			go func() {
+				defer p.wg.Done()
+				defer func() { <-resuming }()
+				p.waitPending(ctx)
+			}()
+		default:
+		}
 		p.confirmHeld(ctx)
 		p.makeOwed(ctx)
 		p.recheckDamaged(ctx)

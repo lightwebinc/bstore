@@ -72,7 +72,8 @@ func (p *Provider) policy(ctx context.Context, e *EntryRec) (until uint64, why s
 		return unbountied("the retention asked is longer than this provider holds for")
 	}
 	// One hold output settles one entry (spec section 9.2): a second entry
-	// naming it is counted once, so it is not raced for again.
+	// naming it is counted once, so it is not raced for again (and one
+	// being decided on now is claimed, decideEntry).
 	p.mu.Lock()
 	other := p.index.holds[e.Hold.Outpoint()]
 	p.mu.Unlock()
@@ -367,6 +368,10 @@ func (p *Provider) usageLocked() uint64 {
 func (p *Provider) evictLocked(all bool) {
 	now := p.now().Unix()
 	changed := false
+	pending := make(map[string]bool, len(p.st.PendingAds))
+	for _, pa := range p.st.PendingAds {
+		pending[pa.Root] = true
+	}
 	for h, u := range p.st.Unclaimed {
 		if uint64(now-u.At) > p.cfg.UnclaimedSeconds && !p.heldObjectLocked(h) {
 			_ = p.store.Delete(mustHash(h))
@@ -375,7 +380,7 @@ func (p *Provider) evictLocked(all bool) {
 		}
 	}
 	for rootHex, h := range p.st.Holdings {
-		if len(p.index.undecided[rootHex]) > 0 || !p.evictable(h, uint64(now)) {
+		if len(p.index.undecided[rootHex]) > 0 || !p.evictable(h, uint64(now), pending) {
 			continue
 		}
 		if !all && h.Lease != 0 {
@@ -389,19 +394,12 @@ func (p *Provider) evictLocked(all bool) {
 	}
 }
 
-// evictable: no pending advertisement, no advertisement unexpired, and the
-// lease run out. A closure verified for an entry still being decided is
-// not evicted under it either (evictLocked checks that).
-func (p *Provider) evictable(h *Holding, now uint64) bool {
-	if h.Lease >= now || (h.Ad != nil && h.Ad.Expiry >= now) {
-		return false
-	}
-	for _, pa := range p.st.PendingAds {
-		if pa.Root == h.Root {
-			return false
-		}
-	}
-	return true
+// evictable: no pending advertisement (pending has their roots), no
+// advertisement unexpired, and the lease run out. A closure verified for
+// an entry still being decided is not evicted under it either (evictLocked
+// checks that).
+func (p *Provider) evictable(h *Holding, now uint64, pending map[string]bool) bool {
+	return h.Lease < now && (h.Ad == nil || h.Ad.Expiry < now) && !pending[h.Root]
 }
 
 // dropHoldingLocked removes a holding and every object of it no other

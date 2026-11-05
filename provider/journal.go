@@ -17,7 +17,11 @@ import (
 //
 // A row is a file of its own, data/ads/<txid>.json, synced before the send
 // and removed once a save has the same facts in state.json: per
-// advertisement that is one small file against a state written whole.
+// advertisement that is one small file against a state written whole. An
+// entry a writer is answered for is a row of its own too (no
+// advertisement, the one entry: data/ads/entry-<c>.json), so the answer
+// waits for one small sync, not for the whole state (2026-11-05: a save
+// per entry cost every entry what the state had grown to).
 type adRow struct {
 	Ad      PendingAd  `json:"ad"`
 	Holding Holding    `json:"holding"`
@@ -59,6 +63,34 @@ func (p *Provider) journalAd(pa PendingAd) error {
 	return nil
 }
 
+// journalEntry writes entry c's row, for a writer answered that the entry
+// is taken.
+func (p *Provider) journalEntry(c string) error {
+	p.mu.Lock()
+	e := p.st.Entries[c]
+	if e == nil {
+		p.mu.Unlock()
+		return nil
+	}
+	raw, err := json.Marshal(adRow{Entries: []EntryRec{*e}})
+	p.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	file := filepath.Join(p.adDir, "entry-"+c+".json")
+	if err := os.MkdirAll(p.adDir, 0o700); err != nil {
+		return err
+	}
+	if err := writeFileAtomic(file, raw); err != nil {
+		return err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.adFiles = append(p.adFiles, file)
+	p.dirty = true
+	return nil
+}
+
 // replayAds brings back what the state lacks of the rows a stopped run left,
 // and returns their files, for the next save to cover. A row whose
 // advertisement the state already holds, pending or finished, adds nothing.
@@ -93,6 +125,16 @@ func (st *State) replayAds(dir string, logf func(string, ...any)) ([]string, err
 
 func (st *State) replayAd(row *adRow) {
 	pa := row.Ad
+	if pa.Txid == "" {
+		// An entry's row: the entry, if the state lost it.
+		for i := range row.Entries {
+			e := row.Entries[i]
+			if st.Entries[e.C] == nil {
+				st.Entries[e.C] = &e
+			}
+		}
+		return
+	}
 	for i := range st.PendingAds {
 		if st.PendingAds[i].Txid == pa.Txid {
 			return

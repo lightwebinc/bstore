@@ -44,10 +44,21 @@ type rig struct {
 	logs []string
 }
 
-func newRig(t testing.TB) *rig {
+func newRig(t testing.TB) *rig { return newSlowRig(t, 0) }
+
+// newSlowRig is a rig whose chain answers after delay, as a node or header
+// service on the far side of a network does.
+func newSlowRig(t testing.TB, delay time.Duration) *rig {
 	t.Helper()
 	chain := testchain.New(700)
-	srv := httptest.NewServer(chain)
+	var h http.Handler = chain
+	if delay > 0 {
+		h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			time.Sleep(delay)
+			chain.ServeHTTP(w, r)
+		})
+	}
+	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	dir := t.TempDir()
 	cert, key, pool := testCert(t, dir)

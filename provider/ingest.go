@@ -167,9 +167,10 @@ func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := map[string]any{}
-	entries := false
+	var entries []string
+	others := false
 	for _, t := range topics {
-		admitted, why := p.take(r.Context(), t, beef, pieces[t])
+		admitted, entry, why := p.take(r.Context(), t, beef, pieces[t])
 		res := map[string]any{"outputsToAdmit": admitted, "coinsToRetain": []int{}}
 		if why != "" {
 			res["refused"] = why
@@ -178,18 +179,30 @@ func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 			p.metrics.inc("bstore_provider_submits_total", "result=taken")
 		}
 		out[t] = res
-		entries = entries || pieces[t] == nil
-	}
-	if entries {
-		// A writer reads this answer as the entry taken, so it is on disk
-		// first; one the plane delivered goes with the next pass.
-		p.mu.Lock()
-		err := p.save()
-		p.mu.Unlock()
-		if err != nil {
-			auth104.Write(w, auth104.Error(http.StatusInternalServerError, "ERR_INTERNAL", "the entry could not be recorded"))
-			return
+		if entry != "" {
+			entries = append(entries, entry)
+		} else if pieces[t] == nil {
+			others = true
 		}
+	}
+	// A writer reads this answer as the entry taken, so it is on disk
+	// first: a put entry as a journal row of its own, anything else on a
+	// records topic (a delete) with the state; one the plane delivered
+	// goes with the next pass.
+	for _, c := range entries {
+		if err = p.journalEntry(c); err != nil {
+			p.logf("entry %s: journal: %v", short(c), err)
+			break
+		}
+	}
+	if err == nil && others {
+		p.mu.Lock()
+		err = p.save()
+		p.mu.Unlock()
+	}
+	if err != nil {
+		auth104.Write(w, auth104.Error(http.StatusInternalServerError, "ERR_INTERNAL", "the entry could not be recorded"))
+		return
 	}
 	auth104.Write(w, auth104.JSON(http.StatusOK, out))
 }
@@ -205,7 +218,7 @@ func (p *Provider) takeLater(ctx context.Context, topics []string, beef []byte, 
 	p.limits.takes <- struct{}{}
 	defer func() { <-p.limits.takes }()
 	for _, t := range topics {
-		_, why := p.take(ctx, t, beef, pieces[t])
+		_, _, why := p.take(ctx, t, beef, pieces[t])
 		result := "taken"
 		switch {
 		case why == storeFailed:
@@ -265,57 +278,59 @@ func writerAllowed(b *BucketConfig, writer []byte) bool {
 // take applies one submission to one topic; it returns the outputs taken
 // and, when nothing was, why. pc is the piece carrier already checked on a
 // blob topic (handleSubmit checks every piece first), or nil.
-func (p *Provider) take(ctx context.Context, topic string, beef []byte, pc *storerec.PieceCarrier) ([]int, string) {
+func (p *Provider) take(ctx context.Context, topic string, beef []byte, pc *storerec.PieceCarrier) (admitted []int, entry, refused string) {
 	b, blob := p.bucketOf(topic)
 	if b == nil {
-		return []int{}, "not a topic of this provider's"
+		return []int{}, "", "not a topic of this provider's"
 	}
 	if blob {
 		if pc == nil {
 			var err error
 			if pc, err = storerec.CheckPieceCarrier(ctx, beef, b.Bucket, p.hc); err != nil {
-				return []int{}, "piece: " + why(err)
+				return []int{}, "", "piece: " + why(err)
 			}
 		}
 		if !writerAllowed(b, pc.Piece.Writer) {
-			return []int{}, "writer: not a writer this provider takes for the bucket"
+			return []int{}, "", "writer: not a writer this provider takes for the bucket"
 		}
 		if !p.fundingFree(pc.Funding, pc.Commitment) {
-			return []int{}, "funding: a second carrier on one funding output"
+			return []int{}, "", "funding: a second carrier on one funding output"
 		}
 		if why := p.keepPiece(pc.Piece.Piece, hex.EncodeToString(pc.Piece.Root[:]), b.Bucket, hex.EncodeToString(pc.Piece.Writer)); why != "" {
-			return []int{}, why
+			return []int{}, "", why
 		}
 		p.claimFunding(pc.Funding, pc.Commitment)
-		return []int{0}, ""
+		return []int{0}, "", ""
 	}
 	if len(beef) > maxRecordsBEEF {
-		return []int{}, "beef: over the bound"
+		return []int{}, "", "beef: over the bound"
 	}
 	a, err := storerec.Admit(ctx, beef, nil, storerec.Host{Bucket: b.Bucket, Headers: p.hc})
 	if err != nil {
-		return []int{}, why(err)
+		return []int{}, "", why(err)
 	}
 	if a.Kind != storerec.TxEntry || a.Carrier == nil || a.Carrier.Entry == nil {
-		return []int{}, "" // the topic's other objects are a host's, not a provider's
+		return []int{}, "", "" // the topic's other objects are a host's, not a provider's
 	}
 	e := a.Carrier.Entry
 	if e.Kind != storerec.KindPut && e.Kind != storerec.KindDelete {
-		return []int{}, ""
+		return []int{}, "", ""
 	}
 	if !writerAllowed(b, e.Writer) {
-		return []int{}, "writer: not a writer this provider takes for the bucket"
+		return []int{}, "", "writer: not a writer this provider takes for the bucket"
 	}
 	if !p.fundingFree(a.Carrier.Funding, a.Carrier.Commitment) {
-		return []int{}, "funding: a second carrier on one funding output"
+		return []int{}, "", "funding: a second carrier on one funding output"
 	}
+	c := chainhash.Hash(a.Txid).String()
 	if e.Kind == storerec.KindDelete {
 		p.noteDelete(e)
-	} else if why := p.noteEntry(chainhash.Hash(a.Txid).String(), e, writerAllowList(b)); why != "" {
-		return []int{}, why
+		c = ""
+	} else if why := p.noteEntry(c, e, writerAllowList(b)); why != "" {
+		return []int{}, "", why
 	}
 	p.claimFunding(a.Carrier.Funding, a.Carrier.Commitment)
-	return []int{0}, ""
+	return []int{0}, c, ""
 }
 
 // claimFunding records the carrier a funding outpoint paid for: a writer
