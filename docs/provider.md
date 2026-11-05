@@ -183,9 +183,9 @@ key; the next tree is minted before the current one runs out. An
 advertisement pays all of its output in fee and keeps no change, so
 `tree_sats` is the most one costs. A tree is
 recorded with its fee coin before it reaches the settlement leg (bcommon
-`producer`'s `Prepare`), as a journal row of its own under `ads/` (the
-state is never written whole on the hold path: a 250 MB state took a
-second a write, twice a tree, under the mint lock), so a provider that
+`producer`'s `Prepare`), as a row of the state log (the state is never
+written whole on the hold path: a 250 MB state took a second a write,
+twice a tree, under the mint lock), so a provider that
 stops between the leg and the adoption finds the record on its next start
 and settles it (`Recover`):
 the tree adopted when it is on the chain, held behind the current tree,
@@ -493,6 +493,29 @@ identity 02...
 `<data>/wallet`. The identity key is what advertisements, challenge
 responses and payouts are bound to: back the directory up.
 
+### The state on disk
+
+The state is a checkpoint and a log. `state.json` is the whole state,
+written whole, synced and renamed; `state.log.<gen>` is one JSON row a
+line, each a change appended as it is made: an entry taken or decided, a
+piece kept or claimed, a holding verified, held, advertised or dropped, an
+advertisement pending or finished, a funding tree signed or an output of
+it spent, a payment held, a settlement found. A change a writer is
+answered for (an entry, a delete, an upload, a payment) waits for the sync
+that covers its row; the rows share each sync, and the rest are synced
+with the next pass. A start loads the checkpoint and applies every log
+whose generation is the checkpoint's or later, in order; a line a crash
+cut short is passed over. The background writes a checkpoint every five
+minutes when something changed, or sooner once the log passes 256 MB, and
+on a stop: it turns the log over and copies the state in one critical
+section (tens of milliseconds for 25,000 holdings) and encodes and writes
+the copy outside it, then removes the logs the checkpoint covers. Nothing
+on the hold path or the feed writes the state whole (2026-11-05: on a lab
+provider with a 150 MB state the whole-state saves ran back to back and
+everything queued behind them). A data directory from before the log
+loads as it is: the checkpoint, then the rows under `ads/`, which the
+first checkpoint drops.
+
 ### Configure
 
 A JSON file; an unknown key is refused. The required keys, and `mainnet` on
@@ -514,7 +537,7 @@ GorillaPool's public arcade.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `data` | required | the data directory, absolute: `wallet/`, `state.json`, `fundings.log`, `ads/`, `store/`, `roots/`, `payments.jsonl` |
+| `data` | required | the data directory, absolute: `wallet/`, `state.json` and `state.log.<gen>` (below), `fundings.log`, `ads/` (journal rows of versions before the log, read once), `store/`, `roots/`, `payments.jsonl` |
 | `listen` | `127.0.0.1:8095` | the address the routes are served on |
 | `tls_cert`, `tls_key` | none | serve TLS directly; otherwise a TLS proxy in front terminates it |
 | `public_url` | required | the `https` URL the routes are reached at: objects under `<public_url>/chirp/v1/`, the front at `<public_url>/bstore/v1`; no trailing slash, query, fragment or user |
@@ -633,6 +656,9 @@ the proxy's address to every per-address budget. `/healthz` answers `ok`.
 `/metrics` (Prometheus text) is served on `metrics_listen` only: `bstore_provider_handshake_total`,
 `bstore_provider_request_total`, `bstore_provider_session_evicted_total`,
 `bstore_provider_state_saves_total`, `bstore_provider_state_save_seconds`,
+`bstore_provider_state_save_seconds_total`, `bstore_provider_state_copy_seconds_total`
+(of the saves, the copy taken under the state's lock), `bstore_provider_state_log_bytes`,
+`bstore_provider_mint_lock_total`, `bstore_provider_mint_lock_seconds_total`,
 `bstore_provider_submits_total`, `bstore_provider_challenges_total`,
 `bstore_provider_payments_total{decision,reason}` (`requested`, `fast`,
 `hold` or `refuse`, with the acceptance reason),

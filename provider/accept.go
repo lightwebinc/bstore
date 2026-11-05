@@ -218,7 +218,11 @@ func (p *Provider) hold(txid, class string) error {
 		p.st.Held = map[string]HeldRec{}
 	}
 	p.st.Held[txid] = HeldRec{Class: class, At: p.now().Unix()}
-	return p.save()
+	seq := p.record(&logRow{Held: map[string]HeldRec{txid: p.st.Held[txid]}})
+	p.mu.Unlock()
+	err := p.wait(seq)
+	p.mu.Lock()
+	return err
 }
 
 // takeHeld ends a hold, once: the payment mined and buys its answer. Two
@@ -230,7 +234,10 @@ func (p *Provider) takeHeld(txid string) bool {
 		return false
 	}
 	delete(p.st.Held, txid)
-	_ = p.save()
+	seq := p.record(&logRow{Unheld: []string{txid}})
+	p.mu.Unlock()
+	_ = p.wait(seq)
+	p.mu.Lock()
 	return true
 }
 
@@ -262,7 +269,7 @@ func (p *Provider) confirmHeld(ctx context.Context) {
 	for txid, h := range p.st.Held {
 		if p.st.IsUnsettleable(txid) || p.now().Sub(time.Unix(h.At, 0)) > heldFor {
 			delete(p.st.Held, txid)
-			p.dirty = true
+			p.record(&logRow{Unheld: []string{txid}})
 		}
 	}
 	p.mu.Unlock()
@@ -302,7 +309,7 @@ func (p *Provider) setOwedHeld(o Owed, held bool) {
 			p.st.Owed[i].Held = held
 		}
 	}
-	_ = p.save()
+	p.recordOwedLocked()
 }
 
 // chainHash is a display-order txid as a hash.

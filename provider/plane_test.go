@@ -302,10 +302,7 @@ func TestFeederIsAnsweredBeforeTheTake(t *testing.T) {
 		t.Fatal("the stop did not finish once the take ran")
 	}
 	h := hashOf(pieces[2])
-	st, err := loadState(cfg.Data)
-	if err != nil {
-		t.Fatal(err)
-	}
+	st := loadSaved(t, cfg.Data)
 	if st.Unclaimed[hex.EncodeToString(h[:])] == nil || !p.store.Has(h) {
 		t.Fatal("the state saved at the stop does not name the piece taken after its answer")
 	}

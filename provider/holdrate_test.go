@@ -10,7 +10,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,6 +35,21 @@ type holdRun struct {
 	// (then the pieces), or "mixed" (each put's entry and then its pieces,
 	// puts side by side, as the plane hands them in).
 	order string
+	// lat is how long each submission took to answer.
+	lmu sync.Mutex
+	lat []time.Duration
+}
+
+// latency is the slowest submission and the 99th percentile.
+func (run *holdRun) latency() (slowest, p99 time.Duration) {
+	run.lmu.Lock()
+	defer run.lmu.Unlock()
+	if len(run.lat) == 0 {
+		return 0, 0
+	}
+	s := slices.Clone(run.lat)
+	slices.Sort(s)
+	return s[len(s)-1], s[len(s)*99/100]
 }
 
 // rateTerms are bounty's terms with a deadline the test chain, which mines
@@ -72,7 +89,11 @@ func prepareHoldRun(t *testing.T, r *rig, p *Provider, n int) *holdRun {
 
 func (run *holdRun) submit(t *testing.T, topic string, beef []byte) {
 	t.Helper()
+	at := time.Now()
 	ans, err := run.r.writer.Submit(context.Background(), "https://"+run.p.Addr(), topic, beef)
+	run.lmu.Lock()
+	run.lat = append(run.lat, time.Since(at))
+	run.lmu.Unlock()
 	if err != nil {
 		t.Error(err)
 		return
@@ -285,13 +306,7 @@ func TestEntriesAnsweredSurviveACrash(t *testing.T) {
 	p := r.startWith(cfg, true, Options{Tick: time.Hour})
 	run := prepareHoldRun(t, r, p, 20)
 	run.run(t)
-	st, err := loadState(cfg.Data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.replayAds(p.adDir, func(string, ...any) {}); err != nil {
-		t.Fatal(err)
-	}
+	st := loadSaved(t, cfg.Data)
 	for _, put := range run.puts {
 		if st.Entries[put.C] == nil {
 			t.Fatalf("entry %s answered 200 is not on disk", short(put.C))
@@ -484,7 +499,9 @@ func labShape(p *Provider, holdings, pending int) {
 // pending with long BEEFs (a 250 MB state), funding trees of 16 outputs,
 // the background pass every 5 s. What a hold costs there: the state saves
 // on the path, their size and time, and the mint lock's hold per
-// advertisement.
+// advertisement. With BSTORE_HOLD_CHECKPOINTS set, checkpoints of the
+// whole state run back to back through the run, as the lab's passes did:
+// the feed must answer within milliseconds and the rate must not fall.
 func TestHoldRateLabShape(t *testing.T) {
 	n := envInt("BSTORE_HOLD_N", 300)
 	holdings, pending := envInt("BSTORE_HOLD_HOLDINGS", 25000), envInt("BSTORE_HOLD_PENDING", 1700)
@@ -494,10 +511,33 @@ func TestHoldRateLabShape(t *testing.T) {
 	p := r.startHooked(cfg, true, Options{Tick: 5 * time.Second}, func(p *Provider) { labShape(p, holdings, pending) })
 	run := prepareHoldRun(t, r, p, n)
 	saves0, saveSecs0 := p.metrics.get("bstore_provider_state_saves_total"), p.metrics.get("bstore_provider_state_save_seconds_total")
+	copy0 := p.metrics.get("bstore_provider_state_copy_seconds_total")
+	stop := make(chan struct{})
+	var checkpoints sync.WaitGroup
+	if os.Getenv("BSTORE_HOLD_CHECKPOINTS") != "" {
+		checkpoints.Add(1)
+		go func() {
+			defer checkpoints.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				p.mu.Lock()
+				_ = p.save()
+				p.mu.Unlock()
+			}
+		}()
+	}
 	rate := run.run(t)
+	close(stop)
+	checkpoints.Wait()
 	saves := p.metrics.get("bstore_provider_state_saves_total") - saves0
 	saveSecs := p.metrics.get("bstore_provider_state_save_seconds_total") - saveSecs0
+	copySecs := p.metrics.get("bstore_provider_state_copy_seconds_total") - copy0
 	locks, lockSecs := p.metrics.get("bstore_provider_mint_lock_total"), p.metrics.get("bstore_provider_mint_lock_seconds_total")
+	slowest, p99 := run.latency()
 	// One save of this state, for its size and time.
 	at := time.Now()
 	p.mu.Lock()
@@ -512,8 +552,64 @@ func TestHoldRateLabShape(t *testing.T) {
 	if st != nil {
 		size = st.Size()
 	}
-	t.Logf("during the run %.0f saves, %.2f s in all (%.0f ms each); mint lock held %.1f ms an advertisement over %.0f; one save of this state: %d MB in %v", saves, saveSecs, 1000*saveSecs/max(saves, 1), 1000*lockSecs/max(locks, 1), locks, size>>20, one.Round(time.Millisecond))
+	t.Logf("during the run %.0f saves, %.2f s in all (%.0f ms each, %.0f ms of it copying under p.mu); submissions answered in %v at the 99th percentile, %v at most; mint lock held %.1f ms an advertisement over %.0f; one save of this state: %d MB in %v", saves, saveSecs, 1000*saveSecs/max(saves, 1), 1000*copySecs/max(saves, 1), p99.Round(time.Millisecond), slowest.Round(time.Millisecond), 1000*lockSecs/max(locks, 1), locks, size>>20, one.Round(time.Millisecond))
 	if floor := float64(envInt("BSTORE_HOLD_FLOOR", 100)); rate < floor && !raceDetector {
 		t.Fatalf("%.0f entries held a second, want at least %.0f", rate, floor)
+	}
+}
+
+// What a run leaves in the log brings the holdings back on a start that
+// had no checkpoint: a copy of the data directory taken while the provider
+// runs, as a crash would leave it, loads with every entry held and every
+// holding verified.
+func TestLogBringsBackHoldingsAfterACrash(t *testing.T) {
+	r := newRig(t)
+	cfg := rateConfig(t, r)
+	p := r.startWith(cfg, true, Options{Tick: time.Hour})
+	run := prepareHoldRun(t, r, p, 30)
+	run.run(t)
+	// No checkpoint was written: the log alone has the run.
+	if _, err := os.Stat(filepath.Join(cfg.Data, "state.json")); err == nil {
+		if st := loadSaved(t, cfg.Data); st.LogGen != 0 {
+			t.Fatalf("a checkpoint was written during the run (generation %d)", st.LogGen)
+		}
+	}
+	st := loadSaved(t, cfg.Data)
+	for _, put := range run.puts {
+		e := st.Entries[put.C]
+		if e == nil || e.Decision != decisionHeld {
+			t.Fatalf("entry %s: %+v", short(put.C), e)
+		}
+		h := st.Holdings[hex.EncodeToString(put.Object.Built.RootHash[:])]
+		if h == nil || !h.Verified || !slices.Contains(h.Entries, put.C) {
+			t.Fatalf("holding for %s: %+v", short(put.C), h)
+		}
+		if h.Ad == nil && !slices.ContainsFunc(st.PendingAds, func(pa PendingAd) bool { return pa.Root == h.Root }) {
+			t.Fatalf("root %s: neither advertised nor pending", short(h.Root))
+		}
+	}
+	// A second provider on a copy of the directory, as a restart after a
+	// crash, holds the same.
+	dir := filepath.Join(t.TempDir(), "copy")
+	if out, err := exec.Command("cp", "-r", cfg.Data, dir).CombinedOutput(); err != nil {
+		t.Fatalf("cp: %v: %s", err, out)
+	}
+	cfg2 := r.config(dir)
+	if err := cfg2.Check(); err != nil {
+		t.Fatal(err)
+	}
+	q, err := New(context.Background(), cfg2, Options{Logf: r.logf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.log.close()
+	held := 0
+	for _, put := range run.puts {
+		if e := q.st.Entries[put.C]; e != nil && e.Decision == decisionHeld {
+			held++
+		}
+	}
+	if held != len(run.puts) {
+		t.Fatalf("%d of %d held after the restart", held, len(run.puts))
 	}
 }

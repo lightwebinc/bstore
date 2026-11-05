@@ -154,6 +154,23 @@ func (r *rig) startHooked(cfg *Config, fund bool, opts Options, before func(*Pro
 	return p
 }
 
+// loadSaved is the state as a start would load it: the checkpoint, the
+// journal files before the log, and the log.
+func loadSaved(t testing.TB, dir string) *State {
+	t.Helper()
+	st, err := loadState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.replayAds(filepath.Join(dir, "ads"), func(string, ...any) {}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.replayLogs(dir, func(string, ...any) {}); err != nil {
+		t.Fatal(err)
+	}
+	return st
+}
+
 // eventually waits up to d for f.
 func (r *rig) eventually(what string, d time.Duration, f func() bool) {
 	r.t.Helper()

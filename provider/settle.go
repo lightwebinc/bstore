@@ -153,7 +153,7 @@ func (p *Provider) notePayout(c, txid string, rank int, sats uint64, via string)
 	}
 	p.st.Payouts[c] = &Payout{Settlement: txid, Rank: rank, Satoshis: sats, Via: via, At: p.now().Unix()}
 	// The scan finds it again, if a crash loses this.
-	p.dirty = true
+	p.record(&logRow{Payouts: map[string]*Payout{c: p.st.Payouts[c]}})
 	p.metrics.inc("bstore_provider_payouts_total", "via="+via)
 	p.logf("entry %s: settlement %s pays rank %d, %d satoshis (%s)", short(c), short(txid), rank, sats, via)
 }
@@ -253,7 +253,7 @@ func (p *Provider) scanPayouts(ctx context.Context) {
 				continue
 			}
 			p.st.Payouts[e.C] = &Payout{Settlement: by, Via: "spent, nothing to this provider", At: p.now().Unix()}
-			p.dirty = true
+			p.record(&logRow{Payouts: map[string]*Payout{e.C: p.st.Payouts[e.C]}})
 			p.mu.Unlock()
 			p.logf("entry %s: its hold output was spent by %s (height %d), paying this provider nothing", short(e.C), short(by), height)
 		}
@@ -306,8 +306,9 @@ func (p *Provider) madeGood(e EntryRec, by string, sats uint64) {
 	}
 	p.st.MadeGood[po.Settlement] = by
 	lost := po.Settlement
-	_ = p.save()
+	seq := p.record(&logRow{MadeGood: map[string]string{lost: by}})
 	p.mu.Unlock()
+	_ = p.wait(seq)
 	// Only the flag this loss set is lifted: a flag naming another payment
 	// (a loss the watch found and the book has not recorded yet) stands.
 	if why, flagged := p.acc.Exposure.Flagged(e.Writer); flagged && strings.HasSuffix(why, lost) && !p.stillLost(e.Writer) {

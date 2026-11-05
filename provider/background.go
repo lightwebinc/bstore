@@ -107,10 +107,11 @@ func (p *Provider) background(ctx context.Context) {
 			}
 		}
 		p.fundings.expire(p.now().Add(-fundingMemory).Unix())
-		// The rows journaled so far are in the state this save writes.
+		// A checkpoint on its cadence, or sooner for a log grown large or
+		// files of the journal before the log, which it covers.
 		journaled := p.adFiles
 		p.adFiles = nil
-		if p.dirty || len(journaled) > 0 {
+		if len(journaled) > 0 || p.log.bytes() > checkpointBytes || (p.dirty && p.now().Sub(p.checkpointAt) >= checkpointEvery) {
 			if err := p.save(); err != nil {
 				p.adFiles = append(p.adFiles, journaled...)
 				journaled = nil
@@ -119,7 +120,12 @@ func (p *Provider) background(ctx context.Context) {
 		p.metrics.set("bstore_provider_holdings", float64(len(p.st.Holdings)))
 		p.metrics.set("bstore_provider_store_bytes", float64(p.usageLocked()))
 		p.metrics.set("bstore_provider_sessions", float64(p.auth.Sessions()))
+		p.metrics.set("bstore_provider_state_log_bytes", float64(p.log.bytes()))
 		p.mu.Unlock()
+		// The rows nothing waited for are synced with the pass.
+		if err := p.log.flush(); err != nil {
+			p.logf("state log: %v", err)
+		}
 		dropJournal(journaled)
 		if err := p.flushFundings(); err != nil {
 			p.logf("the funding log: %v", err)

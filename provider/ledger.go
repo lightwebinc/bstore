@@ -228,17 +228,19 @@ func (b lockedBook) IsUnsettleable(txid string) bool {
 
 func (b lockedBook) RecordSettled(txid string) error {
 	b.p.mu.Lock()
-	defer b.p.mu.Unlock()
 	b.p.st.AddSettled(txid)
-	return b.p.save()
+	seq := b.p.record(&logRow{Settled: []string{txid}})
+	b.p.mu.Unlock()
+	return b.p.wait(seq)
 }
 
 func (b lockedBook) RecordUnsettleable(txid, why string) error {
 	b.p.mu.Lock()
-	defer b.p.mu.Unlock()
 	b.p.st.AddUnsettleable(txid, why)
 	b.p.ledger.forget(txid)
-	return b.p.save()
+	seq := b.p.record(&logRow{Unsettleable: []payee.Unsettleable{{Txid: txid, Why: why}}})
+	b.p.mu.Unlock()
+	return b.p.wait(seq)
 }
 
 type logWriter struct{ p *Provider }

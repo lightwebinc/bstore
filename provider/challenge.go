@@ -165,11 +165,9 @@ func (p *Provider) challengeAnswer(ctx context.Context, r *http.Request, body []
 		}
 	}
 	if free {
-		// The reservation stands, saved before the answer leaves: it counts.
-		p.mu.Lock()
-		err := p.save()
-		p.mu.Unlock()
-		if err != nil {
+		// The reservation stands, on disk before the answer leaves: it
+		// counts.
+		if err := p.log.flush(); err != nil {
 			return auth104.Error(http.StatusInternalServerError, "ERR_INTERNAL", "the answer could not be recorded")
 		}
 		outpoint = ""
@@ -356,6 +354,7 @@ func (p *Provider) freeChallenge(ctx context.Context, q *storerec.Request, entry
 		return "", false
 	}
 	p.st.Free[op]++
+	p.record(&logRow{Free: map[string]int{op: p.st.Free[op]}})
 	return op, true
 }
 
@@ -368,6 +367,7 @@ func (p *Provider) unreserveFree(op string) {
 	if p.st.Free[op] == 0 {
 		delete(p.st.Free, op)
 	}
+	p.record(&logRow{Free: map[string]int{op: p.st.Free[op]}})
 }
 
 // answer builds the response body for a request about a root held

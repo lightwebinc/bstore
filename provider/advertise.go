@@ -179,6 +179,7 @@ func (p *Provider) mintAd(ctx context.Context, root [32]byte, until uint64) (Pen
 	if err == nil {
 		p.mu.Lock()
 		p.st.markSpent(tree.TxID().String(), vout)
+		p.record(&logRow{Spent: &spentRow{Tree: tree.TxID().String(), Vout: vout}})
 		p.mu.Unlock()
 	}
 	p.mintMu.Unlock()
@@ -282,14 +283,18 @@ func (p *Provider) finishAd(pa PendingAd, tx *transaction.Transaction, mp *trans
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	h := p.st.Holdings[pa.Root]
+	row := &logRow{AdDone: pa.Txid}
 	if h != nil {
 		h.Ad = rec
 		h.Lease = max(h.Lease, rec.Expiry)
-		p.queueAd(h, rec.Txid, beef, h.Buckets)
+		row.Out = p.queueAd(h, rec.Txid, beef, h.Buckets)
+		c := *h
+		row.Hold = &c
 	}
 	p.st.dropPendingAd(pa.Txid)
-	// Pending on disk until the next pass: a start finishes it again.
-	p.dirty = true
+	// Synced with the next row that waits, or the pass: a start finishes
+	// it again if a crash loses this.
+	p.record(row)
 	p.metrics.inc("bstore_provider_advertisements_total")
 	p.logf("root %s: advertisement %s mined at %d, expiry %d", short(pa.Root), short(rec.Txid), height, rec.Expiry)
 	p.spawn(p.publishOutbox)
@@ -297,9 +302,9 @@ func (p *Provider) finishAd(pa PendingAd, tx *transaction.Transaction, mp *trans
 }
 
 // queueAd puts an advertisement on the outbox for every host and the
-// facade, on the records topic of each bucket, and tm_uhrp when set; the
-// caller holds p.mu.
-func (p *Provider) queueAd(h *Holding, txid string, beef []byte, buckets []string) {
+// facade, on the records topic of each bucket, and tm_uhrp when set, and
+// returns the rows queued; the caller holds p.mu.
+func (p *Provider) queueAd(h *Holding, txid string, beef []byte, buckets []string) []Outgoing {
 	var topics []string
 	for _, b := range buckets {
 		topics = append(topics, storerec.RecordsTopic(b))
@@ -315,14 +320,18 @@ func (p *Provider) queueAd(h *Holding, txid string, beef []byte, buckets []strin
 		targets = append(targets, p.facade.Base)
 	}
 	b := hex.EncodeToString(beef)
+	var queued []Outgoing
 	for _, host := range targets {
 		for _, t := range topics {
 			if slices.ContainsFunc(p.st.Outbox, func(o Outgoing) bool { return o.Host == host && o.Topic == t && o.Txid == txid }) {
 				continue
 			}
-			p.st.Outbox = append(p.st.Outbox, Outgoing{Host: host, Topic: t, Txid: txid, Beef: b})
+			o := Outgoing{Host: host, Topic: t, Txid: txid, Beef: b}
+			p.st.Outbox = append(p.st.Outbox, o)
+			queued = append(queued, o)
 		}
 	}
+	return queued
 }
 
 // publishOutbox submits every queued advertisement that is due, each to
@@ -387,20 +396,26 @@ func (p *Provider) publishDue(ctx context.Context) {
 	wg.Wait()
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	var sent []Outgoing
 	p.st.Outbox = slices.DeleteFunc(p.st.Outbox, func(o Outgoing) bool {
 		err, asked := answers[row{o.Host, o.Topic, o.Txid}]
 		if !asked {
 			return false
 		}
 		if err == nil {
+			sent = append(sent, Outgoing{Host: o.Host, Topic: o.Topic, Txid: o.Txid})
 			return true
 		}
 		if o.Tries >= 20 || errors.Is(err, errNoHost) {
 			p.logf("advertisement %s to %s on %s: giving up: %v", short(o.Txid), o.Host, o.Topic, err)
+			sent = append(sent, Outgoing{Host: o.Host, Topic: o.Topic, Txid: o.Txid})
 			return true
 		}
 		return false
 	})
+	if len(sent) > 0 {
+		p.record(&logRow{OutDone: sent})
+	}
 	for i := range p.st.Outbox {
 		o := &p.st.Outbox[i]
 		if err, asked := answers[row{o.Host, o.Topic, o.Txid}]; asked && err != nil {
@@ -469,8 +484,9 @@ func (p *Provider) resumeAds(ctx context.Context) {
 			p.logf("pending advertisement %s: its funding output was spent by %s; the root is advertised afresh", short(pa.Txid), short(by))
 			p.mu.Lock()
 			p.st.dropPendingAd(pa.Txid)
-			_ = p.save()
+			seq := p.record(&logRow{AdDone: pa.Txid})
 			p.mu.Unlock()
+			_ = p.wait(seq)
 			p.enqueue(pa.Root)
 			continue
 		}
@@ -479,11 +495,15 @@ func (p *Provider) resumeAds(ctx context.Context) {
 				p.logf("pending renewal %s: the advertisement it renews was spent by %s; the root is advertised afresh", short(pa.Txid), short(by))
 				p.mu.Lock()
 				p.st.dropPendingAd(pa.Txid)
+				row := &logRow{AdDone: pa.Txid}
 				if h := p.st.Holdings[pa.Root]; h != nil && h.Ad != nil && h.Ad.Txid == pa.Prev.Txid {
 					h.Ad = nil
+					row.Hold = &Holding{}
+					*row.Hold = *h
 				}
-				_ = p.save()
+				seq := p.record(row)
 				p.mu.Unlock()
+				_ = p.wait(seq)
 				p.enqueue(pa.Root)
 				continue
 			}

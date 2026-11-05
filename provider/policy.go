@@ -269,16 +269,16 @@ func (p *Provider) holdFor(ctx context.Context, rootHex string, e *EntryRec, unt
 	h.Lease = max(h.Lease, until)
 	// A start holds the entry again; advertiseVia makes its lease durable
 	// before it broadcasts anything.
-	p.dirty = true
+	p.record(holdRow(h))
 	ad := h.Ad
 	p.mu.Unlock()
 	if ad != nil && ad.Expiry >= until {
 		if newBucket {
 			if beef, err := aloneBEEF(ad); err == nil {
 				p.mu.Lock()
-				p.queueAd(h, ad.Txid, beef, []string{e.Bucket})
-				_ = p.save()
+				seq := p.record(&logRow{Out: p.queueAd(h, ad.Txid, beef, []string{e.Bucket})})
 				p.mu.Unlock()
+				_ = p.wait(seq)
 				p.spawn(p.publishOutbox)
 			}
 		}
@@ -367,17 +367,20 @@ func (p *Provider) usageLocked() uint64 {
 // With all, holdings past their lease go too even when space is not short.
 func (p *Provider) evictLocked(all bool) {
 	now := p.now().Unix()
-	changed := false
 	pending := make(map[string]bool, len(p.st.PendingAds))
 	for _, pa := range p.st.PendingAds {
 		pending[pa.Root] = true
 	}
+	var gone []string
 	for h, u := range p.st.Unclaimed {
 		if uint64(now-u.At) > p.cfg.UnclaimedSeconds && !p.heldObjectLocked(h) {
 			_ = p.store.Delete(mustHash(h))
 			delete(p.st.Unclaimed, h)
-			changed = true
+			gone = append(gone, h)
 		}
+	}
+	if len(gone) > 0 {
+		p.record(&logRow{Claimed: gone})
 	}
 	for rootHex, h := range p.st.Holdings {
 		if len(p.index.undecided[rootHex]) > 0 || !p.evictable(h, uint64(now), pending) {
@@ -387,10 +390,6 @@ func (p *Provider) evictLocked(all bool) {
 			continue
 		}
 		p.dropHoldingLocked(rootHex)
-		changed = true
-	}
-	if changed {
-		p.dirty = true
 	}
 }
 
@@ -406,10 +405,12 @@ func (p *Provider) evictable(h *Holding, now uint64, pending map[string]bool) bo
 // holding names.
 func (p *Provider) dropHoldingLocked(rootHex string) {
 	objs, _ := p.rootObjects(rootHex)
+	row := &logRow{Dropped: rootHex}
 	if h := p.st.Holdings[rootHex]; h != nil {
 		for _, c := range h.Entries {
 			if e := p.st.Entries[c]; e != nil {
 				p.setDecision(e, "evicted: its advertisement and lease ran out")
+				row.Entries = append(row.Entries, *e)
 			}
 		}
 		if h.Verified {
@@ -417,6 +418,7 @@ func (p *Provider) dropHoldingLocked(rootHex string) {
 		}
 	}
 	delete(p.st.Holdings, rootHex)
+	p.record(row)
 	for _, o := range objs {
 		k := hex.EncodeToString(o[:])
 		if p.st.Unclaimed[k] == nil && !p.heldObjectLocked(k) {
