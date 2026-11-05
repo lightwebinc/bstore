@@ -269,7 +269,7 @@ func (p *Provider) finishAd(pa PendingAd, tx *transaction.Transaction, mp *trans
 	p.dirty = true
 	p.metrics.inc("bstore_provider_advertisements_total")
 	p.logf("root %s: advertisement %s mined at %d, expiry %d", short(pa.Root), short(rec.Txid), height, rec.Expiry)
-	go p.publishOutbox(context.Background())
+	p.spawn(p.publishOutbox)
 	return rec, nil
 }
 

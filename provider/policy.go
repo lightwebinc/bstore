@@ -278,7 +278,7 @@ func (p *Provider) holdFor(ctx context.Context, rootHex string, e *EntryRec, unt
 				p.queueAd(h, ad.Txid, beef, []string{e.Bucket})
 				_ = p.save()
 				p.mu.Unlock()
-				go p.publishOutbox(context.Background())
+				p.spawn(p.publishOutbox)
 			}
 		}
 		return nil

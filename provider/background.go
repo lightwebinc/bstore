@@ -129,7 +129,9 @@ func (p *Provider) background(ctx context.Context) {
 		}
 		select {
 		case settling <- struct{}{}:
+			p.wg.Add(1)
 			go func() {
+				defer p.wg.Done()
 				defer func() { <-settling }()
 				p.settlePayments(ctx)
 			}()
