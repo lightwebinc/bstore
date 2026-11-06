@@ -215,10 +215,24 @@ const busyTries = 10
 // workers than a provider's default in-flight allowance failed a large put
 // on the direct path: every piece "reached no target".
 func (d *Delivery) submitOnce(ctx context.Context, t Target, beef []byte) (time.Duration, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.Base+"/submit", bytes.NewReader(beef))
+	var bodies sync.WaitGroup
+	newBody := func() io.ReadCloser {
+		bodies.Add(1)
+		return &sentBody{Reader: bytes.NewReader(beef), done: bodies.Done}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.Base+"/submit", newBody())
 	if err != nil {
+		bodies.Done()
 		return 0, err
 	}
+	// beef is a pooled buffer its caller reuses once this returns, and the
+	// transport may still be writing it after Do does: a target that
+	// answers before reading the whole body (a 503 or 429 to retry) leaves
+	// the write loop sending. The transport closes every body it is given,
+	// so wait for that.
+	defer bodies.Wait()
+	req.ContentLength = int64(len(beef))
+	req.GetBody = func() (io.ReadCloser, error) { return newBody(), nil }
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.Header.Set("x-topics", t.Topic)
 	hc := d.HTTP
@@ -249,6 +263,20 @@ func (d *Delivery) submitOnce(ctx context.Context, t Target, beef []byte) (time.
 		}
 	}
 	return 0, nil
+}
+
+// sentBody is a request body that reports when the transport is done
+// with it: net/http closes a request's body once, after its last read, and
+// may do so after Do has returned.
+type sentBody struct {
+	*bytes.Reader
+	once sync.Once
+	done func()
+}
+
+func (b *sentBody) Close() error {
+	b.once.Do(b.done)
+	return nil
 }
 
 // Outbox is what an identity minted and has not delivered everywhere: each
