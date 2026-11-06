@@ -276,7 +276,7 @@ func (p *Provider) take(ctx context.Context, topic string, beef []byte, pc *stor
 				return []int{}, "", "piece: " + why(err)
 			}
 		}
-		if why := p.takePiece(b, pc, nil); why != "" {
+		if why := p.takePiece(b, pc, nil, false); why != "" {
 			return []int{}, "", why
 		}
 		return []int{0}, "", ""
@@ -411,15 +411,17 @@ const storeFailed = "store: the piece could not be stored"
 // takePiece takes a checked piece carrier, or one its gateway in this
 // process vouches for (TakeLocal): the writer and the funding output are
 // held to the bucket's rules, and the piece kept. known is the piece's
-// SHA-256 when the caller has it. It returns why nothing was taken.
-func (p *Provider) takePiece(b *BucketConfig, pc *storerec.PieceCarrier, known *[32]byte) string {
+// SHA-256 when the caller has it; later, that the piece's leaves and the
+// closure walk it moves run after the return (keepPiece). It returns why
+// nothing was taken.
+func (p *Provider) takePiece(b *BucketConfig, pc *storerec.PieceCarrier, known *[32]byte, later bool) string {
 	if !writerAllowed(b, pc.Piece.Writer) {
 		return "writer: not a writer this provider takes for the bucket"
 	}
 	if !p.fundingFree(pc.Funding, pc.Commitment) {
 		return "funding: a second carrier on one funding output"
 	}
-	if why := p.keepPiece(pc.Piece.Piece, known, hex.EncodeToString(pc.Piece.Root[:]), b.Bucket, hex.EncodeToString(pc.Piece.Writer)); why != "" {
+	if why := p.keepPiece(pc.Piece.Piece, known, later, hex.EncodeToString(pc.Piece.Root[:]), b.Bucket, hex.EncodeToString(pc.Piece.Writer)); why != "" {
 		return why
 	}
 	p.claimFunding(pc.Funding, pc.Commitment)
@@ -434,14 +436,24 @@ func (p *Provider) takePiece(b *BucketConfig, pc *storerec.PieceCarrier, known *
 // taken over other bytes by the carrier check and are not repeated. known,
 // when set, is the piece's SHA-256 from a caller that computed it (a
 // gateway in this process), and only the leaves are hashed.
-func (p *Provider) keepPiece(data []byte, known *[32]byte, rootHex, bucket, writer string) string {
+//
+// later (with known) stores the piece before it returns and hashes the
+// leaves and moves the closure walk after, on a goroutine the provider's
+// stop waits for: the piece that completes an object wakes the walk over
+// the whole object, its content hash included (4 GiB took 8.7 s on the
+// lab), and a gateway handing pieces over in process (TakeLocal) waited for
+// it. The feeder's path is answered before its take for the same reason.
+func (p *Provider) keepPiece(data []byte, known *[32]byte, later bool, rootHex, bucket, writer string) string {
 	var h [32]byte
 	var leaves []byte
 	var sub [32]byte
-	if known != nil {
+	switch {
+	case known != nil && later:
+		h = *known
+	case known != nil:
 		h = *known
 		leaves, sub = storerec.LeavesOf(data)
-	} else {
+	default:
 		h, leaves, sub = storerec.HashBlob(data)
 	}
 	hh := hex.EncodeToString(h[:])
@@ -471,13 +483,27 @@ func (p *Provider) keepPiece(data []byte, known *[32]byte, rootHex, bucket, writ
 		p.mu.Unlock()
 		stored = true
 	}
-	p.arrived(h, data, leaves, sub, mustHash(rootHex), stored)
-	p.mu.Lock()
-	wanted := len(p.index.undecided[rootHex]) > 0
-	p.mu.Unlock()
-	if wanted && p.complete(mustHash(rootHex)) {
-		p.enqueue(rootHex)
+	after := func() {
+		if leaves == nil {
+			leaves, sub = storerec.LeavesOf(data)
+		}
+		p.arrived(h, data, leaves, sub, mustHash(rootHex), stored)
+		p.mu.Lock()
+		wanted := len(p.index.undecided[rootHex]) > 0
+		p.mu.Unlock()
+		if wanted && p.complete(mustHash(rootHex)) {
+			p.enqueue(rootHex)
+		}
 	}
+	if later && known != nil {
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			after()
+		}()
+		return ""
+	}
+	after()
 	return ""
 }
 

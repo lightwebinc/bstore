@@ -105,14 +105,14 @@ xychart-beta
   title "A 4 GiB put, end to end (seconds)"
   x-axis ["Acknowledged by S3", "Carried to every provider", "Verified by every provider"]
   y-axis "seconds" 0 --> 25
-  bar [3.75, 4.7, 15]
+  bar [3.75, 4.3, 17.5]
 ```
 
 | Measure | Result |
 | --- | --- |
 | A 4 GiB put acknowledged by the S3 gateway | 3.75 s, about 1,145 MB/s |
-| The same put carried over the multicast plane, lossless | 919 MB/s |
-| Every provider verified the object | 15 s after the put |
+| The same put carried over the multicast plane, lossless | 1,002 MB/s |
+| Every provider verified the object | 15 to 18 s after the put |
 | Small puts answered `200` by one gateway | 400 a second |
 | Roots held and advertised by one provider | about 150 a second |
 
@@ -207,7 +207,7 @@ make module NODE=/path/to/node24  # host/bundle/bstore-module.js
 make docker-build                 # the images
 ```
 
-Go 1.27.2 and Node 24. bstore pins go-sdk v1.7.1 and bcommon v0.33.8
+Go 1.27.2 and Node 24. bstore pins go-sdk v1.7.1 and bcommon v0.33.9
 
 ## License
 
