@@ -101,9 +101,9 @@ two providers on commodity hosts. Details and method in
 [docs/benchmarks.md](docs/benchmarks.md).
 
 ```mermaid
-xychart-beta
+xychart-beta horizontal
   title "A 4 GiB put, end to end (seconds)"
-  x-axis ["Acknowledged by S3", "Carried to every provider", "Verified by every provider"]
+  x-axis ["acknowledged", "carried to all", "verified by all"]
   y-axis "seconds" 0 --> 25
   bar [3.75, 4.3, 17.5]
 ```

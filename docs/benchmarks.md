@@ -39,9 +39,9 @@ bstore cp -endpoint https://gateway.example:19002 -ca ca.pem -part 64MiB -conc 1
 _The Go client's put: the body moves on both bond members and the gateway answers once the object is staged and its carriers are in the synced outbox._
 
 ```mermaid
-xychart-beta
-    title "4 GiB put, time to the client's acknowledgment (seconds, lower is better)"
-    x-axis ["before one-pass ingest", "aws CLI", "bstore cp (Go client)"]
+xychart-beta horizontal
+    title "4 GiB put, seconds to the acknowledgment (lower is better)"
+    x-axis ["before one-pass ingest", "aws CLI", "bstore cp"]
     y-axis "seconds" 0 --> 20
     bar [18.5, 5.8, 3.75]
 ```
@@ -64,9 +64,9 @@ A put's 1,024 pieces of 4 MiB leave the facade once, as multicast, and every pro
 subscribes to the bucket receives them. Adding a provider adds no upload.
 
 ```mermaid
-xychart-beta
-    title "Plane carriage, lossless, one group (MB/s, higher is better)"
-    x-axis ["open-source listener", "commercial, one edge host", "listener on its own host", "copies removed", "storage node", "one 10 GbE link"]
+xychart-beta horizontal
+    title "Plane carriage, lossless, MB/s (higher is better)"
+    x-axis ["open-source listener", "commercial listener", "listener on own host", "copies removed", "storage node", "10 GbE link"]
     y-axis "MB/s" 0 --> 1300
     bar [400, 700, 744, 919, 1002, 1237]
 ```
@@ -99,14 +99,14 @@ bstore bench put s3://plane-bucket/small/ -n 24000 -size 7 -conc 8 \
 _The gateway answers 400 a second with every put a 200 and a median of 240 ms on a clean state._
 
 ```mermaid
-xychart-beta
+xychart-beta horizontal
     title "Provider holdings a second, 7-byte objects (higher is better)"
-    x-axis ["as shipped", "no state rewrite on the hold path, 16 decision workers", "512 settlement send slots"]
+    x-axis ["as shipped", "hold path fixed", "512 send slots"]
     y-axis "holdings a second" 0 --> 160
     bar [60, 121, 148]
 ```
 
-_Each bar is the same rig after one thing was taken off the provider's hold path: first the whole-state save it made under its mint lock (a 247 MB file rewritten every 16 advertisements, replaced by an append-only log with checkpoints), then the wait for a settlement send slot._
+_Each bar is the same rig after one thing was taken off the provider's hold path: first the whole-state save it made under its mint lock (a 247 MB file rewritten every 16 advertisements, replaced by an append-only log with checkpoints, with 16 decision workers), then the wait for a settlement send slot (512 slots)._
 
 At 148 a second the rate was bounded by the settlement leg: one advertisement transaction per
 root, and a node announces about 150 transactions a second however many are in flight. bstore
