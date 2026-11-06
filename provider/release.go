@@ -54,7 +54,7 @@ func (p *Provider) noteDelete(e *storerec.Entry) {
 }
 
 // The deletes remembered: the newest per key, and past this many the
-// oldest go. A put that old and still travelling is not expected.
+// oldest go. A put that old and still traveling is not expected.
 const maxDeletes = 100000
 
 func (p *Provider) pruneDeletesLocked() {

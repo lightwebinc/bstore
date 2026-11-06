@@ -83,8 +83,8 @@ bytes) and a three-payee settlement (407 bytes); "mined as data" is the
 object in one output plus a transaction's 200 bytes. More objects cost
 more proofs, not more bytes per byte stored; the proof is a real share of
 the object only below about 1 MiB, which is part of why small objects cost
-more here than at S3 (known limit below). The figure is drawn by the
-pattern's `figs.py` in the 1bsv-ops patterns tooling from these formulas.
+more here than at S3 (known limit below). The figure is drawn from these
+formulas.
 
 ## The hold race and the bounty
 
