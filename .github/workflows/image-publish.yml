@@ -35,6 +35,7 @@ jobs:
       # 'v0.11.0'. Checkout fails the run if that tag does not exist.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           ref: refs/tags/v${{ inputs.tag }}
 
       # The host image's last stage runs a command in the target platform's
