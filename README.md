@@ -30,7 +30,7 @@ set their own price per gigabyte per day. The bytes travel once, over a
 multicast plane, to every provider of the bucket, however many there are.
 bstore promises less and proves more.
 
-> The TypeScript host module under `host/` is frozen: bug fixes only. New behavior goes to its Go counterpart under `module/`, for Go overlay hosts ([docs/host.md](docs/host.md#the-go-module)). The `bstore-host` image runs the TypeScript module.
+> The TypeScript host module under `host/` is frozen: bug fixes only. New behavior goes to its Go twin under `module/`, written to bcommon's `module` contract and mounted by a Go overlay engine ([docs/host.md](docs/host.md#the-go-module)). The `bstore-host` image runs the TypeScript module.
 
 ## Why a market
 
@@ -208,7 +208,8 @@ make module NODE=/path/to/node24  # host/bundle/bstore-module.js
 make docker-build                 # the images
 ```
 
-Go 1.27.2 and Node 24. bstore pins go-sdk v1.7.1 and bcommon v0.33.9
+Go 1.27.2 and Node 24. go-sdk and bcommon are pinned to exact tags in
+`go.mod` and asserted by `make verify`.
 
 ## License
 
