@@ -96,3 +96,26 @@ func TestSubmitFailsWithoutRetryAfter(t *testing.T) {
 		t.Fatalf("%d attempts, want 1", n)
 	}
 }
+
+// A target that answers before reading the body (a 503 to retry) leaves the
+// transport writing it after Do returns; submitOnce must not return until
+// the transport is done, because its caller reuses the buffer (the pooled
+// BEEF of the next piece). Under -race, a write to beef after return races
+// the transport's read when it does not wait.
+func TestSubmitOnceReturnsWithTheBodyReleased(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	d := &Delivery{HTTP: srv.Client()}
+	beef := make([]byte, 32<<20)
+	for range 4 {
+		if wait, err := d.submitOnce(context.Background(), Target{Base: srv.URL, Topic: "t"}, beef); err == nil || wait == 0 {
+			t.Fatalf("a 503 with Retry-After answered %v, %v", wait, err)
+		}
+		for i := 0; i < len(beef); i += 512 {
+			beef[i]++
+		}
+	}
+}
