@@ -181,7 +181,7 @@ hold   7a....0, 20000 satoshis, t 2, K 3, deadline 851000
 ```
 
 `put` builds the closure and the proof root while the content streams,
-then takes a mined hold output of the bounty (minted ahead, `hold_tree` to
+then takes a mined hold output of the bounty (minted ahead, 1,024 to
 a transaction, marked taken before the entry is signed; with none ready it
 waits up to 30 seconds, then exits 3 while more mine), publishes the
 closure and the entry, and answers once the facade or a quorum of the

@@ -113,14 +113,13 @@ type Config struct {
 	// A put of up to PieceTree pieces never waits for a block: the next
 	// tree of each kind is minted ahead, in the background, once the
 	// current one has PieceAhead (EntryAhead) outputs or fewer left.
-	// PieceAhead zero is PieceTree, so one tree is always ready; EntryAhead
-	// zero is half of EntryTree.
+	// PieceAhead and EntryAhead zero are DefaultTreesAhead trees of each.
 	PieceTree  int
 	EntryTree  int
 	PieceAhead int
 	EntryAhead int
 	// PieceWorkers is how many piece carriers are minted and sent at once;
-	// zero is 4.
+	// zero is DefaultPieceWorkers.
 	PieceWorkers int
 	// Poll is how often a wait for a transaction to mine asks the node;
 	// zero is a second.
@@ -131,8 +130,8 @@ type Config struct {
 	// HoldAhead is how many mined hold outputs of each bounty value are kept
 	// ready, so a put never waits for a block; HoldWait is how long a put
 	// waits for one when none is ready. HoldTree is how many hold outputs
-	// one transaction carries (a hold tree): 16 by default, at most
-	// storerec.MaxAdsPerTx, what a host admits of a mined transaction. A
+	// one transaction carries (a hold tree): zero is storerec.MaxAdsPerTx,
+	// the most, what a host admits of a mined transaction. A
 	// hold output is named by the entry and never carried in a BEEF, so the
 	// tree costs no carrier anything; a bigger tree means fewer
 	// transactions, coins and records a block for the same holds ahead.

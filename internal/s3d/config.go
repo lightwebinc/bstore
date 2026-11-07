@@ -92,8 +92,8 @@ type Config struct {
 	// how many mined hold outputs of it each identity keeps ready.
 	Bounty    *BountyConfig `json:"bounty,omitempty"`
 	HoldAhead int           `json:"hold_ahead,omitempty"`
-	// HoldTree is how many hold outputs one transaction carries: 16 by
-	// default, at most what hosts admit of a mined transaction (1,024).
+	// HoldTree is how many hold outputs one transaction carries: by
+	// default, and at most, what hosts admit of a mined transaction (1,024).
 	HoldTree int    `json:"hold_tree,omitempty"`
 	Limits   Limits `json:"limits"`
 	// PieceTree and EntryTree size funding trees. Fee is the miner fee
@@ -112,11 +112,12 @@ type Config struct {
 	// keys, docs/s3.md).
 	acceptcfg.Config
 	// PieceWorkers is how many piece carriers a put mints and sends at once
-	// (default 4); PieceAhead how many piece outputs are kept ready ahead
+	// (default 16); PieceAhead how many piece outputs are kept ready ahead
 	// of the puts, across the current tree, the trees held for a switch
 	// and the trees being minted, with more trees minted in the background
-	// when fewer are left (default piece_tree: one tree always ready);
-	// EntryAhead the same for entry trees (default half of entry_tree). A
+	// when fewer are left (default sixteen trees of piece_tree);
+	// EntryAhead the same for entry trees (default sixteen trees of
+	// entry_tree). A
 	// writer is held to the entry outputs ready per block interval: set
 	// entry_ahead to the puts one block interval must absorb, and the
 	// gateway keeps that many ready across as many trees of entry_tree
