@@ -56,7 +56,11 @@ type preBlob struct {
 type closureWalk struct {
 	inc   *chirp.Incremental
 	wrong func() bool
-	final atomic.Bool
+	// checked is the walk's own fetch from the store, each object held to
+	// its hash (storerec.CheckedFetch, which wrong reports on): feed reads
+	// a spilled piece through it once and hands it over with that hash.
+	checked func([32]byte) ([]byte, error)
+	final   atomic.Bool
 }
 
 // errNotYet is a walk's fetch declining a piece feed will hand it.
@@ -201,7 +205,7 @@ func (p *Provider) walk(root [32]byte, create bool) *closureWalk {
 		return nil
 	}
 	checked, wrong := storerec.CheckedFetch(p.fetch)
-	w := &closureWalk{wrong: wrong}
+	w := &closureWalk{wrong: wrong, checked: checked}
 	// A piece kept in recent is declined while the walk is fed (feed hands
 	// it over with its hash, so the walk takes it without hashing it), and
 	// served as it is once the walk is final: it is the bytes this provider
@@ -301,8 +305,13 @@ func (p *Provider) arrived(h [32]byte, data, leaves []byte, sub [32]byte, root [
 // hash this provider computed for it, until it waits for one not kept: the
 // walk takes a copy of each and moves on without hashing it again (its
 // fetch declines a kept piece, so it waits rather than reads one). One
-// dropped from recent for room is read from the store when the walk asks
-// for it (Advance), hashed as any fetched piece is.
+// dropped from recent for room is read back from the store here, through
+// the walk's checked fetch, and handed over with the hash that check just
+// made: the walk then takes it without hashing it a second time (it read
+// it and hashed it twice before: the fetch's check, then its own). One
+// that does not hash to its name is refused as the check always refused
+// it (the walk's wrong reports it), and the walk reads it itself as before
+// (Advance), so it waits for the piece rather than taking those bytes.
 func (p *Provider) feed(w *closureWalk) {
 	for {
 		want, ok := w.inc.Waiting()
@@ -313,7 +322,11 @@ func (p *Provider) feed(w *closureWalk) {
 			w.inc.AddHashed(want, b)
 			p.inc.fed(want)
 		} else if p.inc.takeSpilled(want) {
-			w.inc.Advance()
+			if b, err := w.checked(want); err == nil {
+				w.inc.AddHashed(want, b)
+			} else {
+				w.inc.Advance()
+			}
 		} else {
 			return
 		}

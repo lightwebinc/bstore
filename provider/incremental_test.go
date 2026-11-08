@@ -244,3 +244,72 @@ func arrive(p *Provider, h [32]byte, data []byte, root [32]byte, stored bool) {
 	_, leaves, sub := storerec.HashBlob(data)
 	p.arrived(h, data, leaves, sub, root, stored)
 }
+
+// spill drops a kept piece for room, as keepRecent does when recent is full.
+func spill(in *incremental, h [32]byte) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	in.dropRecent(h)
+	in.spilled[h] = true
+	in.sfifo = append(in.sfifo, h)
+}
+
+// A piece dropped from recent for room is read back from the store and held
+// to its hash once (feed, through the walk's checked fetch), then handed to
+// the walk with that hash: the closure completes. One whose stored bytes do
+// not hash to its name is refused as the full check refuses it.
+func TestIncrementalSpilledPieceReadBack(t *testing.T) {
+	for _, damaged := range []bool{false, true} {
+		content := make([]byte, 3*storerec.BlobSize)
+		for i := range content {
+			content[i] = byte(i / storerec.BlobSize)
+		}
+		b, err := storerec.Build(content)
+		if err != nil {
+			t.Fatal(err)
+		}
+		st, err := backend.OpenNative(t.TempDir(), "http://x")
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := &Provider{store: st, inc: newIncremental(), cfg: &Config{Data: t.TempDir()}}
+		objs := b.Objects() // the root, then the three blobs
+		h1 := sha256.Sum256(objs[1])
+		for i, o := range objs {
+			h := sha256.Sum256(o)
+			put := st.Put
+			stored := o
+			if damaged && i == 1 {
+				// Bytes that went bad in the store: written under the name
+				// without the store's own check, as a fault would leave them.
+				put, stored = st.PutHashed, append([]byte{o[0] ^ 1}, o[1:]...)
+			}
+			if err := put(h, stored); err != nil {
+				t.Fatal(err)
+			}
+			if i == 1 {
+				// Kept, then dropped for room before the walk reaches it.
+				p.inc.mu.Lock()
+				p.inc.keepRecent(h, b.RootHash, o)
+				p.inc.mu.Unlock()
+				spill(p.inc, h)
+				continue
+			}
+			arrive(p, h, o, b.RootHash, true)
+		}
+		if p.inc.pending(h1) {
+			t.Fatal("the spilled piece is still kept")
+		}
+		c, err := p.checkClosure(b.RootHash)
+		if !damaged {
+			if err != nil || c == nil || len(c.Blobs) != 3 {
+				t.Fatalf("a spilled piece read back: %v", err)
+			}
+			continue
+		}
+		_, want := storerec.VerifyCHIRP(b.RootHash, p.fetch)
+		if !errors.Is(err, storerec.ErrClosure) || want == nil || err.Error() != want.Error() {
+			t.Fatalf("a damaged spilled piece: got %v, VerifyCHIRP %v", err, want)
+		}
+	}
+}
