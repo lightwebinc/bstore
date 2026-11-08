@@ -447,7 +447,9 @@ func (p *Publisher) mintLater(ctx context.Context, it *outItem, c Closure) ([]by
 func (p *Publisher) readPiece(ctx context.Context, c Closure, h [32]byte) ([]byte, error) {
 	switch sc := c.(type) {
 	case nil:
-		return p.cfg.Store.readInto(h, false, getBuf(&objectBufs))
+		// The outbox's later mint of a put's piece: held to its hash unless
+		// the put's stage, or the outbox's fresh pin, still marks it.
+		return p.cfg.Store.readInto(h, true, getBuf(&objectBufs))
 	case StoreClosure:
 		return sc.Store.readInto(h, sc.Staged, getBuf(&objectBufs))
 	}

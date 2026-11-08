@@ -34,6 +34,13 @@ type Store struct {
 	// staged counts the stages that wrote or found each object in this
 	// process: only those are read without hashing them again.
 	staged map[[32]byte]int
+	// fresh counts the pins taken on an object while a stage of this
+	// process still marked it (pinFresh): the outbox's sends of a put's
+	// pieces after the put answered read them without hashing again, as
+	// the stage itself would have. A pin taken on bytes another process or
+	// an earlier run left (an outbox reloaded after a restart) is not fresh,
+	// and those bytes are held to their hash.
+	fresh map[[32]byte]int
 }
 
 // orphanAge is how long an object no closure names is kept: what a put cut
@@ -62,7 +69,7 @@ func OpenStore(dir string) (*Store, error) {
 			_ = os.Remove(filepath.Join(dir, "tmp", e.Name()))
 		}
 	}
-	return &Store{dir: dir, busy: map[[32]byte]int{}, pins: map[[32]byte]int{}, staged: map[[32]byte]int{}}, nil
+	return &Store{dir: dir, busy: map[[32]byte]int{}, pins: map[[32]byte]int{}, staged: map[[32]byte]int{}, fresh: map[[32]byte]int{}}, nil
 }
 
 func (s *Store) objectPath(h [32]byte) string {
@@ -183,12 +190,13 @@ func (s *Store) readStaged(h [32]byte) ([]byte, error) {
 }
 
 // readInto reads an object into buf (grown when too small), held to its
-// hash unless fresh: one a stage of this process wrote or found and still
-// holds was hashed as it was written, moments before.
+// hash unless fresh: one a stage of this process wrote and still holds, or
+// one a fresh pin holds (pinFresh), was hashed as it was written. With
+// fresh false it is held to its hash whatever marks it.
 func (s *Store) readInto(h [32]byte, fresh bool, buf []byte) ([]byte, error) {
 	if fresh {
 		s.mu.Lock()
-		fresh = s.staged[h] > 0
+		fresh = s.staged[h] > 0 || s.fresh[h] > 0
 		s.mu.Unlock()
 	}
 	f, err := os.Open(s.objectPath(h))
@@ -228,6 +236,34 @@ func (s *Store) unpinOne(h [32]byte) {
 	defer s.mu.Unlock()
 	if s.pins[h]--; s.pins[h] <= 0 {
 		delete(s.pins, h)
+	}
+}
+
+// pinFresh is pin that also carries the object's freshness when a stage of
+// this process marks it now, or another fresh pin does: it reports whether
+// it did, for unpinFresh.
+func (s *Store) pinFresh(h [32]byte) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pins[h]++
+	if s.staged[h] > 0 || s.fresh[h] > 0 {
+		s.fresh[h]++
+		return true
+	}
+	return false
+}
+
+// unpinFresh releases a pin pinFresh took.
+func (s *Store) unpinFresh(h [32]byte, fresh bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pins[h]--; s.pins[h] <= 0 {
+		delete(s.pins, h)
+	}
+	if fresh {
+		if s.fresh[h]--; s.fresh[h] <= 0 {
+			delete(s.fresh, h)
+		}
 	}
 }
 
