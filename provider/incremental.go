@@ -249,6 +249,7 @@ func (p *Provider) walk(root [32]byte, create bool) *closureWalk {
 		} else if in.pending(h) {
 			return nil, errNotYet
 		}
+		p.countWalkRead()
 		return checked(h)
 	}
 	w.inc = chirp.NewIncremental(root, fetch, storerec.ClosureLimits, rootBuffer)
@@ -366,6 +367,7 @@ func (p *Provider) feed(w *closureWalk) {
 			w.inc.AddHashed(want, b)
 			p.inc.fed(want)
 		} else if p.inc.takeSpilled(want) {
+			p.countWalkRead()
 			if b, err := w.checked(want); err == nil {
 				w.inc.AddHashed(want, b)
 			} else {
@@ -454,6 +456,14 @@ func (p *Provider) heldBlob(c chirp.Child) bool {
 func (p *Provider) countCheck(mode string) {
 	if p.metrics != nil {
 		p.metrics.inc("bstore_provider_closure_checks_total", "mode="+mode)
+	}
+}
+
+// countWalkRead counts an object a walk read back from the store: a piece
+// past the recent cache, or one a walk started on demand reads.
+func (p *Provider) countWalkRead() {
+	if p.metrics != nil {
+		p.metrics.inc("bstore_provider_walk_reads_total")
 	}
 }
 
