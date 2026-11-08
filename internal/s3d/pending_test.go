@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	ec "github.com/bsv-blockchain/go-sdk/primitives/ec"
+
 	"github.com/lightwebinc/bstore/storerec"
 )
 
@@ -133,4 +135,72 @@ func BenchmarkPendingAdd(b *testing.B) {
 	}
 	b.ResetTimer()
 	addN(b, s, b.N, 8)
+}
+
+// The same writer's older pending entries for a key go when it writes the
+// key again, and an older write of its own that arrives after the newer
+// one is superseded on arrival. Another writer's entry for the key stays:
+// nothing orders two writers' pending entries but a token. The entries are
+// real encodings, so a state reopened from the log decodes their writers
+// and a write after the reopen still drops the writer's older entry.
+func TestPendingSupersededByTheSameWriter(t *testing.T) {
+	dir := t.TempDir()
+	key := func() []byte {
+		k, err := ec.NewPrivateKey()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return k.PubKey().Compressed()
+	}
+	w1, w2 := key(), key()
+	add := func(s *state, writer []byte, created uint64) string {
+		t.Helper()
+		e := &storerec.Entry{Bucket: "example_photos_hmqzvtkwrx", ID: sha256.Sum256([]byte("id")), Writer: writer, Key: "k",
+			Kind: storerec.KindDelete, Created: created}
+		rec, err := e.Encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := sha256.Sum256(rec)
+		if err := s.add(e, rec, c); err != nil {
+			t.Fatal(err)
+		}
+		return fmt.Sprintf("%x", c)
+	}
+	has := func(s *state, want ...string) {
+		t.Helper()
+		if len(s.byC) != len(want) {
+			t.Fatalf("%d pending entries, want %d", len(s.byC), len(want))
+		}
+		for _, c := range want {
+			if s.byC[c] == nil {
+				t.Fatalf("entry %s is not pending", c[:12])
+			}
+		}
+	}
+	s, err := openState(dir, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	add(s, w1, 10)
+	other := add(s, w2, 10)
+	newest := add(s, w1, 20)
+	has(s, newest, other)
+	if n := s.newest("example_photos_hmqzvtkwrx", "k"); n == nil || n.C != newest {
+		t.Fatal("the key does not read as the writer's newest entry")
+	}
+	add(s, w1, 15) // finished after the newer one: superseded on arrival
+	has(s, newest, other)
+	again, err := openState(dir, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	has(again, newest, other)
+	last := add(again, w1, 30) // decodes the reopened entry's writer
+	has(again, last, other)
+	third, err := openState(dir, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	has(third, last, other)
 }

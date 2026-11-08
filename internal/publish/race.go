@@ -87,6 +87,15 @@ type Race struct {
 	Reclaim   *ReclaimRecord  `json:"reclaim,omitempty"`
 	Note      string          `json:"note,omitempty"`
 	Outcomes  []PublishedNote `json:"outcomes,omitempty"`
+	// Retired says why the race stopped judging before K passed or its
+	// window ended: the key was deleted (retire.go). A retired race is
+	// never stepped again; it settles or is reclaimed as a closed race.
+	Retired string `json:"retired,omitempty"`
+	// Fails counts the steps in a row that could not judge (the closure's
+	// blobs unreachable); the next step waits until RetryAt, Unix seconds,
+	// a minute doubling to an hour (retryDelay).
+	Fails   int   `json:"fails,omitempty"`
+	RetryAt int64 `json:"retryAt,omitempty"`
 
 	entry *storerec.Entry
 	// saved is the file's bytes as last read or written: a pass steps every
@@ -183,7 +192,8 @@ func (p *Publisher) saveRace(r *Race) error {
 	return nil
 }
 
-// Races are this identity's races, oldest first.
+// Races are this identity's live races, oldest first: those whose story is
+// over are in races/done/ (archiveRace) and Race still finds them.
 func (p *Publisher) Races() ([]*Race, error) {
 	ents, err := os.ReadDir(p.racesDir())
 	if errors.Is(err, os.ErrNotExist) {
@@ -194,31 +204,39 @@ func (p *Publisher) Races() ([]*Race, error) {
 	}
 	var out []*Race
 	for _, d := range ents {
-		if !strings.HasSuffix(d.Name(), ".json") {
+		if d.IsDir() || !strings.HasSuffix(d.Name(), ".json") {
 			continue
 		}
-		r, err := p.Race(strings.TrimSuffix(d.Name(), ".json"))
+		r, err := p.liveRace(strings.TrimSuffix(d.Name(), ".json"))
 		if err != nil {
 			p.cfg.Logf("race %s: %v", d.Name(), err)
 			continue
 		}
 		out = append(out, r)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Started != out[j].Started {
-			return out[i].Started < out[j].Started
-		}
-		return out[i].Entry < out[j].Entry
-	})
+	sortRaces(out)
 	return out, nil
 }
 
-// Race is the race of one entry.
+// Race is the race of one entry, live or over.
 func (p *Publisher) Race(entry string) (*Race, error) {
+	r, err := p.liveRace(entry)
+	if errors.Is(err, os.ErrNotExist) {
+		return p.readRace(filepath.Join(p.doneDir(), entry+".json"), entry)
+	}
+	return r, err
+}
+
+// liveRace is the race of one entry from races/ alone.
+func (p *Publisher) liveRace(entry string) (*Race, error) {
+	return p.readRace(filepath.Join(p.racesDir(), entry+".json"), entry)
+}
+
+func (p *Publisher) readRace(path, entry string) (*Race, error) {
 	if !isHex64(entry) {
 		return nil, errors.New("publish: an entry is named by its txid, 64 lowercase hex digits")
 	}
-	raw, err := os.ReadFile(filepath.Join(p.racesDir(), entry+".json"))
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -333,8 +351,13 @@ func (p *Publisher) holdOf(r *Race) (*HoldRecord, error) {
 // challenges the candidates that have not passed or failed, and closes the
 // race when K have passed, the window has ended or the deadline has come.
 // It saves the race before it returns.
+//
+// A step that cannot judge (the closure's blobs unreachable) counts a
+// failure and sets the race's RetryAt: the background pass skips it until
+// then, so a race that cannot be judged costs a step an hour, not one a
+// pass. A retired race (its key deleted) is never stepped.
 func (p *Publisher) Step(ctx context.Context, r *Race, o RaceOptions) error {
-	if !r.Open() {
+	if !r.Open() || r.Retired != "" {
 		return nil
 	}
 	e := r.entry
@@ -358,8 +381,20 @@ func (p *Publisher) Step(ctx context.Context, r *Race, o RaceOptions) error {
 		return err
 	}
 	if err := p.judge(ctx, r, tip.Height, o); err != nil {
-		return err
+		if ctx.Err() != nil {
+			// The pass was stopped (the gateway is going down): not the
+			// race's failure, and no wait is recorded for it.
+			return err
+		}
+		r.Fails++
+		d := retryDelay(r.Fails)
+		r.RetryAt = p.cfg.Now().Add(d).Unix()
+		if serr := p.saveRace(r); serr != nil {
+			return serr
+		}
+		return fmt.Errorf("%w (failure %d in a row; next step in %s)", err, r.Fails, d)
 	}
+	r.Fails, r.RetryAt = 0, 0
 	passed := len(r.Passed())
 	switch {
 	case uint64(passed) >= e.Hold.K:
@@ -651,7 +686,8 @@ func (p *Publisher) judge(ctx context.Context, r *Race, tip uint32, o RaceOption
 		if blobs == nil {
 			b, err := p.closureBlobs(ctx, e)
 			if err != nil {
-				return fmt.Errorf("race %s: the closure's blobs: %w", short(r.Entry), err)
+				// The caller names the race.
+				return fmt.Errorf("the closure's blobs: %w", err)
 			}
 			blobs = b
 		}

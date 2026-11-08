@@ -304,7 +304,7 @@ stateDiagram-v2
   direction LR
   [*] --> open: put with a bounty
   open --> open: each look ranks, challenges and records draws
-  open --> closed: K passed, or the window ends with t passed, or settle -close
+  open --> closed: K passed, or the window ends with t passed, or settle -close, or a delete (with t passed it settles by rank; with fewer nothing is paid)
   open --> lapsed: window ends or deadline with fewer than t
   closed --> settled: settle mines, remittances sent
   closed --> lapsed: a canceled payee leaves fewer than t

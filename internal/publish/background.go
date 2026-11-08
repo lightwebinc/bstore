@@ -30,13 +30,30 @@ func (r *Race) Remitted() bool {
 // deadline has come. Each race is saved as it goes; one that cannot be
 // decided now is left for the next pass. It returns how many races are
 // still open or owed something.
+//
+// The pass first applies the deletes recorded since the last one
+// (retire.go), works at one tip read a few times a pass rather than once a
+// race, re-reads only the race files that changed, and ends by moving the
+// races that are over to races/done/: its cost follows the live races,
+// not every bounty this identity ever set.
 func (p *Publisher) RaceTick(ctx context.Context, o RaceOptions) int {
-	races, err := p.Races()
+	ctx = withTickTip(ctx)
+	races, err := p.racesForTick()
 	if err != nil {
 		p.cfg.Logf("races: %v", err)
 		return 0
 	}
+	p.applyRetires(races)
 	p.stepOpen(ctx, races, o)
+	defer func() {
+		for _, r := range races {
+			if r.over() {
+				if err := p.archiveRace(r); err != nil {
+					p.cfg.Logf("race %s: archive: %v", short(r.Entry), err)
+				}
+			}
+		}
+	}()
 	left := 0
 	for _, r := range races {
 		if ctx.Err() != nil {
@@ -75,13 +92,16 @@ func (p *Publisher) RaceTick(ctx context.Context, o RaceOptions) int {
 // time. Each step touches only its own race (its file, its candidates);
 // what the steps share (the store, the reader, the fronts) already serves
 // a race's candidates concurrently, and each front's calls go one at a
-// time through its own client.
+// time through its own client. A retired race is not stepped, nor one
+// waiting out a failure (RetryAt); a race that keeps failing is logged at
+// its 1st, 2nd, 4th, 8th failure and so on, not on every pass.
 func (p *Publisher) stepOpen(ctx context.Context, races []*Race, o RaceOptions) {
 	n := max(o.Parallel, 1)
 	sem := make(chan struct{}, n)
 	var wg sync.WaitGroup
+	now := p.cfg.Now().Unix()
 	for _, r := range races {
-		if r.State != RaceOpen || r.Settlement != nil {
+		if r.State != RaceOpen || r.Settlement != nil || r.Retired != "" || r.RetryAt > now {
 			continue
 		}
 		select {
@@ -94,7 +114,7 @@ func (p *Publisher) stepOpen(ctx context.Context, races []*Race, o RaceOptions) 
 		go func(r *Race) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			if err := p.Step(ctx, r, o); err != nil {
+			if err := p.Step(ctx, r, o); err != nil && (r.Fails <= 1 || r.Fails&(r.Fails-1) == 0) {
 				p.cfg.Logf("race %s: %v", short(r.Entry), err)
 			}
 		}(r)

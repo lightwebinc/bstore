@@ -2,6 +2,7 @@ package s3d
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -296,7 +297,12 @@ func (s *state) SetHeld(chain string, h storerec.Held) error {
 	return writeSynced(filepath.Join(s.dir, "state.json"), raw)
 }
 
-// add records an entry the gateway wrote.
+// add records an entry the gateway wrote. The same writer's older pending
+// entries for the key go: read your writes serves the newest of them, and
+// one left behind would come back as the key's claim once a token named
+// the newer one alone. So a put and the delete that follows it leave one
+// line, not two, and the pending set follows the keys written, not every
+// write.
 func (s *state) add(e *storerec.Entry, rec []byte, c [32]byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -308,10 +314,34 @@ func (s *state) add(e *storerec.Entry, rec []byte, c [32]byte) error {
 	}
 	p := &pendingEntry{Bucket: e.Bucket, Key: e.Key, C: hex.EncodeToString(c[:]), Created: e.Created, Kind: e.Kind,
 		Record: rec, Seen: s.now().Unix(), entry: e}
+	var older []string
+	for _, x := range s.byKey[e.Bucket][e.Key] {
+		xe := x.decoded()
+		if xe == nil || !bytes.Equal(xe.Writer, e.Writer) || x.C == p.C {
+			continue
+		}
+		if newer(x.Created, x.C, p.Created, p.C) {
+			// Two of the writer's own writes finished out of order: the
+			// newer one already stands for the key, and this one is
+			// superseded on arrival.
+			return nil
+		}
+		older = append(older, x.C)
+	}
+	// The new entry is indexed and its line queued before an older one is
+	// dropped: a rewrite of the log that one of the drops sets off holds
+	// it, so no crash leaves the key with neither.
 	s.index(p)
 	gen, err := s.appendLocked(logLine{Add: p})
 	if err != nil {
 		return err
+	}
+	for _, x := range older {
+		if s.unindex(x) {
+			if gen, err = s.appendLocked(logLine{Drop: x}); err != nil {
+				return err
+			}
+		}
 	}
 	return s.awaitLog(gen)
 }

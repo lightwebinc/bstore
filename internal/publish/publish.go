@@ -202,6 +202,19 @@ type Publisher struct {
 	// under treeMu (cacheTree).
 	treeMu sync.Mutex
 	trees  map[string]*transaction.Transaction
+	// retires are the deletes not yet applied to the races, under retireMu
+	// (retire.go); raceCache is the race pass's parsed races, RaceTick's
+	// goroutine alone; entryIdx indexes entries/ by bucket and key, under
+	// entryMu, built at the first need.
+	retireMu  sync.Mutex
+	retires   []retireNote
+	raceCache map[string]cachedRace
+	entryMu   sync.Mutex
+	entryIdx  map[string][]entryRef
+	// entryBuilding is set while buildEntryIndex reads entries/; the
+	// entries logged meanwhile wait in entryLate. Under entryMu.
+	entryBuilding bool
+	entryLate     []lateEntry
 }
 
 type state struct {
@@ -369,6 +382,9 @@ func Open(ctx context.Context, cfg Config) (*Publisher, error) {
 	}
 	p.frontAuth = newAuthPool(p, fh)
 	p.mergePayPools()
+	if err := p.loadRetires(); err != nil {
+		return nil, fmt.Errorf("publish: the deletes not yet applied to the races: %w", err)
+	}
 	if err := p.save(); err != nil {
 		return nil, err
 	}
@@ -429,7 +445,23 @@ func (p *Publisher) Chain() nodeapi.Chain { return p.cfg.Chain }
 // header had.
 type bestTip struct{ Height uint32 }
 
+// Within a race pass (withTickTip) the height is read once and again only
+// after tickTipAge: a pass over thousands of races asked the header source
+// once a race, twice for a closed one.
 func (p *Publisher) bestHeader(ctx context.Context) (bestTip, error) {
+	if t, ok := ctx.Value(tickTipKey{}).(*tickTip); ok && t != nil {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		if t.ok && time.Since(t.at) < tickTipAge {
+			return bestTip{Height: t.h}, nil
+		}
+		h, err := p.cfg.Tip.CurrentHeight(ctx)
+		if err != nil {
+			return bestTip{}, err
+		}
+		t.h, t.at, t.ok = h, time.Now(), true
+		return bestTip{Height: h}, nil
+	}
 	h, err := p.cfg.Tip.CurrentHeight(ctx)
 	return bestTip{Height: h}, err
 }
