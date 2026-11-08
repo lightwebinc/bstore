@@ -174,6 +174,10 @@ func TestUnjudgeableRaceBacksOff(t *testing.T) {
 	if err := r.p.saveRace(got); err != nil {
 		t.Fatal(err)
 	}
+	// The test rewrote a race the pass has cached, which no path of the
+	// gateway does; within one tick of the file system's clock, at the same
+	// size, the pass would take the file for unchanged.
+	delete(r.p.raceCache, got.Entry)
 	r.p.RaceTick(r.ctx, o)
 	got, _ = r.p.Race(race.Entry)
 	if got.Fails != 2 || got.RetryAt < time.Now().Add(110*time.Second).Unix() {
