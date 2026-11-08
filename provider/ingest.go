@@ -276,7 +276,7 @@ func (p *Provider) take(ctx context.Context, topic string, beef []byte, pc *stor
 				return []int{}, "", "piece: " + why(err)
 			}
 		}
-		if why := p.takePiece(b, pc, nil, false); why != "" {
+		if why := p.takePiece(b, pc, nil); why != "" {
 			return []int{}, "", why
 		}
 		return []int{0}, "", ""
@@ -408,20 +408,29 @@ func (p *Provider) pruneEntries() {
 // it: an error of this provider's, not a refusal of the piece.
 const storeFailed = "store: the piece could not be stored"
 
+// localAccount is a gateway in this process's account of a piece it
+// minted, taken as given (TakeLocal with the piece check off): the piece's
+// SHA-256, and its segment leaves when the gateway still keeps them from
+// the pass that hashed the piece as it was staged (nil: hashed here). A
+// piece taken on one is carried: its root's closure is checked on the
+// gateway's account (checkClosure).
+type localAccount struct {
+	hash   [32]byte
+	leaves []byte
+}
+
 // takePiece takes a checked piece carrier, or one its gateway in this
-// process vouches for (TakeLocal): the writer and the funding output are
-// held to the bucket's rules, and the piece kept. known is the piece's
-// SHA-256 when the caller has it; later, that the piece's leaves and the
-// closure walk it moves run after the return (keepPiece). It returns why
-// nothing was taken.
-func (p *Provider) takePiece(b *BucketConfig, pc *storerec.PieceCarrier, known *[32]byte, later bool) string {
+// process vouches for (TakeLocal, acct set): the writer and the funding
+// output are held to the bucket's rules, and the piece kept (keepPiece).
+// It returns why nothing was taken.
+func (p *Provider) takePiece(b *BucketConfig, pc *storerec.PieceCarrier, acct *localAccount) string {
 	if !writerAllowed(b, pc.Piece.Writer) {
 		return "writer: not a writer this provider takes for the bucket"
 	}
 	if !p.fundingFree(pc.Funding, pc.Commitment) {
 		return "funding: a second carrier on one funding output"
 	}
-	if why := p.keepPiece(pc.Piece.Piece, known, later, hex.EncodeToString(pc.Piece.Root[:]), b.Bucket, hex.EncodeToString(pc.Piece.Writer)); why != "" {
+	if why := p.keepPiece(pc.Piece.Piece, acct, hex.EncodeToString(pc.Piece.Root[:]), b.Bucket, hex.EncodeToString(pc.Piece.Writer)); why != "" {
 		return why
 	}
 	p.claimFunding(pc.Funding, pc.Commitment)
@@ -433,27 +442,23 @@ func (p *Provider) takePiece(b *BucketConfig, pc *storerec.PieceCarrier, known *
 // subtree root, for the proofs) come from one pass over its bytes, and the
 // bytes go to the store and the closure walk as they are, copied nowhere
 // here. The carrier's own hashes (its txid, the record's signature) were
-// taken over other bytes by the carrier check and are not repeated. known,
-// when set, is the piece's SHA-256 from a caller that computed it (a
-// gateway in this process), and only the leaves are hashed.
+// taken over other bytes by the carrier check and are not repeated.
 //
-// later (with known) stores the piece before it returns and hashes the
-// leaves and moves the closure walk after, on a goroutine the provider's
-// stop waits for: the piece that completes an object wakes the walk over
-// the whole object, its content hash included (4 GiB took 8.7 s on the
-// lab), and a gateway handing pieces over in process (TakeLocal) waited for
-// it. The feeder's path is answered before its take for the same reason.
-func (p *Provider) keepPiece(data []byte, known *[32]byte, later bool, rootHex, bucket, writer string) string {
+// With acct (a gateway in this process), the piece's SHA-256 is the
+// gateway's, and so are its leaves when it hands them over: the subtree
+// root is recomputed from them, and only a piece without them is hashed
+// here, for its leaves. The piece is stored before keepPiece returns, and
+// its leaves and what it moves run after, on a goroutine the provider's
+// stop waits for, so that a gateway handing pieces over in process
+// (TakeLocal) does not wait for them. The feeder's path is answered before
+// its take for the same reason.
+func (p *Provider) keepPiece(data []byte, acct *localAccount, rootHex, bucket, writer string) string {
 	var h [32]byte
 	var leaves []byte
 	var sub [32]byte
-	switch {
-	case known != nil && later:
-		h = *known
-	case known != nil:
-		h = *known
-		leaves, sub = storerec.LeavesOf(data)
-	default:
+	if acct != nil {
+		h, leaves = acct.hash, acct.leaves
+	} else {
 		h, leaves, sub = storerec.HashBlob(data)
 	}
 	hh := hex.EncodeToString(h[:])
@@ -483,11 +488,27 @@ func (p *Provider) keepPiece(data []byte, known *[32]byte, later bool, rootHex, 
 		p.mu.Unlock()
 		stored = true
 	}
-	after := func() {
-		if leaves == nil {
-			leaves, sub = storerec.LeavesOf(data)
+	// On the gateway's account the root is marked carried before the take
+	// returns, so that an entry right behind its pieces has its closure
+	// checked on the account; a piece with the gateway's leaves is kept for
+	// that check at once, one without is hashed for them after.
+	done := false
+	if acct != nil {
+		if leaves != nil {
+			sub = storerec.RootOfLeaves(leaves)
+			p.arrived(h, data, leaves, sub, mustHash(rootHex), stored, true)
+			done = true
+		} else {
+			p.inc.markCarried(mustHash(rootHex))
 		}
-		p.arrived(h, data, leaves, sub, mustHash(rootHex), stored)
+	}
+	after := func() {
+		if !done {
+			if leaves == nil {
+				leaves, sub = storerec.LeavesOf(data)
+			}
+			p.arrived(h, data, leaves, sub, mustHash(rootHex), stored, acct != nil)
+		}
 		p.mu.Lock()
 		wanted := len(p.index.undecided[rootHex]) > 0
 		p.mu.Unlock()
@@ -495,7 +516,7 @@ func (p *Provider) keepPiece(data []byte, known *[32]byte, later bool, rootHex, 
 			p.enqueue(rootHex)
 		}
 	}
-	if later && known != nil {
+	if acct != nil {
 		p.wg.Add(1)
 		go func() {
 			defer p.wg.Done()

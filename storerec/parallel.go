@@ -37,6 +37,20 @@ func NewParallel(workers int, store func(i int, h [32]byte, blob []byte) error) 
 	return p
 }
 
+// NewParallelLeaves is NewParallel that also hands store each blob's
+// segment leaves (LeavesOf: 32 bytes a segment), from the same pass that
+// composes the proof root, for a caller that passes them on with the blob.
+// The leaves are store's to keep.
+func NewParallelLeaves(workers int, store func(i int, h [32]byte, blob, leaves []byte) error) *Parallel {
+	p := &Parallel{}
+	p.c = chirp.NewParallelChunker(workers, func(i int, ref chirp.Child, blob []byte) error {
+		leaves, sub := LeavesOf(blob)
+		p.subs.Set(i, sub)
+		return store(i, ref.Hash, blob, leaves)
+	})
+	return p
+}
+
 // SegmentRootOf is commit.SegmentRoot of a blob at SegmentSize, the
 // segment subtree root a proof root is composed of, hashed in place: each
 // segment is a slice of the blob, copied nowhere.

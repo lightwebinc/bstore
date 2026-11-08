@@ -83,13 +83,17 @@ func (st *Store) StageTee(ctx context.Context, r io.Reader, max uint64, tee Tee)
 		mu.Unlock()
 		return err
 	}
-	b := storerec.NewParallel(cmpOr(StageWorkers, chirp.DefaultWorkers()), func(i int, h [32]byte, blob []byte) error {
+	// Each blob's segment leaves come from the pass that composes the proof
+	// root; the store keeps them while the blob is fresh, for the provider
+	// in this process (leavesOf).
+	b := storerec.NewParallelLeaves(cmpOr(StageWorkers, chirp.DefaultWorkers()), func(i int, h [32]byte, blob, leaves []byte) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if err := put(h, blob); err != nil {
 			return err
 		}
+		st.keepLeaves(h, leaves)
 		mu.Lock()
 		blobs[i] = hex.EncodeToString(h[:])
 		mu.Unlock()

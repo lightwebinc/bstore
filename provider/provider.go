@@ -328,7 +328,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("state log: %w", err)
 	}
-	p := &Provider{cfg: cfg, inc: newIncremental(), opts: opts, st: st, index: newEntryIndex(st.Entries), fundings: fundings, wallet: w, signer: signer, pool: w.Pool,
+	p := &Provider{cfg: cfg, inc: newIncremental(cfg.Limits.ClosureCacheMB << 20), opts: opts, st: st, index: newEntryIndex(st.Entries), fundings: fundings, wallet: w, signer: signer, pool: w.Pool,
 		queue: make(chan string, 4096), queued: map[string]uint8{}, metrics: newMetrics(),
 		adSends: make(chan struct{}, cfg.Limits.AdSends), adDir: adDir, adFiles: adFiles, heldObjects: map[[32]byte]int32{},
 		log: stlog, checkpointAt: opts.Now()}

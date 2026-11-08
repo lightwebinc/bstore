@@ -107,9 +107,25 @@ func TestLocalProviderGetsTheGatewaysAccount(t *testing.T) {
 		case cap(lp.Piece) != len(lp.Piece):
 			t.Fatalf("piece %d: the piece's capacity runs past it", i)
 		}
+		// A blob the stage wrote comes with the leaves its stage hashed;
+		// the root, which the stage did not hash by segment, with none.
+		want, _ := storerec.LeavesOf(lp.Piece)
+		if lp.Hash == lp.Root {
+			want = nil
+		}
+		if !bytes.Equal(lp.Leaves, want) || (lp.Leaves == nil) != (want == nil) {
+			t.Fatalf("piece %d: %d bytes of leaves, want %d", i, len(lp.Leaves), len(want))
+		}
 	}
 	if p.Outbox().Pending() != 0 {
 		t.Fatal("pieces the local provider took are still owed")
+	}
+	// Delivered and released: no leaves are kept.
+	store.mu.Lock()
+	kept := len(store.leaves)
+	store.mu.Unlock()
+	if kept != 0 {
+		t.Fatalf("%d objects' leaves kept after the put", kept)
 	}
 
 	// Refused: delivered nowhere more, owed nowhere.

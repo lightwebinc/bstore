@@ -20,6 +20,11 @@ import (
 // deriving them from the BEEF again; one that verifies checks the BEEF as it
 // checks any submission. Piece is a slice of BEEF. Known is unset for an
 // item read back from the outbox after a restart, which kept only its bytes.
+//
+// Leaves, with Known, are the piece's segment leaves (32 bytes a segment)
+// from the pass that hashed it when it was staged, while the gateway still
+// keeps them (a piece its stage wrote, still fresh), or nil: the provider
+// takes them for its proofs instead of hashing the segments again.
 type LocalPiece struct {
 	Topic string
 	BEEF  []byte
@@ -32,6 +37,7 @@ type LocalPiece struct {
 	Hash       [32]byte
 	Funding    transaction.Outpoint
 	Commitment [32]byte
+	Leaves     []byte
 }
 
 // Refused is how a local provider says it took nothing for a reason the same
@@ -56,6 +62,7 @@ func (o *Outbox) sendLocal(ctx context.Context, it *outItem, t Target, beef []by
 	if m := it.local; m != nil && m.at >= 0 && m.at+m.n <= len(beef) {
 		lp.Known, lp.Bucket, lp.Root, lp.Writer = true, m.bucket, m.root, o.writer
 		lp.Piece, lp.Hash, lp.Funding, lp.Commitment = beef[m.at:m.at+m.n:m.at+m.n], m.hash, m.funding, m.commitment
+		lp.Leaves = o.store.leavesOf(m.hash)
 	}
 	return o.d.Local(ctx, lp)
 }

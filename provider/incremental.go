@@ -21,25 +21,41 @@ import (
 // hashed. A closure with branch nodes is walked the same way; a root whose
 // walk was evicted, or one after a restart, starts a walk on demand that
 // reads back only the pieces held and continues as more arrive.
-
-// maxPre bounds the pieces whose leaves are kept (32 KiB a blob), maxRoots
-// the roots whose walk is kept (least recently used dropped first), and
-// rootBuffer the bytes each walk keeps of pieces that arrived ahead of it
-// (one piece: the walk is fed from recent instead, see below).
 //
-// recentBytes bounds the pieces this provider has just stored that are kept
-// for their walks (see recent): pieces taken at once reach their walk out of
-// order, and the walk is handed each one with its hash (AddHashed) the
-// moment it waits for it, so a kept piece is never hashed again. One not
-// kept is read back from the store when the walk reaches it, and hashed
-// twice, by the fetch's check and by the walk. About the pieces in flight at
-// once: a feeder's takes (maxTakes) and the submissions processed (16),
-// with room for the plane's reordering.
+// A closure its gateway in this process staged is not walked (the owner's
+// ruling of 2026-11-08 on the storage node): pieces a gateway hands over on
+// its account (TakeLocal with the piece check off) are carried, and the
+// root they name is checked on that account at the evaluation
+// (storerec.VerifyCarried): its root and branch nodes read, hashed and
+// checked, its blobs taken unread where this provider stored them from the
+// bytes hashed to their names, the rest read and hashed, the content hash
+// the gateway's, and the proof root recomputed from the leaves the gateway
+// handed over with each piece. A provider in another process or on another
+// host walks every closure.
+
+// maxPre bounds the pieces whose leaves are kept (32 KiB a blob: 128 MiB
+// for 16 GiB of content waiting for its entries), maxRoots the roots whose
+// walk is kept (least recently used dropped first), maxCarried the roots
+// marked carried, and rootBuffer the bytes each walk keeps of pieces that
+// arrived ahead of it (one piece: the walk is fed from recent instead, see
+// below).
+//
+// defaultRecentBytes is limits.closure_cache_mb's default, the bound on the
+// pieces this provider has just stored that are kept for their walks (see
+// recent): pieces taken at once reach their walk out of order, and the walk
+// is handed each one with its hash (AddHashed) the moment it waits for it,
+// so a kept piece is never hashed again. One not kept is read back from the
+// store when the walk reaches it and hashed once, by the check of the
+// walk's fetch (feed). About the pieces in flight at once: a feeder's takes
+// (maxTakes) and the submissions processed (16), with room for the plane's
+// reordering; a piece lost on the way holds every later piece of its root
+// until it is sent again, which a larger cache rides out.
 const (
-	maxPre      = 1024
-	maxRoots    = 64
-	rootBuffer  = chirp.ChunkSize
-	recentBytes = 32 * chirp.ChunkSize
+	maxPre             = 4096
+	maxRoots           = 64
+	maxCarried         = 4096
+	rootBuffer         = chirp.ChunkSize
+	defaultRecentBytes = 32 * chirp.ChunkSize
 )
 
 type preBlob struct {
@@ -80,10 +96,18 @@ type incremental struct {
 	// the store nor hashes the piece again; a walk started later (after a
 	// restart, or for a root whose piece came after its blobs) is served
 	// them by its fetch. Each is dropped when a walk takes it, when its root
-	// is decided, or oldest first past recentBytes.
+	// is decided, or oldest first past recentMax bytes.
 	recent    map[[32]byte]recentPiece
 	rfifo     [][32]byte
 	recentLen int
+	recentMax int
+
+	// carried are roots a gateway in this process staged, by the account
+	// of a piece it handed over (carry): their closures are checked on that
+	// account (checkClosure), not walked. Dropped when the root is decided,
+	// oldest first past maxCarried.
+	carried map[[32]byte]bool
+	cfifo   [][32]byte
 
 	// spilled are pieces dropped from recent for room, by hash, so feed
 	// knows to have a walk waiting for one read it from the store rather
@@ -105,19 +129,25 @@ type recentPiece struct {
 	b    []byte
 }
 
-func newIncremental() *incremental {
-	return &incremental{pre: map[[32]byte]*preBlob{}, walks: map[[32]byte]*closureWalk{}, recent: map[[32]byte]recentPiece{}, spilled: map[[32]byte]bool{}, feeding: map[[32]byte]bool{}}
+// newIncremental keeps up to recentMax bytes of pieces for their walks
+// (defaultRecentBytes when 0 or less).
+func newIncremental(recentMax int) *incremental {
+	if recentMax <= 0 {
+		recentMax = defaultRecentBytes
+	}
+	return &incremental{pre: map[[32]byte]*preBlob{}, walks: map[[32]byte]*closureWalk{}, recent: map[[32]byte]recentPiece{}, spilled: map[[32]byte]bool{}, feeding: map[[32]byte]bool{},
+		recentMax: recentMax, carried: map[[32]byte]bool{}}
 }
 
 // keepRecent keeps a piece just stored for root's walk; in.mu is held.
 func (in *incremental) keepRecent(h, root [32]byte, b []byte) {
-	if _, ok := in.recent[h]; ok || len(b) > recentBytes {
+	if _, ok := in.recent[h]; ok || len(b) > in.recentMax {
 		return
 	}
 	in.recent[h] = recentPiece{root: root, b: b}
 	in.rfifo = append(in.rfifo, h)
 	in.recentLen += len(b)
-	for in.recentLen > recentBytes && len(in.rfifo) > 0 {
+	for in.recentLen > in.recentMax && len(in.rfifo) > 0 {
 		h := in.rfifo[0]
 		in.dropRecent(h)
 		if !in.spilled[h] {
@@ -232,8 +262,16 @@ func (p *Provider) walk(root [32]byte, create bool) *closureWalk {
 }
 
 // checkClosure is storerec.VerifyCHIRP's answer for root from its walk:
-// only what the walk has not yet reached is read and hashed.
+// only what the walk has not yet reached is read and hashed. A root a
+// gateway in this process staged is checked on its account instead
+// (storerec.VerifyCarried), with the blobs this provider holds as bytes
+// hashed to their names (heldBlob) taken unread.
 func (p *Provider) checkClosure(root [32]byte) (*chirp.Closure, error) {
+	if p.inc.isCarried(root) {
+		p.countCheck("carried")
+		return storerec.VerifyCarried(root, p.fetch, p.heldBlob)
+	}
+	p.countCheck("walked")
 	w := p.walk(root, true)
 	p.feed(w)
 	w.final.Store(true)
@@ -267,8 +305,22 @@ func (in *incremental) touch(root [32]byte) {
 // evaluation's check resumes it once. Any other piece is kept in recent,
 // its root's walk there or not yet, and fed to the walk when it waits for
 // it (feed).
-func (p *Provider) arrived(h [32]byte, data, leaves []byte, sub [32]byte, root [32]byte, stored bool) {
+//
+// A carried piece (its gateway's account, TakeLocal) moves no walk: its
+// root is marked carried, and its leaves are kept when this request stored
+// it, the bytes its gateway hashed to h, for the carried check to take it
+// unread and for the proof files.
+func (p *Provider) arrived(h [32]byte, data, leaves []byte, sub [32]byte, root [32]byte, stored, carried bool) {
 	in := p.inc
+	if carried {
+		in.mu.Lock()
+		if stored && len(data) <= storerec.BlobSize {
+			in.keepPre(h, &preBlob{size: uint64(len(data)), leaves: leaves, sub: sub})
+		}
+		in.carry(root)
+		in.mu.Unlock()
+		return
+	}
 	if !stored {
 		if w := p.walk(root, false); w != nil {
 			w.inc.Advance()
@@ -276,16 +328,8 @@ func (p *Provider) arrived(h [32]byte, data, leaves []byte, sub [32]byte, root [
 		return
 	}
 	if len(data) <= storerec.BlobSize {
-		pb := &preBlob{size: uint64(len(data)), leaves: leaves, sub: sub}
 		in.mu.Lock()
-		if in.pre[h] == nil {
-			in.pre[h] = pb
-			in.fifo = append(in.fifo, h)
-			for len(in.fifo) > maxPre {
-				delete(in.pre, in.fifo[0])
-				in.fifo = in.fifo[1:]
-			}
-		}
+		in.keepPre(h, &preBlob{size: uint64(len(data)), leaves: leaves, sub: sub})
 		in.mu.Unlock()
 	}
 	w := p.walk(root, h == root)
@@ -348,6 +392,68 @@ func (in *incremental) forget(root [32]byte, blobs []chirp.Child) {
 		if in.recent[h].root == root {
 			in.dropRecent(h)
 		}
+	}
+	if in.carried[root] {
+		delete(in.carried, root)
+		in.cfifo = slices.DeleteFunc(in.cfifo, func(r [32]byte) bool { return r == root })
+	}
+}
+
+// keepPre keeps a stored piece's leaves, the first account of it kept;
+// in.mu is held.
+func (in *incremental) keepPre(h [32]byte, pb *preBlob) {
+	if in.pre[h] != nil {
+		return
+	}
+	in.pre[h] = pb
+	in.fifo = append(in.fifo, h)
+	for len(in.fifo) > maxPre {
+		delete(in.pre, in.fifo[0])
+		in.fifo = in.fifo[1:]
+	}
+}
+
+// carry marks a root a gateway in this process staged; in.mu is held.
+func (in *incremental) carry(root [32]byte) {
+	if in.carried[root] {
+		return
+	}
+	in.carried[root] = true
+	in.cfifo = append(in.cfifo, root)
+	for len(in.cfifo) > maxCarried {
+		delete(in.carried, in.cfifo[0])
+		in.cfifo = in.cfifo[1:]
+	}
+}
+
+// markCarried marks a root a gateway in this process staged.
+func (in *incremental) markCarried(root [32]byte) {
+	in.mu.Lock()
+	in.carry(root)
+	in.mu.Unlock()
+}
+
+// isCarried reports whether a root's closure is checked on its gateway's
+// account.
+func (in *incremental) isCarried(root [32]byte) bool {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	return in.carried[root]
+}
+
+// heldBlob reports a blob a carried check takes unread: one this provider
+// stored, in this process, from bytes hashed to its name (by itself or by
+// its gateway: its leaves are kept, see arrived), still held at the
+// reference's length.
+func (p *Provider) heldBlob(c chirp.Child) bool {
+	pb := p.inc.blob(c.Hash)
+	return pb != nil && pb.size == c.Length && p.store.Size(c.Hash) == int64(c.Length)
+}
+
+// countCheck counts a closure check by how it was made.
+func (p *Provider) countCheck(mode string) {
+	if p.metrics != nil {
+		p.metrics.inc("bstore_provider_closure_checks_total", "mode="+mode)
 	}
 }
 

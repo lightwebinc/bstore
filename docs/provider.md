@@ -156,13 +156,36 @@ A walk starts when its root's piece arrives. A root whose walk is not kept,
 after a restart for instance, has its walk started by the evaluation, which
 reads back the pieces already held, once each, and continues as more
 arrive. A piece the store already held is read from the store, not taken
-from the request that sent it again. Leaves are kept for at most 1,024
-pieces and walks for 64 roots (the least recently used dropped first). The
-pieces stored last, 128 MiB of them across all walks, are kept until their
-walk comes to wait for each and handed to it then with the hash the
-provider computed, so a piece taken out of order is neither read back nor
-hashed again; one dropped from that budget is read back from the store
-when the walk reaches it.
+from the request that sent it again. Leaves are kept for at most 4,096
+pieces (16 GiB of content waiting for its entries) and walks for 64 roots
+(the least recently used dropped first). The pieces stored last,
+`limits.closure_cache_mb` of them across all walks (128 MiB by default),
+are kept until their walk comes to wait for each and handed to it then
+with the hash the provider computed, so a piece taken out of order is
+neither read back nor hashed again; one dropped from that budget is read
+back from the store when the walk reaches it and hashed once, by the
+check of the walk's fetch. A piece lost on the way holds every later
+piece of its object until it is sent again, so a provider fed a few large
+objects at once keeps more.
+
+**A storage node's own closures.** A provider that runs in its gateway's
+process (`local_provider` with `verify` false, [s3.md](s3.md)) takes each
+piece on the gateway's account, and checks a closure that gateway staged
+on that account instead of walking it. The root and every branch node are
+read, hashed and checked as above (encodings, lengths, child sums,
+depth, cycles, references, the canonical construction); a blob this
+provider stored from the gateway's bytes is taken at its stored length
+without being read; any other blob (one the store already held, say) is
+read and hashed; the proof root is recomputed from the segment leaves the
+gateway hands over with each blob, from the pass that hashed it as it was
+staged (hashed here for a piece without them). The content hash is the
+gateway's, computed over the bytes it staged. What this trusts: the node's
+own gateway hashed the content and the leaves correctly, and nothing
+between that hashing and the store changed the bytes; the bytes on disk are
+checked by later challenges and reads. The entry and every other record
+are checked whole, a provider in another process or on another host walks
+every closure, and `bstore_provider_closure_checks_total` counts the
+checks by `mode` (`carried` or `walked`).
 
 **Deciding.** A closure that fails is the writer's fault: every entry it
 fails is declined, and the reason recorded. One that is not complete yet is
@@ -531,6 +554,7 @@ how readers reach the bytes.
 | Signed answers | `responses_per_sec`, `response_burst` per session, taken before a request is verified |
 | Challenges | `challenges_per_buyer_per_min` with `challenge_burst` per buyer, `free_per_writer_per_min` free ones per writer, `challenge_workers` answered at once |
 | Roots verified and decided | `verify_workers` at once (1 to 64), each reading one 4 MiB blob at a time while verifying, and each holding and advertising for the root it verified |
+| Pieces kept for their closure walks | `closure_cache_mb` (4 to 65,536 MiB) of the pieces stored last, across all walks; one past it is read back from the store when its walk reaches it |
 | Advertisements on the leg | `ad_sends` (1 to 1024) on their way to the settlement leg at once, behind the workers; an unmined input (the funding tree) is put on the leg ahead of its first spender and again at most every two minutes |
 | Advertisements a transaction | `ad_batch` (1 to 1,024) roots in one advertisement transaction, an output each, collected for `ad_batch_ms` behind the first root asked for; renewals are minted one a transaction. The fee is the floor plus a few satoshis an output, paid from as many funding outputs as it needs; the leg sees one transaction for the batch; each root's row is finished when the one proof arrives, and the records topic receives the transaction once per root with that proof |
 | The leg's verdict | `ad_verdict`: `proof` (the default) sends an advertisement and goes on once arcade has taken it, the Merkle proof the background watches for being the evidence that it stands, a refusal showing when the transaction is sent again; `network` waits for the network's verdict before the send slot is released, which bounds the rate at what one node announces (about 150 transactions a second) |
@@ -639,7 +663,7 @@ GorillaPool's public arcade.
 | `terms.min_age` | 0 | 0 to 1008 blocks |
 | `terms.renew_per_gib_day`, `terms.renew_minimum` | 250, 500 | this provider's price, for a renewal and for what an even share of a bounty must cover; a renewal's minimum, at least the fee floor |
 | `terms.max_renew_seconds` | 366 days | the furthest a renewal runs |
-| `limits.*` | as the table above | `handshakes_per_sec` 32, `handshake_burst` 64, `handshakes_per_addr_per_sec` 1, `handshake_addr_burst` 4, `responses_per_sec` 5, `response_burst` 20, `sessions` 10000, `session_ttl_seconds` 600, `challenges_per_buyer_per_min` 6, `challenge_burst` 6, `free_per_writer_per_min` 12, `challenge_workers` 4, `verify_workers` 4, `ad_sends` 64, `ad_batch` 64, `ad_batch_ms` 20, `ad_verdict` `proof`, `undecided_per_writer` 4096, `renewals_per_root_per_hour` 4, `submits_per_addr_per_sec` 1024, `submit_burst` 4096, `in_flight_per_addr` 32, `object_readers` 32, `object_reads_per_addr_per_sec` 50, `object_read_burst` 200, `upload_sessions` 64, `upload_session_seconds` 3600 |
+| `limits.*` | as the table above | `handshakes_per_sec` 32, `handshake_burst` 64, `handshakes_per_addr_per_sec` 1, `handshake_addr_burst` 4, `responses_per_sec` 5, `response_burst` 20, `sessions` 10000, `session_ttl_seconds` 600, `challenges_per_buyer_per_min` 6, `challenge_burst` 6, `free_per_writer_per_min` 12, `challenge_workers` 4, `verify_workers` 4, `closure_cache_mb` 128, `ad_sends` 64, `ad_batch` 64, `ad_batch_ms` 20, `ad_verdict` `proof`, `undecided_per_writer` 4096, `renewals_per_root_per_hour` 4, `submits_per_addr_per_sec` 1024, `submit_burst` 4096, `in_flight_per_addr` 32, `object_readers` 32, `object_reads_per_addr_per_sec` 50, `object_read_burst` 200, `upload_sessions` 64, `upload_session_seconds` 3600 |
 | `tree_count`, `tree_sats` | 1023, 200 | the funding trees; `tree_sats` at least twice the fee floor, and past that only what an advertisement overpays |
 | `fee` | 100 satoshis per 1000 bytes, floor 100, cap 100/1000 | the miner fee policy ([the fee block](configuration.md#the-fee-block)); `source: arc` follows the broadcaster's published rate |
 | `fee_sat_per_byte`, `fee_floor` | none | the older fee keys, still read as `fee.rate {n, 1}` and `fee.floor`, the rate capped at `fee.max_rate` |

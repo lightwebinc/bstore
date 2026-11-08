@@ -173,6 +173,9 @@ type Terms struct {
 // so more workers hold more small entries a second.
 const maxVerifyWorkers = 64
 
+// maxClosureCacheMB bounds limits.closure_cache_mb (64 GiB).
+const maxClosureCacheMB = 65536
+
 // Limits are the routes' hardening; zero takes the default.
 type Limits struct {
 	HandshakesPerSec        float64 `json:"handshakes_per_sec"`
@@ -194,6 +197,13 @@ type Limits struct {
 	// VerifyWorkers bounds the roots seen through at once for entries:
 	// each verified and then decided (held, advertised) by one worker.
 	VerifyWorkers int `json:"verify_workers"`
+	// ClosureCacheMB bounds, in MiB, the pieces just stored that are kept
+	// in memory for their closure walks (128 by default): a piece that
+	// arrives ahead of the one its walk waits for is kept, and one past the
+	// bound is read back from the store when the walk reaches it. A piece
+	// lost on the way holds every later piece of its object until it is
+	// sent again, so a provider fed a few large objects at once keeps more.
+	ClosureCacheMB int `json:"closure_cache_mb"`
 	// AdSends bounds the advertisements on their way to the settlement leg
 	// at once, behind the workers.
 	AdSends int `json:"ad_sends"`
@@ -332,6 +342,9 @@ func (c *Config) defaults() {
 	if l.VerifyWorkers == 0 {
 		l.VerifyWorkers = 4
 	}
+	if l.ClosureCacheMB == 0 {
+		l.ClosureCacheMB = defaultRecentBytes >> 20
+	}
 	if l.AdSends == 0 {
 		l.AdSends = 64
 	}
@@ -452,6 +465,9 @@ func (c *Config) Check() error {
 	}
 	if c.Limits.VerifyWorkers < 1 || c.Limits.VerifyWorkers > maxVerifyWorkers {
 		return fmt.Errorf("limits.verify_workers is 1 to %d", maxVerifyWorkers)
+	}
+	if c.Limits.ClosureCacheMB < 4 || c.Limits.ClosureCacheMB > maxClosureCacheMB {
+		return fmt.Errorf("limits.closure_cache_mb is 4 (one piece) to %d", maxClosureCacheMB)
 	}
 	t := c.Terms
 	if t.FreeC < 30 || t.FreeC > storerec.MaxC {
