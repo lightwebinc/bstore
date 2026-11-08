@@ -16,11 +16,12 @@ import (
 	"github.com/lightwebinc/bstore/storerec"
 )
 
-// The identity keeps every entry it made (entries/<txid>.json and .beef),
+// The identity keeps the entries it made (entries/<txid>.json and .beef),
 // written before the entry is sent, so that it can replay one to a host
-// that lacks it (fill), find the race of a bounty it set, and say which of
-// its entries a token has named (sync). An entry a token of its chain
-// named is marked so, and kept.
+// that lacks it (fill) and say which of its entries a token has named
+// (sync). An entry a token of its chain named is marked so, and kept,
+// until the key is deleted: a delete's race pass drops the key's earlier
+// entries (retire.go), which nothing replays or syncs again.
 
 // EntryLog is one entry this identity made.
 type EntryLog struct {
@@ -46,7 +47,11 @@ func (p *Publisher) logEntry(e *storerec.Entry, rec []byte, txid string, beef []
 		return err
 	}
 	raw, _ := json.Marshal(EntryLog{Txid: txid, Bucket: e.Bucket, Key: e.Key, Kind: e.Kind, Created: e.Created, Record: hex.EncodeToString(rec)})
-	return writeFileSync(tmp, filepath.Join(dir, txid+".json"), raw)
+	if err := writeFileSync(tmp, filepath.Join(dir, txid+".json"), raw); err != nil {
+		return err
+	}
+	p.indexEntry(e, txid)
+	return nil
 }
 
 // Entries are the entries this identity made, oldest claim first.

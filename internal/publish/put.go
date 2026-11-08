@@ -259,7 +259,10 @@ func (p *Publisher) noteBucket(bucket string) error {
 	return p.saveLocked()
 }
 
-// Delete publishes a delete entry for key (spec section 16.2).
+// Delete publishes a delete entry for key (spec section 16.2). Once the
+// entry is made (taken by a quorum now, or kept by the outbox until one
+// takes it) the key's earlier races stop judging and its earlier entries
+// leave entries/ on the next race pass (retire.go).
 func (p *Publisher) Delete(ctx context.Context, bucket string, id [32]byte, key string, created time.Time) (*Receipt, error) {
 	if created.IsZero() {
 		created = p.cfg.Now()
@@ -276,7 +279,13 @@ func (p *Publisher) Delete(ctx context.Context, bucket string, id [32]byte, key 
 	if err := p.noteBucket(bucket); err != nil {
 		return nil, err
 	}
-	return p.publishEntry(ctx, e, rec, nil)
+	r, err := p.publishEntry(ctx, e, rec, nil)
+	if r != nil {
+		if nerr := p.noteDelete(e, r.Txid); nerr != nil {
+			p.cfg.Logf("delete %s: the key's races are left to their deadline: %v", short(r.Txid), nerr)
+		}
+	}
+	return r, err
 }
 
 // pieceBatch is a put's piece carriers in the outbox: to mint later and

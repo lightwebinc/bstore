@@ -134,3 +134,40 @@ func BenchmarkPendingAdd(b *testing.B) {
 	b.ResetTimer()
 	addN(b, s, b.N, 8)
 }
+
+// The same writer's older pending entries for a key go when it writes the
+// key again: a put and the delete that follows it leave one line, read as
+// the delete, and the log reopened says the same. Another writer's entry
+// for the key stays: nothing orders two writers' pending entries but a
+// token.
+func TestPendingSupersededByTheSameWriter(t *testing.T) {
+	dir := t.TempDir()
+	s, err := openState(dir, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	add := func(writer byte, created uint64, kind uint64) string {
+		e := &storerec.Entry{Bucket: "b", Key: "k", Created: created, Kind: kind, Writer: []byte{writer}}
+		c := sha256.Sum256([]byte{writer, byte(created), byte(kind)})
+		if err := s.add(e, []byte("rec"), c); err != nil {
+			t.Fatal(err)
+		}
+		return fmt.Sprintf("%x", c)
+	}
+	add(1, 1, storerec.KindPut)
+	other := add(2, 1, storerec.KindPut)
+	del := add(1, 2, storerec.KindDelete)
+	if len(s.byC) != 2 || s.byC[del] == nil || s.byC[other] == nil {
+		t.Fatalf("%d pending entries", len(s.byC))
+	}
+	if n := s.newest("b", "k"); n == nil || n.C != del {
+		t.Fatal("the key does not read as the delete")
+	}
+	again, err := openState(dir, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again.byC) != 2 || again.byC[del] == nil || again.byC[other] == nil {
+		t.Fatalf("%d pending entries reopened", len(again.byC))
+	}
+}
