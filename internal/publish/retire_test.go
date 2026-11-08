@@ -279,3 +279,41 @@ func TestRetireRollsBackWhenTheSaveFails(t *testing.T) {
 		t.Fatal("an applied delete is still kept")
 	}
 }
+
+// A race whose save failed is read from its file again by the next pass,
+// not kept as the pass left it: what it held in memory (a reclaim's record
+// whose fee coin went back, say) was never written. Once read again it is
+// cached as before.
+func TestRacePassRereadsAfterAFailedSave(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes through a read-only directory")
+	}
+	r := newRaceRig(t)
+	r.put("unsaved", Bounty{Satoshis: 4000, T: 2, K: 2, Retention: 3600, DeadlineBlocks: 500, CheckC: 30})
+	races, err := r.p.racesForTick()
+	if err != nil || len(races) != 1 {
+		t.Fatalf("races: %v %d", err, len(races))
+	}
+	cached := races[0]
+	if err := os.Chmod(r.p.racesDir(), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(r.p.racesDir(), 0o700) })
+	cached.Note = "held in memory only"
+	if err := r.p.saveRace(cached); err == nil {
+		t.Fatal("the save did not fail")
+	}
+	if err := os.Chmod(r.p.racesDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	races, err = r.p.racesForTick()
+	if err != nil || len(races) != 1 {
+		t.Fatalf("races: %v %d", err, len(races))
+	}
+	if races[0] == cached || races[0].Note == cached.Note {
+		t.Fatal("the pass kept a race whose save failed")
+	}
+	if again, _ := r.p.racesForTick(); len(again) != 1 || again[0] != races[0] {
+		t.Fatal("the race read again is not cached")
+	}
+}

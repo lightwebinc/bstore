@@ -101,6 +101,11 @@ type Race struct {
 	// saved is the file's bytes as last read or written: a pass steps every
 	// open race and would otherwise rewrite and sync each one unchanged.
 	saved []byte
+	// unsaved is set while the race's last save failed: what it holds may
+	// not be the file's (a reclaim's record whose fee coin went back to the
+	// pool), so the race pass reads the file again rather than keep it
+	// (racesForTick).
+	unsaved bool
 }
 
 // PublishedNote is an outcome record the race published.
@@ -174,7 +179,8 @@ type RaceOptions struct {
 
 func (p *Publisher) racesDir() string { return filepath.Join(p.cfg.Dir, "races") }
 
-func (p *Publisher) saveRace(r *Race) error {
+func (p *Publisher) saveRace(r *Race) (err error) {
+	defer func() { r.unsaved = err != nil }()
 	if err := os.MkdirAll(p.racesDir(), 0o700); err != nil {
 		return err
 	}

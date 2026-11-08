@@ -288,7 +288,9 @@ func (p *Publisher) pruneEarlierEntries(n retireNote) {
 // race before any pass has seen it, and the identity's lock keeps every
 // other process out), so a file unchanged in size and modification time
 // is the race cached: a rewrite from elsewhere within one tick of the file
-// system's clock, at the same size, would look unchanged.
+// system's clock, at the same size, would look unchanged. A race whose last
+// save failed is read again (Race.unsaved): the file never took what it
+// holds, which an earlier pass would have dropped by reading the file.
 type cachedRace struct {
 	r    *Race
 	size int64
@@ -320,7 +322,7 @@ func (p *Publisher) racesForTick() ([]*Race, error) {
 			continue
 		}
 		seen[entry] = true
-		if c, ok := p.raceCache[entry]; ok && c.size == info.Size() && c.mod.Equal(info.ModTime()) {
+		if c, ok := p.raceCache[entry]; ok && !c.r.unsaved && c.size == info.Size() && c.mod.Equal(info.ModTime()) {
 			out = append(out, c.r)
 			continue
 		}
