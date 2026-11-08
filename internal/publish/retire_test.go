@@ -237,3 +237,41 @@ func TestRetryDelay(t *testing.T) {
 		}
 	}
 }
+
+// A retire whose save fails leaves the race as its file says, and the
+// delete waits for the next pass.
+func TestRetireRollsBackWhenTheSaveFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes through a read-only directory")
+	}
+	r := newRaceRig(t)
+	race := r.put("gone", Bounty{Satoshis: 4000, T: 2, K: 2, Retention: 3600, DeadlineBlocks: 500, CheckC: 30})
+	if _, err := r.p.Delete(r.ctx, testBucket, sha256.Sum256([]byte("id")), "gone", time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	races, err := r.p.racesForTick()
+	if err != nil || len(races) != 1 {
+		t.Fatalf("races: %v %d", err, len(races))
+	}
+	if err := os.Chmod(r.p.racesDir(), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(r.p.racesDir(), 0o700) })
+	r.p.applyRetires(races)
+	if got := races[0]; got.Retired != "" || got.State != RaceOpen || got.Closing {
+		t.Fatalf("a retire that was not saved changed the race: %q %s %v", got.Retired, got.State, got.Closing)
+	}
+	if len(r.p.retires) != 1 {
+		t.Fatalf("%d deletes left for the next pass, want 1", len(r.p.retires))
+	}
+	if err := os.Chmod(r.p.racesDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r.p.applyRetires(races)
+	if got, _ := r.p.Race(race.Entry); got.Retired == "" || got.State != RaceClosed {
+		t.Fatalf("the next pass did not retire it: %q %s", got.Retired, got.State)
+	}
+	if len(r.p.retires) != 0 {
+		t.Fatal("an applied delete is still kept")
+	}
+}

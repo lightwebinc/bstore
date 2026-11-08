@@ -316,21 +316,32 @@ func (s *state) add(e *storerec.Entry, rec []byte, c [32]byte) error {
 		Record: rec, Seen: s.now().Unix(), entry: e}
 	var older []string
 	for _, x := range s.byKey[e.Bucket][e.Key] {
-		if xe := x.decoded(); xe != nil && bytes.Equal(xe.Writer, e.Writer) && newer(p.Created, p.C, x.Created, x.C) {
-			older = append(older, x.C)
+		xe := x.decoded()
+		if xe == nil || !bytes.Equal(xe.Writer, e.Writer) || x.C == p.C {
+			continue
 		}
-	}
-	for _, x := range older {
-		if s.unindex(x) {
-			if _, err := s.appendLocked(logLine{Drop: x}); err != nil {
-				return err
-			}
+		if newer(x.Created, x.C, p.Created, p.C) {
+			// Two of the writer's own writes finished out of order: the
+			// newer one already stands for the key, and this one is
+			// superseded on arrival.
+			return nil
 		}
+		older = append(older, x.C)
 	}
+	// The new entry is indexed and its line queued before an older one is
+	// dropped: a rewrite of the log that one of the drops sets off holds
+	// it, so no crash leaves the key with neither.
 	s.index(p)
 	gen, err := s.appendLocked(logLine{Add: p})
 	if err != nil {
 		return err
+	}
+	for _, x := range older {
+		if s.unindex(x) {
+			if gen, err = s.appendLocked(logLine{Drop: x}); err != nil {
+				return err
+			}
+		}
 	}
 	return s.awaitLog(gen)
 }

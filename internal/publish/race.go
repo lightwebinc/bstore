@@ -381,6 +381,11 @@ func (p *Publisher) Step(ctx context.Context, r *Race, o RaceOptions) error {
 		return err
 	}
 	if err := p.judge(ctx, r, tip.Height, o); err != nil {
+		if ctx.Err() != nil {
+			// The pass was stopped (the gateway is going down): not the
+			// race's failure, and no wait is recorded for it.
+			return err
+		}
 		r.Fails++
 		d := retryDelay(r.Fails)
 		r.RetryAt = p.cfg.Now().Add(d).Unix()

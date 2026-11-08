@@ -74,6 +74,7 @@ func (p *Publisher) noteDelete(e *storerec.Entry, txid string) error {
 	}
 	p.retireMu.Lock()
 	defer p.retireMu.Unlock()
+	_, statErr := os.Stat(p.retirePath())
 	f, err := os.OpenFile(p.retirePath(), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
@@ -88,6 +89,12 @@ func (p *Publisher) noteDelete(e *storerec.Entry, txid string) error {
 	}
 	if err := f.Close(); err != nil {
 		return err
+	}
+	if errors.Is(statErr, os.ErrNotExist) {
+		// The file is new: its name is durable only once the directory is.
+		if err := syncDirs(map[string]bool{p.cfg.Dir: true}); err != nil {
+			return err
+		}
 	}
 	p.retires = append(p.retires, retireNote{Bucket: e.Bucket, Key: e.Key, Created: e.Created, Entry: txid})
 	return nil
@@ -159,6 +166,15 @@ func (p *Publisher) writeRetiresLocked() error {
 // when at least t passed, else with nothing paid and the hold output left
 // for the reclaim after the deadline. It saves the race.
 func (p *Publisher) retire(r *Race, n retireNote) error {
+	// A race whose save fails keeps what its file says: the pass's cache
+	// trusts an unchanged file, so the change is undone, and the note stays
+	// for the next pass.
+	was := struct {
+		retired, state, note string
+		closing              bool
+		fails                int
+		retryAt              int64
+	}{r.Retired, r.State, r.Note, r.Closing, r.Fails, r.RetryAt}
 	passed := uint64(len(r.Passed()))
 	why := fmt.Sprintf("the key was deleted (entry %s)", short(n.Entry))
 	r.Retired = why
@@ -172,6 +188,7 @@ func (p *Publisher) retire(r *Race, n retireNote) error {
 			why, passed, r.entry.Hold.T)
 	}
 	if err := p.saveRace(r); err != nil {
+		r.Retired, r.State, r.Note, r.Closing, r.Fails, r.RetryAt = was.retired, was.state, was.note, was.closing, was.fails, was.retryAt
 		return err
 	}
 	p.cfg.Logf("race %s: %s", short(r.Entry), r.Note)
