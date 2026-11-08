@@ -158,7 +158,26 @@ func (s *Store) remove(h [32]byte) int64 {
 	if err != nil || os.Remove(s.objectPath(h)) != nil {
 		return 0
 	}
+	s.forgetLocked(h)
 	return info.Size()
+}
+
+// forgetLocked drops what this process knew of an object's bytes once its
+// file is gone: bytes written under the same name later (a stage's write
+// marks them again; a part linked in does not) are held to their hash. The
+// caller holds mu.
+func (s *Store) forgetLocked(h [32]byte) {
+	delete(s.fresh, h)
+	delete(s.staged, h)
+}
+
+// drop removes an object that did not hash to its name, and what this
+// process knew of it.
+func (s *Store) drop(h [32]byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_ = os.Remove(s.objectPath(h))
+	s.forgetLocked(h)
 }
 
 // Get reads an object and holds it to its hash: bytes that went bad on disk
@@ -169,7 +188,7 @@ func (s *Store) Get(h [32]byte) ([]byte, error) {
 		return nil, err
 	}
 	if sha256.Sum256(b) != h {
-		_ = os.Remove(s.objectPath(h))
+		s.drop(h)
 		return nil, fmt.Errorf("publish: stored object %x does not hash to its name", h[:6])
 	}
 	return b, nil
@@ -217,7 +236,7 @@ func (s *Store) readInto(h [32]byte, fresh bool, buf []byte) ([]byte, error) {
 		return nil, err
 	}
 	if !fresh && sha256.Sum256(buf) != h {
-		_ = os.Remove(s.objectPath(h))
+		s.drop(h)
 		return nil, fmt.Errorf("publish: stored object %x does not hash to its name", h[:6])
 	}
 	return buf, nil
@@ -260,7 +279,9 @@ func (s *Store) unpinFresh(h [32]byte, fresh bool) {
 	if s.pins[h]--; s.pins[h] <= 0 {
 		delete(s.pins, h)
 	}
-	if fresh {
+	// Freshness the object lost with its file (forgetLocked) is not taken
+	// from a pin made since: at worst that pin's bytes are hashed again.
+	if fresh && s.fresh[h] > 0 {
 		if s.fresh[h]--; s.fresh[h] <= 0 {
 			delete(s.fresh, h)
 		}
