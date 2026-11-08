@@ -34,6 +34,13 @@ type Store struct {
 	// staged counts the stages that wrote or found each object in this
 	// process: only those are read without hashing them again.
 	staged map[[32]byte]int
+	// fresh counts the pins taken on an object while a stage of this
+	// process still marked it (pinFresh): the outbox's sends of a put's
+	// pieces after the put answered read them without hashing again, as
+	// the stage itself would have. A pin taken on bytes another process or
+	// an earlier run left (an outbox reloaded after a restart) is not fresh,
+	// and those bytes are held to their hash.
+	fresh map[[32]byte]int
 }
 
 // orphanAge is how long an object no closure names is kept: what a put cut
@@ -62,7 +69,7 @@ func OpenStore(dir string) (*Store, error) {
 			_ = os.Remove(filepath.Join(dir, "tmp", e.Name()))
 		}
 	}
-	return &Store{dir: dir, busy: map[[32]byte]int{}, pins: map[[32]byte]int{}, staged: map[[32]byte]int{}}, nil
+	return &Store{dir: dir, busy: map[[32]byte]int{}, pins: map[[32]byte]int{}, staged: map[[32]byte]int{}, fresh: map[[32]byte]int{}}, nil
 }
 
 func (s *Store) objectPath(h [32]byte) string {
@@ -151,7 +158,26 @@ func (s *Store) remove(h [32]byte) int64 {
 	if err != nil || os.Remove(s.objectPath(h)) != nil {
 		return 0
 	}
+	s.forgetLocked(h)
 	return info.Size()
+}
+
+// forgetLocked drops what this process knew of an object's bytes once its
+// file is gone: bytes written under the same name later (a stage's write
+// marks them again; a part linked in does not) are held to their hash. The
+// caller holds mu.
+func (s *Store) forgetLocked(h [32]byte) {
+	delete(s.fresh, h)
+	delete(s.staged, h)
+}
+
+// drop removes an object that did not hash to its name, and what this
+// process knew of it.
+func (s *Store) drop(h [32]byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_ = os.Remove(s.objectPath(h))
+	s.forgetLocked(h)
 }
 
 // Get reads an object and holds it to its hash: bytes that went bad on disk
@@ -162,7 +188,7 @@ func (s *Store) Get(h [32]byte) ([]byte, error) {
 		return nil, err
 	}
 	if sha256.Sum256(b) != h {
-		_ = os.Remove(s.objectPath(h))
+		s.drop(h)
 		return nil, fmt.Errorf("publish: stored object %x does not hash to its name", h[:6])
 	}
 	return b, nil
@@ -183,12 +209,13 @@ func (s *Store) readStaged(h [32]byte) ([]byte, error) {
 }
 
 // readInto reads an object into buf (grown when too small), held to its
-// hash unless fresh: one a stage of this process wrote or found and still
-// holds was hashed as it was written, moments before.
+// hash unless fresh: one a stage of this process wrote and still holds, or
+// one a fresh pin holds (pinFresh), was hashed as it was written. With
+// fresh false it is held to its hash whatever marks it.
 func (s *Store) readInto(h [32]byte, fresh bool, buf []byte) ([]byte, error) {
 	if fresh {
 		s.mu.Lock()
-		fresh = s.staged[h] > 0
+		fresh = s.staged[h] > 0 || s.fresh[h] > 0
 		s.mu.Unlock()
 	}
 	f, err := os.Open(s.objectPath(h))
@@ -209,7 +236,7 @@ func (s *Store) readInto(h [32]byte, fresh bool, buf []byte) ([]byte, error) {
 		return nil, err
 	}
 	if !fresh && sha256.Sum256(buf) != h {
-		_ = os.Remove(s.objectPath(h))
+		s.drop(h)
 		return nil, fmt.Errorf("publish: stored object %x does not hash to its name", h[:6])
 	}
 	return buf, nil
@@ -228,6 +255,36 @@ func (s *Store) unpinOne(h [32]byte) {
 	defer s.mu.Unlock()
 	if s.pins[h]--; s.pins[h] <= 0 {
 		delete(s.pins, h)
+	}
+}
+
+// pinFresh is pin that also carries the object's freshness when a stage of
+// this process marks it now, or another fresh pin does: it reports whether
+// it did, for unpinFresh.
+func (s *Store) pinFresh(h [32]byte) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pins[h]++
+	if s.staged[h] > 0 || s.fresh[h] > 0 {
+		s.fresh[h]++
+		return true
+	}
+	return false
+}
+
+// unpinFresh releases a pin pinFresh took.
+func (s *Store) unpinFresh(h [32]byte, fresh bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pins[h]--; s.pins[h] <= 0 {
+		delete(s.pins, h)
+	}
+	// Freshness the object lost with its file (forgetLocked) is not taken
+	// from a pin made since: at worst that pin's bytes are hashed again.
+	if fresh && s.fresh[h] > 0 {
+		if s.fresh[h]--; s.fresh[h] <= 0 {
+			delete(s.fresh, h)
+		}
 	}
 }
 

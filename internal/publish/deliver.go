@@ -302,9 +302,11 @@ type Outbox struct {
 	now   func() time.Time
 	mu    sync.Mutex
 	// sending marks items a send is working on, so the background run
-	// leaves them alone; refs are the store objects pinned for items.
-	sending map[string]bool
-	refs    map[string][32]byte
+	// leaves them alone; refs are the store objects pinned for items, and
+	// refFresh the pins that carry a stage's freshness (Store.pinFresh).
+	sending  map[string]bool
+	refs     map[string][32]byte
+	refFresh map[string]bool
 	// live are the batch files a put is writing: the background run
 	// leaves them to it.
 	live map[string]bool
@@ -497,7 +499,8 @@ func openOutbox(dir string, d *Delivery, store *Store, logf func(string, ...any)
 	if err := os.MkdirAll(filepath.Join(dir, "tmp"), 0o700); err != nil {
 		return nil, err
 	}
-	o := &Outbox{dir: dir, d: d, store: store, logf: logf, now: now, sending: map[string]bool{}, refs: map[string][32]byte{}, live: map[string]bool{}}
+	o := &Outbox{dir: dir, d: d, store: store, logf: logf, now: now, sending: map[string]bool{}, refs: map[string][32]byte{},
+		refFresh: map[string]bool{}, live: map[string]bool{}}
 	// What is owed by reference keeps its object in the store.
 	items := o.load()
 	for _, it := range items {
@@ -525,16 +528,20 @@ func (o *Outbox) pinRef(it *outItem) {
 		return
 	}
 	o.refs[it.ID] = h
-	o.store.pin(h)
+	// Pinned while a put's stage still marks it, the object stays fresh for
+	// the item's sends: they read it without hashing it again.
+	o.refFresh[it.ID] = o.store.pinFresh(h)
 }
 
 func (o *Outbox) unpinRef(id string) {
 	o.mu.Lock()
 	h, ok := o.refs[id]
+	fresh := o.refFresh[id]
 	delete(o.refs, id)
+	delete(o.refFresh, id)
 	o.mu.Unlock()
 	if ok && o.store != nil {
-		o.store.unpinOne(h)
+		o.store.unpinFresh(h, fresh)
 	}
 }
 
@@ -615,7 +622,8 @@ func (o *Outbox) beefOf(it *outItem) ([]byte, error) {
 	if it.Ver >= refVersion && refSum(it.Head, it.Tail) != it.Sum {
 		return nil, errors.New("the head and tail kept are not the ones recorded")
 	}
-	data, err := o.store.Get(h)
+	// Held to its hash unless a fresh pin holds it (pinRef).
+	data, err := o.store.readInto(h, true, nil)
 	if err != nil {
 		return nil, err
 	}
