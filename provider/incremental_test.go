@@ -34,7 +34,7 @@ func TestIncrementalClosureMatchesFull(t *testing.T) {
 		}
 		dir := t.TempDir()
 		_ = os.MkdirAll(filepath.Join(dir, "roots"), 0o700)
-		p := &Provider{store: st, inc: newIncremental(), cfg: &Config{Data: dir}}
+		p := &Provider{store: st, inc: newIncremental(0), cfg: &Config{Data: dir}}
 		objs := b.Objects()
 		rng.Shuffle(len(objs), func(i, j int) { objs[i], objs[j] = objs[j], objs[i] })
 		for k, o := range objs {
@@ -53,7 +53,7 @@ func TestIncrementalClosureMatchesFull(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		restarted := &Provider{store: st, inc: newIncremental(), cfg: p.cfg}
+		restarted := &Provider{store: st, inc: newIncremental(0), cfg: p.cfg}
 		for _, pp := range []*Provider{p, restarted} {
 			q, err := pp.checkClosure(b.RootHash)
 			if err != nil {
@@ -85,7 +85,7 @@ func TestIncrementalClosureLabels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := &Provider{store: st, inc: newIncremental(), cfg: &Config{Data: t.TempDir()}}
+	p := &Provider{store: st, inc: newIncremental(0), cfg: &Config{Data: t.TempDir()}}
 	objs := b.Objects()
 	for _, o := range objs[:len(objs)-1] {
 		h := sha256.Sum256(o)
@@ -115,7 +115,7 @@ func TestIncrementalResentPieceDoesNotMaskDamage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := &Provider{store: st, inc: newIncremental(), cfg: &Config{Data: t.TempDir()}}
+	p := &Provider{store: st, inc: newIncremental(0), cfg: &Config{Data: t.TempDir()}}
 	objs := b.Objects()
 	last := objs[len(objs)-1]
 	lh := sha256.Sum256(last)
@@ -140,7 +140,7 @@ func TestIncrementalWalksBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := &Provider{store: st, inc: newIncremental(), cfg: &Config{Data: t.TempDir()}}
+	p := &Provider{store: st, inc: newIncremental(0), cfg: &Config{Data: t.TempDir()}}
 	root := func(i int) [32]byte { return sha256.Sum256([]byte{byte(i), byte(i >> 8)}) }
 	for i := range maxRoots + 10 {
 		r := root(i)
@@ -185,7 +185,7 @@ func TestIncrementalKeepsPiecesAheadOfTheWalk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := &Provider{store: st, inc: newIncremental(), cfg: &Config{Data: t.TempDir()}}
+	p := &Provider{store: st, inc: newIncremental(0), cfg: &Config{Data: t.TempDir()}}
 	objs := b.Objects() // the root, then the four blobs
 	if len(objs) != 5 {
 		t.Fatalf("%d objects", len(objs))
@@ -208,7 +208,7 @@ func TestIncrementalKeepsPiecesAheadOfTheWalk(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if p.inc.recentLen == 0 || p.inc.recentLen > recentBytes {
+	if p.inc.recentLen == 0 || p.inc.recentLen > defaultRecentBytes {
 		t.Fatalf("%d bytes kept", p.inc.recentLen)
 	}
 	put(objs[1])
@@ -232,7 +232,7 @@ func TestIncrementalKeepsPiecesAheadOfTheWalk(t *testing.T) {
 		p.inc.mu.Lock()
 		p.inc.keepRecent(sha256.Sum256(o), b.RootHash, o)
 		p.inc.mu.Unlock()
-		if p.inc.recentLen > recentBytes || len(p.inc.rfifo) != len(p.inc.recent) {
+		if p.inc.recentLen > defaultRecentBytes || len(p.inc.rfifo) != len(p.inc.recent) {
 			t.Fatalf("%d bytes, %d in order, %d kept", p.inc.recentLen, len(p.inc.rfifo), len(p.inc.recent))
 		}
 	}
@@ -242,5 +242,74 @@ func TestIncrementalKeepsPiecesAheadOfTheWalk(t *testing.T) {
 // them.
 func arrive(p *Provider, h [32]byte, data []byte, root [32]byte, stored bool) {
 	_, leaves, sub := storerec.HashBlob(data)
-	p.arrived(h, data, leaves, sub, root, stored)
+	p.arrived(h, data, leaves, sub, root, stored, false)
+}
+
+// spill drops a kept piece for room, as keepRecent does when recent is full.
+func spill(in *incremental, h [32]byte) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	in.dropRecent(h)
+	in.spilled[h] = true
+	in.sfifo = append(in.sfifo, h)
+}
+
+// A piece dropped from recent for room is read back from the store and held
+// to its hash once (feed, through the walk's checked fetch), then handed to
+// the walk with that hash: the closure completes. One whose stored bytes do
+// not hash to its name is refused as the full check refuses it.
+func TestIncrementalSpilledPieceReadBack(t *testing.T) {
+	for _, damaged := range []bool{false, true} {
+		content := make([]byte, 3*storerec.BlobSize)
+		for i := range content {
+			content[i] = byte(i / storerec.BlobSize)
+		}
+		b, err := storerec.Build(content)
+		if err != nil {
+			t.Fatal(err)
+		}
+		st, err := backend.OpenNative(t.TempDir(), "http://x")
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := &Provider{store: st, inc: newIncremental(0), cfg: &Config{Data: t.TempDir()}}
+		objs := b.Objects() // the root, then the three blobs
+		h1 := sha256.Sum256(objs[1])
+		for i, o := range objs {
+			h := sha256.Sum256(o)
+			put := st.Put
+			stored := o
+			if damaged && i == 1 {
+				// Bytes that went bad in the store: written under the name
+				// without the store's own check, as a fault would leave them.
+				put, stored = st.PutHashed, append([]byte{o[0] ^ 1}, o[1:]...)
+			}
+			if err := put(h, stored); err != nil {
+				t.Fatal(err)
+			}
+			if i == 1 {
+				// Kept, then dropped for room before the walk reaches it.
+				p.inc.mu.Lock()
+				p.inc.keepRecent(h, b.RootHash, o)
+				p.inc.mu.Unlock()
+				spill(p.inc, h)
+				continue
+			}
+			arrive(p, h, o, b.RootHash, true)
+		}
+		if p.inc.pending(h1) {
+			t.Fatal("the spilled piece is still kept")
+		}
+		c, err := p.checkClosure(b.RootHash)
+		if !damaged {
+			if err != nil || c == nil || len(c.Blobs) != 3 {
+				t.Fatalf("a spilled piece read back: %v", err)
+			}
+			continue
+		}
+		_, want := storerec.VerifyCHIRP(b.RootHash, p.fetch)
+		if !errors.Is(err, storerec.ErrClosure) || want == nil || err.Error() != want.Error() {
+			t.Fatalf("a damaged spilled piece: got %v, VerifyCHIRP %v", err, want)
+		}
+	}
 }

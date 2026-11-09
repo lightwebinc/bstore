@@ -41,7 +41,20 @@ type Store struct {
 	// an earlier run left (an outbox reloaded after a restart) is not fresh,
 	// and those bytes are held to their hash.
 	fresh map[[32]byte]int
+	// leaves are the segment leaves of an object a stage of this process
+	// wrote, from the pass that hashed it (32 bytes a segment), kept while
+	// the object is staged or fresh: the provider in this process takes
+	// them with the piece instead of hashing its segments again.
+	// leavesBytes is their total, held to maxLeavesBytes.
+	leaves      map[[32]byte][]byte
+	leavesBytes int
 }
+
+// maxLeavesBytes bounds the segment leaves a store keeps (keepLeaves): 128
+// MiB is the leaves of 16 GiB of content staged or waiting to be sent. A
+// blob past it keeps none, and the provider in this process hashes its
+// segments itself, as for a blob the stage found already held.
+var maxLeavesBytes = 128 << 20
 
 // orphanAge is how long an object no closure names is kept: what a put cut
 // short left behind.
@@ -69,7 +82,8 @@ func OpenStore(dir string) (*Store, error) {
 			_ = os.Remove(filepath.Join(dir, "tmp", e.Name()))
 		}
 	}
-	return &Store{dir: dir, busy: map[[32]byte]int{}, pins: map[[32]byte]int{}, staged: map[[32]byte]int{}, fresh: map[[32]byte]int{}}, nil
+	return &Store{dir: dir, busy: map[[32]byte]int{}, pins: map[[32]byte]int{}, staged: map[[32]byte]int{}, fresh: map[[32]byte]int{},
+		leaves: map[[32]byte][]byte{}}, nil
 }
 
 func (s *Store) objectPath(h [32]byte) string {
@@ -131,7 +145,49 @@ func (s *Store) unstage(hs [][32]byte) {
 	for _, h := range hs {
 		if s.staged[h]--; s.staged[h] <= 0 {
 			delete(s.staged, h)
+			s.dropLeavesLocked(h)
 		}
+	}
+}
+
+// keepLeaves keeps an object's segment leaves while a stage of this
+// process marks it (it wrote the object from the bytes it hashed); an
+// object found already held, no longer marked, or past maxLeavesBytes
+// keeps none.
+func (s *Store) keepLeaves(h [32]byte, leaves []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.staged[h] > 0 && s.leaves[h] == nil && s.leavesBytes+len(leaves) <= maxLeavesBytes {
+		s.leaves[h] = leaves
+		s.leavesBytes += len(leaves)
+	}
+}
+
+// leavesOf returns the segment leaves kept for an object, or nil (and nil
+// without a store).
+func (s *Store) leavesOf(h [32]byte) []byte {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.leaves[h]
+}
+
+// dropLeavesLocked drops an object's leaves once neither a stage nor a
+// fresh pin marks it. The caller holds mu.
+func (s *Store) dropLeavesLocked(h [32]byte) {
+	if s.staged[h] <= 0 && s.fresh[h] <= 0 {
+		s.deleteLeavesLocked(h)
+	}
+}
+
+// deleteLeavesLocked drops an object's leaves from the total. The caller
+// holds mu.
+func (s *Store) deleteLeavesLocked(h [32]byte) {
+	if l, ok := s.leaves[h]; ok {
+		s.leavesBytes -= len(l)
+		delete(s.leaves, h)
 	}
 }
 
@@ -169,6 +225,7 @@ func (s *Store) remove(h [32]byte) int64 {
 func (s *Store) forgetLocked(h [32]byte) {
 	delete(s.fresh, h)
 	delete(s.staged, h)
+	s.deleteLeavesLocked(h)
 }
 
 // drop removes an object that did not hash to its name, and what this
@@ -284,6 +341,7 @@ func (s *Store) unpinFresh(h [32]byte, fresh bool) {
 	if fresh && s.fresh[h] > 0 {
 		if s.fresh[h]--; s.fresh[h] <= 0 {
 			delete(s.fresh, h)
+			s.dropLeavesLocked(h)
 		}
 	}
 }

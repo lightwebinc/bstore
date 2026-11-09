@@ -19,10 +19,16 @@ import (
 // taken. With verify unset and an account given, the gateway's account is
 // taken as given: the record's bucket, root, writer and piece, the piece's
 // SHA-256, the funding output and the carrier's txid are the ones it minted,
-// and only the piece's segment leaves are hashed here. The bucket's writer
-// list, the funding output's one carrier and the room are held as always,
-// and the closure walk still checks the closure's structure and content
-// hash before the root is advertised.
+// and the piece's segment leaves are the gateway's when it hands them over
+// (lp.Leaves, of the piece's length), hashed here when it does not. The
+// bucket's writer list, the funding output's one carrier and the room are
+// held as always. A piece of a closure the gateway staged (lp.Staged) is
+// carried: before its root is advertised, the closure is checked on the
+// gateway's account (storerec.VerifyCarried): every node is read, hashed and
+// checked, the canonical construction and the proof root (from the leaves)
+// as always, a blob this provider stored from the gateway's bytes is taken
+// unread, any other blob is read and hashed, and the content hash is the
+// gateway's, computed over the bytes it staged. A record is checked whole.
 //
 // The piece is kept by reference: lp.BEEF is this provider's from here on
 // (the gateway does not reuse it). A refusal comes back as publish.Refused,
@@ -45,7 +51,7 @@ func (p *Provider) TakeLocal(ctx context.Context, lp publish.LocalPiece, verify 
 	defer func() { <-p.limits.takes }()
 	mode := "trusted"
 	var pc *storerec.PieceCarrier
-	var known *[32]byte
+	var acct *localAccount
 	if verify || !lp.Known {
 		mode = "verified"
 		var err error
@@ -63,11 +69,16 @@ func (p *Provider) TakeLocal(ctx context.Context, lp publish.LocalPiece, verify 
 		}
 		pc = &storerec.PieceCarrier{Piece: &storerec.Piece{Bucket: lp.Bucket, Writer: lp.Writer, Root: lp.Root, Piece: lp.Piece},
 			Commitment: lp.Commitment, Funding: lp.Funding}
-		known = &lp.Hash
+		acct = &localAccount{hash: lp.Hash, staged: lp.Staged}
+		leaves := "hashed"
+		if lp.Leaves != nil && len(lp.Leaves) == storerec.LeavesLen(len(lp.Piece)) {
+			acct.leaves, leaves = lp.Leaves, "carried"
+		}
+		p.metrics.inc("bstore_provider_local_leaves_total", "leaves="+leaves)
 	}
-	// The piece is stored before the answer; with the gateway's account its
-	// leaves and the closure walk it moves run after (keepPiece's later).
-	w := p.takePiece(b, pc, known, known != nil)
+	// The piece is stored before the answer; on the gateway's account its
+	// leaves and what it moves run after (keepPiece).
+	w := p.takePiece(b, pc, acct)
 	switch {
 	case w == storeFailed:
 		p.metrics.inc("bstore_provider_local_takes_total", "result=error", "mode="+mode)

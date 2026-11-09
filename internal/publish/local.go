@@ -20,6 +20,17 @@ import (
 // deriving them from the BEEF again; one that verifies checks the BEEF as it
 // checks any submission. Piece is a slice of BEEF. Known is unset for an
 // item read back from the outbox after a restart, which kept only its bytes.
+//
+// Leaves, with Known, are the piece's segment leaves (32 bytes a segment)
+// from the pass that hashed it when it was staged, while the gateway still
+// keeps them (a piece its stage wrote, still fresh), or nil: the provider
+// takes them for its proofs instead of hashing the segments again.
+//
+// Staged, with Known, says the gateway staged the piece's closure in this
+// process: the root's content hash is the one its stage computed over the
+// bytes it handed over, so a provider that trusts its gateway may check the
+// closure on that account. A closure copied in from elsewhere (its content
+// hash the source entry's) is not, and is walked.
 type LocalPiece struct {
 	Topic string
 	BEEF  []byte
@@ -32,6 +43,8 @@ type LocalPiece struct {
 	Hash       [32]byte
 	Funding    transaction.Outpoint
 	Commitment [32]byte
+	Leaves     []byte
+	Staged     bool
 }
 
 // Refused is how a local provider says it took nothing for a reason the same
@@ -48,6 +61,9 @@ type localMeta struct {
 	commitment [32]byte
 	// at and n place the piece in the BEEF minted with it.
 	at, n int
+	// staged is set for a piece of a closure this process staged
+	// (StoreClosure.Staged): its root's content hash is the stage's.
+	staged bool
 }
 
 // sendLocal hands an item to the local provider (Delivery.Local).
@@ -56,6 +72,7 @@ func (o *Outbox) sendLocal(ctx context.Context, it *outItem, t Target, beef []by
 	if m := it.local; m != nil && m.at >= 0 && m.at+m.n <= len(beef) {
 		lp.Known, lp.Bucket, lp.Root, lp.Writer = true, m.bucket, m.root, o.writer
 		lp.Piece, lp.Hash, lp.Funding, lp.Commitment = beef[m.at:m.at+m.n:m.at+m.n], m.hash, m.funding, m.commitment
+		lp.Leaves, lp.Staged = o.store.leavesOf(m.hash), m.staged
 	}
 	return o.d.Local(ctx, lp)
 }

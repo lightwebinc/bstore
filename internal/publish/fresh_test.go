@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/lightwebinc/bstore/storerec"
 )
 
 // corrupt rewrites an object's file with other bytes of the same length:
@@ -153,5 +155,104 @@ func TestRemovedObjectLosesItsFreshness(t *testing.T) {
 	st.unpinFresh(h, fresh)
 	if len(st.fresh) != 0 {
 		t.Fatal("a pin released after its object's removal left freshness behind")
+	}
+}
+
+// A stage keeps each blob's leaves while the blob is staged or a fresh pin
+// holds it, and lets them go with the last mark, or with the blob's file.
+func TestStoreKeepsLeavesWhileFresh(t *testing.T) {
+	st, err := OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := bytes.Repeat([]byte("leaves, "), (storerec.BlobSize+4097)/8)
+	s, err := st.Stage(context.Background(), bytes.NewReader(content), uint64(len(content)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Manifest.Blobs) != 2 {
+		t.Fatalf("%d blobs", len(s.Manifest.Blobs))
+	}
+	var hs [2][32]byte
+	for i, x := range s.Manifest.Blobs {
+		b, err := hex.DecodeString(x)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hs[i] = [32]byte(b)
+	}
+	want, _ := storerec.LeavesOf(content[:storerec.BlobSize])
+	if got := st.leavesOf(hs[0]); !bytes.Equal(got, want) {
+		t.Fatalf("staged: %d bytes of leaves, want %d", len(got), len(want))
+	}
+	if st.leavesOf(s.Root) != nil {
+		t.Fatal("the root has leaves")
+	}
+	fresh := st.pinFresh(hs[0])
+	s.Release()
+	if st.leavesOf(hs[0]) == nil || st.leavesOf(hs[1]) != nil {
+		t.Fatal("after the stage let go: a pinned blob keeps its leaves, the other none")
+	}
+	st.unpinFresh(hs[0], fresh)
+	if st.leavesOf(hs[0]) != nil {
+		t.Fatal("leaves kept past the last pin")
+	}
+
+	// Staged again, the blobs are found held, not written: no leaves. A
+	// blob written anew whose file then goes takes its leaves with it.
+	again, err := st.Stage(context.Background(), bytes.NewReader(content), uint64(len(content)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer again.Release()
+	if st.leavesOf(hs[0]) != nil {
+		t.Fatal("leaves for a blob the stage found already held")
+	}
+	other := bytes.Repeat([]byte("other leaves, "), 4096)
+	s, err = st.Stage(context.Background(), bytes.NewReader(other), uint64(len(other)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Release()
+	b, err := hex.DecodeString(s.Manifest.Blobs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := [32]byte(b)
+	if st.leavesOf(h) == nil {
+		t.Fatal("a blob written anew has no leaves")
+	}
+	st.mu.Lock()
+	st.forgetLocked(h)
+	kept := st.leavesBytes
+	st.mu.Unlock()
+	if st.leavesOf(h) != nil {
+		t.Fatal("leaves kept for a forgotten object")
+	}
+	if kept != len(st.leavesOf(hs[0]))+len(st.leavesOf(hs[1])) {
+		t.Fatalf("%d bytes of leaves counted", kept)
+	}
+
+	// Past the bound a blob keeps none (its provider hashes it).
+	defer func(n int) { maxLeavesBytes = n }(maxLeavesBytes)
+	maxLeavesBytes = storerec.LeavesLen(storerec.BlobSize)
+	big := append(bytes.Repeat([]byte{'a'}, storerec.BlobSize), bytes.Repeat([]byte{'b'}, storerec.BlobSize)...)
+	s2, err := st.Stage(context.Background(), bytes.NewReader(big), uint64(len(big)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Release()
+	n := 0
+	for _, x := range s2.Manifest.Blobs {
+		b, _ := hex.DecodeString(x)
+		if st.leavesOf([32]byte(b)) != nil {
+			n++
+		}
+	}
+	st.mu.Lock()
+	total := st.leavesBytes
+	st.mu.Unlock()
+	if n != 1 || total > maxLeavesBytes {
+		t.Fatalf("%d of 2 blobs kept leaves, %d bytes, past a bound of one blob's", n, total)
 	}
 }
