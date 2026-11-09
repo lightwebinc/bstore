@@ -412,11 +412,15 @@ const storeFailed = "store: the piece could not be stored"
 // minted, taken as given (TakeLocal with the piece check off): the piece's
 // SHA-256, and its segment leaves when the gateway still keeps them from
 // the pass that hashed the piece as it was staged (nil: hashed here). A
-// piece taken on one is carried: its root's closure is checked on the
-// gateway's account (checkClosure).
+// piece taken on one of a closure the gateway staged is carried: its root's
+// closure is checked on the gateway's account (checkClosure).
 type localAccount struct {
 	hash   [32]byte
 	leaves []byte
+	// staged: the gateway staged the closure, so its root's content hash
+	// is the gateway's own (publish.LocalPiece.Staged). Only such a piece
+	// is carried; any other closure is walked.
+	staged bool
 }
 
 // takePiece takes a checked piece carrier, or one its gateway in this
@@ -492,10 +496,12 @@ func (p *Provider) keepPiece(data []byte, acct *localAccount, rootHex, bucket, w
 	// returns, so that an entry right behind its pieces has its closure
 	// checked on the account; a piece with the gateway's leaves is kept for
 	// that check at once, one without is hashed for them after.
-	done := false
-	if acct != nil {
+	done, carried := false, acct != nil && acct.staged
+	if leaves != nil && acct != nil {
+		sub = storerec.RootOfLeaves(leaves)
+	}
+	if carried {
 		if leaves != nil {
-			sub = storerec.RootOfLeaves(leaves)
 			p.arrived(h, data, leaves, sub, mustHash(rootHex), stored, true)
 			done = true
 		} else {
@@ -507,7 +513,7 @@ func (p *Provider) keepPiece(data []byte, acct *localAccount, rootHex, bucket, w
 			if leaves == nil {
 				leaves, sub = storerec.LeavesOf(data)
 			}
-			p.arrived(h, data, leaves, sub, mustHash(rootHex), stored, acct != nil)
+			p.arrived(h, data, leaves, sub, mustHash(rootHex), stored, carried)
 		}
 		p.mu.Lock()
 		wanted := len(p.index.undecided[rootHex]) > 0

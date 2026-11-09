@@ -22,9 +22,9 @@ import (
 // and the piece's segment leaves are the gateway's when it hands them over
 // (lp.Leaves, of the piece's length), hashed here when it does not. The
 // bucket's writer list, the funding output's one carrier and the room are
-// held as always. The piece is carried: before its root is advertised, the
-// closure is checked on the gateway's account (the owner's ruling of
-// 2026-11-08, storerec.VerifyCarried): every node is read, hashed and
+// held as always. A piece of a closure the gateway staged (lp.Staged) is
+// carried: before its root is advertised, the closure is checked on the
+// gateway's account (the owner's ruling of 2026-11-08, storerec.VerifyCarried): every node is read, hashed and
 // checked, the canonical construction and the proof root (from the leaves)
 // as always, a blob this provider stored from the gateway's bytes is taken
 // unread, any other blob is read and hashed, and the content hash is the
@@ -69,7 +69,7 @@ func (p *Provider) TakeLocal(ctx context.Context, lp publish.LocalPiece, verify 
 		}
 		pc = &storerec.PieceCarrier{Piece: &storerec.Piece{Bucket: lp.Bucket, Writer: lp.Writer, Root: lp.Root, Piece: lp.Piece},
 			Commitment: lp.Commitment, Funding: lp.Funding}
-		acct = &localAccount{hash: lp.Hash}
+		acct = &localAccount{hash: lp.Hash, staged: lp.Staged}
 		leaves := "hashed"
 		if lp.Leaves != nil && len(lp.Leaves) == storerec.LeavesLen(len(lp.Piece)) {
 			acct.leaves, leaves = lp.Leaves, "carried"

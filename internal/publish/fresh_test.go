@@ -224,8 +224,35 @@ func TestStoreKeepsLeavesWhileFresh(t *testing.T) {
 	}
 	st.mu.Lock()
 	st.forgetLocked(h)
+	kept := st.leavesBytes
 	st.mu.Unlock()
 	if st.leavesOf(h) != nil {
 		t.Fatal("leaves kept for a forgotten object")
+	}
+	if kept != len(st.leavesOf(hs[0]))+len(st.leavesOf(hs[1])) {
+		t.Fatalf("%d bytes of leaves counted", kept)
+	}
+
+	// Past the bound a blob keeps none (its provider hashes it).
+	defer func(n int) { maxLeavesBytes = n }(maxLeavesBytes)
+	maxLeavesBytes = storerec.LeavesLen(storerec.BlobSize)
+	big := append(bytes.Repeat([]byte{'a'}, storerec.BlobSize), bytes.Repeat([]byte{'b'}, storerec.BlobSize)...)
+	s2, err := st.Stage(context.Background(), bytes.NewReader(big), uint64(len(big)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Release()
+	n := 0
+	for _, x := range s2.Manifest.Blobs {
+		b, _ := hex.DecodeString(x)
+		if st.leavesOf([32]byte(b)) != nil {
+			n++
+		}
+	}
+	st.mu.Lock()
+	total := st.leavesBytes
+	st.mu.Unlock()
+	if n != 1 || total > maxLeavesBytes {
+		t.Fatalf("%d of 2 blobs kept leaves, %d bytes, past a bound of one blob's", n, total)
 	}
 }

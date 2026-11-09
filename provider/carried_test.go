@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"testing"
 	"time"
 
@@ -20,36 +19,42 @@ import (
 var carriedTerms = testwriter.Terms{Sats: 5000, T: 1, K: 2, Retention: 86400, DeadlineAhead: 200, CheckC: 30}
 
 // withLeaves is the gateway's account of a piece with its segment leaves,
-// as a storage node's gateway hands a piece its stage wrote.
+// as a storage node's gateway hands a piece of a closure it staged.
 func withLeaves(t *testing.T, beef []byte) publish.LocalPiece {
 	lp := account(t, beef)
 	lp.Leaves, _ = storerec.LeavesOf(lp.Piece)
+	lp.Staged = true
 	return lp
 }
 
-// A storage node's provider, handed every piece on its gateway's account
-// with the leaves, checks the closure on that account: no walk, no piece
-// kept for one, no leaves hashed, and the root held with the entry's proof
-// root and advertised. With the piece check on, the same closure is walked.
+// A storage node's provider, handed every piece of a closure its gateway
+// staged on that gateway's account, with the leaves, checks the closure on
+// the account: no walk, no piece kept for one, no leaves hashed, and the
+// root held with the entry's proof root and advertised. With the piece
+// check on, or for a closure the gateway did not stage (a copy: its content
+// hash is the source entry's), the same flow is walked.
 func TestStorageNodeChecksCarriedClosure(t *testing.T) {
 	r := newRig(t)
 	ctx := context.Background()
-	for i, verify := range []bool{false, true} {
+	for i, mode := range []string{"carried", "verify", "unstaged"} {
+		verify := mode == "verify"
 		p := r.start(r.config(t.TempDir()), true)
 		o, err := r.writer.Build(ctx, content(2*storerec.BlobSize+12345, byte(20+i)))
 		if err != nil {
 			t.Fatal(err)
 		}
-		put, err := r.writer.Entry(ctx, o, fmt.Sprintf("node/carried-%v.bin", verify), carriedTerms)
+		put, err := r.writer.Entry(ctx, o, "node/carried-"+mode+".bin", carriedTerms)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if err := p.TakeLocal(ctx, publish.LocalPiece{Topic: storerec.RecordsTopic(testBucket), BEEF: put.BEEF}, false); err != nil {
-			t.Fatalf("verify %v, the entry: %v", verify, err)
+			t.Fatalf("%s, the entry: %v", mode, err)
 		}
 		for j, pc := range o.Pieces {
-			if err := p.TakeLocal(ctx, withLeaves(t, pc), verify); err != nil {
-				t.Fatalf("verify %v, piece %d: %v", verify, j, err)
+			lp := withLeaves(t, pc)
+			lp.Staged = mode != "unstaged"
+			if err := p.TakeLocal(ctx, lp, verify); err != nil {
+				t.Fatalf("%s, piece %d: %v", mode, j, err)
 			}
 		}
 		root := o.Built.RootHash
@@ -58,10 +63,10 @@ func TestStorageNodeChecksCarriedClosure(t *testing.T) {
 		h := p.st.Holdings[hex.EncodeToString(root[:])]
 		p.mu.Unlock()
 		if h == nil || !h.Verified || h.ProofRoot != hex.EncodeToString(o.Built.ProofRoot[:]) {
-			t.Fatalf("verify %v: holding %+v, want the entry's proof root", verify, h)
+			t.Fatalf("%s: holding %+v, want the entry's proof root", mode, h)
 		}
 		carried, walked := p.counter("bstore_provider_closure_checks_total", "mode=carried"), p.counter("bstore_provider_closure_checks_total", "mode=walked")
-		if verify {
+		if mode != "carried" {
 			if walked == 0 || carried != 0 {
 				t.Fatalf("checked: carried %v, walked %v; want walked", carried, walked)
 			}

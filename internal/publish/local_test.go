@@ -60,7 +60,7 @@ func TestLocalProviderGetsTheGatewaysAccount(t *testing.T) {
 		}
 		defer st.Release()
 		f := Fields{Bucket: testBucket, ID: sha256.Sum256([]byte("id")), Key: key, ContentType: "application/octet-stream"}
-		obj := Object{Root: st.Root, Size: st.Size, ContentHash: st.ContentHash, ProofRoot: st.ProofRoot, Closure: StoreClosure{Store: store, Manifest: st.Manifest}}
+		obj := Object{Root: st.Root, Size: st.Size, ContentHash: st.ContentHash, ProofRoot: st.ProofRoot, Closure: StoreClosure{Store: store, Manifest: st.Manifest, Staged: true}}
 		r, err := p.Put(ctx, f, obj, nil)
 		if err == nil {
 			err = r.Wait(ctx)
@@ -115,6 +115,9 @@ func TestLocalProviderGetsTheGatewaysAccount(t *testing.T) {
 		}
 		if !bytes.Equal(lp.Leaves, want) || (lp.Leaves == nil) != (want == nil) {
 			t.Fatalf("piece %d: %d bytes of leaves, want %d", i, len(lp.Leaves), len(want))
+		}
+		if !lp.Staged {
+			t.Fatalf("piece %d: a closure this gateway staged is not marked staged", i)
 		}
 	}
 	if p.Outbox().Pending() != 0 {
