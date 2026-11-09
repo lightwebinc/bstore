@@ -180,8 +180,8 @@ without being read; any other blob (one the store already held, say) is
 read and hashed; the proof root is recomputed from the segment leaves the
 gateway hands over with each blob, from the pass that hashed it as it was
 staged (hashed here for a piece without them: a blob the stage found
-already held, or one past the gateway's 128 MiB of kept leaves). The content hash is the
-gateway's, computed over the bytes it staged. What this trusts: the node's
+already held, or one past the gateway's 128 MiB of kept leaves). The
+content hash is the gateway's, computed over the bytes it staged. What this trusts: the node's
 own gateway hashed the content and the leaves correctly, and nothing
 between that hashing and the store changed the bytes; the bytes on disk are
 checked by later challenges and reads. The entry and every other record

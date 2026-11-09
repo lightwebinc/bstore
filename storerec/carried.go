@@ -12,8 +12,8 @@ import (
 // on its own account: held reports a blob reference whose bytes the caller
 // holds, at the reference's length, as bytes hashed to the reference's
 // name before they were stored, as a storage node's provider holds the
-// pieces its own gateway staged and handed it in process (the owner's
-// ruling of 2026-11-08). Such a blob is not read. The rest is
+// pieces its own gateway staged and handed it in process. Such a blob is
+// not read. The rest is
 // VerifyCHIRP's: the root and every branch are fetched and hashed before
 // any field of theirs is read, every node check, length, depth, cycle,
 // reference bound and the canonical construction is applied, and a blob

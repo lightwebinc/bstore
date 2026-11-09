@@ -24,7 +24,7 @@ import (
 // bucket's writer list, the funding output's one carrier and the room are
 // held as always. A piece of a closure the gateway staged (lp.Staged) is
 // carried: before its root is advertised, the closure is checked on the
-// gateway's account (the owner's ruling of 2026-11-08, storerec.VerifyCarried): every node is read, hashed and
+// gateway's account (storerec.VerifyCarried): every node is read, hashed and
 // checked, the canonical construction and the proof root (from the leaves)
 // as always, a blob this provider stored from the gateway's bytes is taken
 // unread, any other blob is read and hashed, and the content hash is the

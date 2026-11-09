@@ -22,9 +22,9 @@ import (
 // walk was evicted, or one after a restart, starts a walk on demand that
 // reads back only the pieces held and continues as more arrive.
 //
-// A closure its gateway in this process staged is not walked (the owner's
-// ruling of 2026-11-08 on the storage node): pieces a gateway hands over on
-// its account (TakeLocal with the piece check off) are carried, and the
+// A closure its gateway in this process staged is not walked, on a storage
+// node that trusts that gateway: pieces a gateway hands over on its
+// account (TakeLocal with the piece check off) are carried, and the
 // root they name is checked on that account at the evaluation
 // (storerec.VerifyCarried): its root and branch nodes read, hashed and
 // checked, its blobs taken unread where this provider stored them from the
