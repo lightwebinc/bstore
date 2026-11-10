@@ -593,6 +593,24 @@ func (p *Publisher) sendMinted(ctx context.Context, pb *pieceBatch) {
 func (p *Publisher) mintPiece(ctx context.Context, bucket string, root [32]byte, data []byte,
 	tree *transaction.Transaction, out uint32) (*transaction.Transaction, []byte, int, error) {
 	pc := &storerec.Piece{Bucket: bucket, Writer: p.Identity(), Root: root, Piece: data}
+	if tree != nil && tree.MerklePath != nil && len(data) > 1 {
+		// The carrier built once (carrier.MintOnce): the record's head and the piece are signed as
+		// parts, and the piece is copied once, straight into the BEEF it is sent in. Byte for byte the
+		// carrier and BEEF of the path below (the signatures are RFC 6979).
+		head, err := pc.EncodeHead()
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		o, err := carrier.MintOnce(ctx, p.wallet, p.wallet.Originator, carrierParams(storerec.PieceDerivation), head, data, nil, tree, out)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		beef, at, tx, err := pieceBEEFOnce(o, tree)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		return tx, beef, objectAt(beef, at, tx, len(head)+len(data), len(data)), nil
+	}
 	rec, err := pc.Encode()
 	if err != nil {
 		return nil, nil, 0, err
@@ -605,7 +623,36 @@ func (p *Publisher) mintPiece(ctx context.Context, bucket string, root [32]byte,
 	if err != nil {
 		return nil, nil, 0, err
 	}
-	return tx, beef, objectAt(beef, at, tx, rec, len(data)), nil
+	return tx, beef, objectAt(beef, at, tx, len(rec), len(data)), nil
+}
+
+// pieceBEEFOnce is pieceBEEF for a carrier minted by carrier.MintOnce: the same layout, with the
+// carrier's bytes written by o.AppendTx (the piece copied once, here) and its txid hashed where they lie.
+func pieceBEEFOnce(o *carrier.Once, tree *transaction.Transaction) ([]byte, int, *transaction.Transaction, error) {
+	bump := tree.MerklePath.Bytes()
+	n := 4 + 32 + 4 + 1 + len(bump) + 1 + 2 + tree.Size() + 1 + o.Size()
+	beef := getBuf(&beefBufs)
+	if cap(beef) < n {
+		beef = make([]byte, 0, n)
+	}
+	beef = binary.LittleEndian.AppendUint32(beef, transaction.ATOMIC_BEEF)
+	beef = append(beef, make([]byte, 32)...)
+	beef = binary.LittleEndian.AppendUint32(beef, transaction.BEEF_V2)
+	beef = append(beef, 1)
+	beef = append(beef, bump...)
+	beef = append(beef, 2)
+	beef = append(beef, byte(transaction.RawTxAndBumpIndex), 0)
+	beef = tree.AppendBytes(beef)
+	beef = append(beef, byte(transaction.RawTx))
+	at := len(beef)
+	beef, tx := o.AppendTx(beef)
+	if len(beef) != n {
+		return nil, 0, nil, fmt.Errorf("publish: a piece BEEF of %d bytes was sized at %d", len(beef), n)
+	}
+	tx.Inputs[0].SourceTransaction = tree
+	txid := carrier.TxIDAt(tx, beef[at:])
+	copy(beef[4:36], txid[:])
+	return beef, at, tx, nil
 }
 
 // objectAt is the offset in beef of the object a piece carrier's record
@@ -615,7 +662,7 @@ func (p *Publisher) mintPiece(ctx context.Context, bucket string, root [32]byte,
 // is the record's last field (storerec.PieceAt), so it ends 4 + 1 +
 // len(signature) + 1 bytes before the BEEF does. It is -1 when the bytes
 // there are not laid out so.
-func objectAt(beef []byte, carrierAt int, tx *transaction.Transaction, rec []byte, n int) int {
+func objectAt(beef []byte, carrierAt int, tx *transaction.Transaction, recLen, n int) int {
 	if carrierAt < 0 || len(tx.Inputs) != 1 || len(tx.Outputs) != 1 || tx.Inputs[0].UnlockingScript == nil || tx.Outputs[0].LockingScript == nil {
 		return -1
 	}
@@ -623,9 +670,9 @@ func objectAt(beef []byte, carrierAt int, tx *transaction.Transaction, rec []byt
 	// The version, one input (outpoint, script, sequence), one output
 	// (value, script) and the locktime.
 	at := carrierAt + 4 + 1 + 32 + 4 + varintLen(u) + u + 4 + 1 + 8 + varintLen(s)
-	head := pushHead(len(rec))
+	head := pushHead(recLen)
 	recAt := at + 35 + len(head)
-	end := recAt + len(rec)
+	end := recAt + recLen
 	if at+s+4 != len(beef) || end+2 > at+s || !bytes.Equal(beef[at+35:recAt], head) {
 		return -1
 	}

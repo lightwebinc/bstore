@@ -3,6 +3,7 @@ package storerec
 import (
 	"bytes"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"unicode/utf8"
 
@@ -82,8 +83,23 @@ func (p *Piece) Encode() ([]byte, error) {
 // refusals in DecodePiece's order (the record's bound, then the bucket, the
 // writer and the piece's length; the magic and the root cannot be wrong).
 func (p *Piece) encode() ([]byte, error) {
+	size, err := p.encodeChecked()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]byte, 0, size)
+	out = p.appendHead(out)
+	out = append(out, p.Piece...)
+	if len(out) != size {
+		return nil, fmt.Errorf("storerec: a piece record of %d bytes was sized at %d", len(out), size)
+	}
+	return out, nil
+}
+
+// encodeChecked runs encode's refusals in DecodePiece's order and returns the record's size.
+func (p *Piece) encodeChecked() (int, error) {
 	if !utf8.ValidString(p.Bucket) {
-		return nil, fmt.Errorf("%w: %v", record.ErrCBOR, cbor.ErrUTF8)
+		return 0, fmt.Errorf("%w: %v", record.ErrCBOR, cbor.ErrUTF8)
 	}
 	var head [7]byte
 	size := 1 + 1 + len(appendHead(head[:0], 2, uint64(len(MagicPiece)))) + len(MagicPiece) +
@@ -92,28 +108,42 @@ func (p *Piece) encode() ([]byte, error) {
 		1 + len(appendHead(head[:0], 2, 32)) + 32 +
 		1 + len(appendHead(head[:0], 2, uint64(len(p.Piece)))) + len(p.Piece)
 	if size > MaxPieceRecord {
-		return nil, record.ErrTooLarge
+		return 0, record.ErrTooLarge
 	}
 	if err := CheckBucket(p.Bucket); err != nil {
-		return nil, err
+		return 0, err
 	}
 	if _, err := CheckKey(p.Writer); err != nil {
-		return nil, fmt.Errorf("key %d: %w", PKWriter, err)
+		return 0, fmt.Errorf("key %d: %w", PKWriter, err)
 	}
 	if len(p.Piece) < 1 || len(p.Piece) > MaxPiece {
-		return nil, fmt.Errorf("%w: %d bytes", ErrPiece, len(p.Piece))
+		return 0, fmt.Errorf("%w: %d bytes", ErrPiece, len(p.Piece))
 	}
-	out := make([]byte, 0, size)
+	return size, nil
+}
+
+// EncodeHead is Encode without the piece's bytes, for a piece without Extra: the record is
+// EncodeHead() followed by p.Piece, its last field, so a carrier can be minted over the two parts and
+// the piece copied once, to where it is sent (carrier.MintOnce). The same refusals as Encode.
+func (p *Piece) EncodeHead() ([]byte, error) {
+	if len(p.Extra) != 0 {
+		return nil, errors.New("storerec: EncodeHead is for a piece without Extra")
+	}
+	if _, err := p.encodeChecked(); err != nil {
+		return nil, err
+	}
+	return p.appendHead(make([]byte, 0, 160)), nil
+}
+
+// appendHead appends the record up to the piece's bytes: the map head and every field but the piece's
+// content, whose CBOR head is the last thing written.
+func (p *Piece) appendHead(out []byte) []byte {
 	out = appendHead(out, 5, 5)
 	out = append(appendHead(appendHead(out, 0, PKMagic), 2, uint64(len(MagicPiece))), MagicPiece...)
 	out = append(appendHead(appendHead(out, 0, PKBucket), 3, uint64(len(p.Bucket))), p.Bucket...)
 	out = append(appendHead(appendHead(out, 0, PKWriter), 2, uint64(len(p.Writer))), p.Writer...)
 	out = append(appendHead(appendHead(out, 0, PKRoot), 2, 32), p.Root[:]...)
-	out = append(appendHead(appendHead(out, 0, PKPiece), 2, uint64(len(p.Piece))), p.Piece...)
-	if len(out) != size {
-		return nil, fmt.Errorf("storerec: a piece record of %d bytes was sized at %d", len(out), size)
-	}
-	return out, nil
+	return appendHead(appendHead(out, 0, PKPiece), 2, uint64(len(p.Piece)))
 }
 
 // DecodePiece reads a piece: too-large (over 4,194,560 bytes), cbor,
