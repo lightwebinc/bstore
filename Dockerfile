@@ -7,7 +7,7 @@
 #   docker build --target provider -t ghcr.io/lightwebinc/bstore-provider .  # a storage provider
 #   docker build --target devchain -t ghcr.io/lightwebinc/bstore-devchain .  # the local chain
 #
-# The builder is pinned by digest to the builder toolchain, Go 1.27.3, so
+# The builder is pinned by digest to the builder toolchain, Go 1.27.4, so
 # scanning sees the standard library that ships.
 #
 # No ENV defaults are baked in. The hosts, the header source, the node, the

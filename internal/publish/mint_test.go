@@ -158,7 +158,7 @@ func TestMintPiecePlacesTheObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if objectAt(beef, at, tx, rec, 1000) != -1 {
+	if objectAt(beef, at, tx, len(rec), 1000) != -1 {
 		t.Fatal("the object of a record with keys after it was placed")
 	}
 }
