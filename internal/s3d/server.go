@@ -430,8 +430,10 @@ func (s *Server) background(ctx context.Context) {
 			}
 		}
 		// A trim reads every manifest and walks the store, which a tick would
-		// keep a core at once the store holds a day of small puts.
-		if minute {
+		// keep a core at once the store holds a day of small puts. Between
+		// two trims a heavy ingest can write many times the bound, so a tick
+		// that finds half the bound written since the last trim trims too.
+		if minute || s.store.Grown() > s.cfg.StoreBytes/2 {
 			if _, err := s.store.Trim(s.cfg.StoreBytes); err != nil {
 				s.opts.Logf("store: %v", err)
 			}

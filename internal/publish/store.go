@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -48,6 +49,9 @@ type Store struct {
 	// leavesBytes is their total, held to maxLeavesBytes.
 	leaves      map[[32]byte][]byte
 	leavesBytes int
+	// grown is the bytes written into the store since the last Trim began
+	// (Grown): what a caller watches to trim before its usual time.
+	grown atomic.Int64
 }
 
 // maxLeavesBytes bounds the segment leaves a store keeps (keepLeaves): 128
@@ -128,6 +132,7 @@ func (s *Store) putHashed(h [32]byte, b []byte, pin bool) ([32]byte, bool, error
 	if err := writeFileSync(filepath.Join(s.dir, "tmp"), p, b); err != nil {
 		return h, false, err
 	}
+	s.grown.Add(int64(len(b)))
 	if pin {
 		// Written by this stage from the bytes it hashed: read back
 		// without hashing again while the stage holds it.
@@ -398,12 +403,19 @@ func (s *Store) Hold(root [32]byte) func() {
 	}
 }
 
+// Grown is the bytes written into the store since the last Trim began. A
+// store is trimmed on a clock; under a heavy ingest it can take in many
+// times its bound between two trims, and a caller that sees Grown pass a
+// share of the bound trims then instead of waiting.
+func (s *Store) Grown() int64 { return s.grown.Load() }
+
 // Trim removes objects no closure names that are older than orphanAge
 // (what a put cut short left), then the least recently used closures
 // until the objects held take at most max bytes; never a busy closure, a
 // pinned object, or an object another remaining closure names. It returns
 // the bytes held after.
 func (s *Store) Trim(max int64) (int64, error) {
+	s.grown.Store(0)
 	ents, err := os.ReadDir(filepath.Join(s.dir, "roots"))
 	if err != nil {
 		return 0, err

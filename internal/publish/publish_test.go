@@ -245,3 +245,40 @@ func (f *failing) Read([]byte) (int, error) {
 	}
 	return 0, errors.New("the client went away")
 }
+
+// Grown counts what was written since the last Trim began, so a caller can
+// trim a store that a heavy ingest fills between two trims on the clock.
+func TestStoreGrownCountsWritesSinceTheLastTrim(t *testing.T) {
+	store, err := OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g := store.Grown(); g != 0 {
+		t.Fatalf("a new store has grown %d", g)
+	}
+	body := make([]byte, 5<<20)
+	body[0] = 1
+	st, err := store.Stage(context.Background(), bytes.NewReader(body), 10<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Release()
+	if g := store.Grown(); g < int64(len(body)) {
+		t.Fatalf("grown %d after staging %d bytes", g, len(body))
+	}
+	if _, err := store.Trim(1 << 40); err != nil {
+		t.Fatal(err)
+	}
+	if g := store.Grown(); g != 0 {
+		t.Fatalf("grown %d after a trim", g)
+	}
+	// The same bytes again are already held: nothing is written.
+	st, err = store.Stage(context.Background(), bytes.NewReader(body), 10<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Release()
+	if g := store.Grown(); g != 0 {
+		t.Fatalf("grown %d after staging bytes already held", g)
+	}
+}

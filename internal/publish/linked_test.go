@@ -59,6 +59,11 @@ func TestStageLinkedMatchesStage(t *testing.T) {
 				if err != nil {
 					t.Fatal(size, err)
 				}
+				// Linked or copied, every byte that entered the store is counted
+				// once toward the growth a trim watches.
+				if g, held := st.Grown(), st.bytes(); g != held {
+					t.Fatalf("size %d repeat %v from %s: grown %d, store holds %d", size, repeat, src, g, held)
+				}
 				ref, err := OpenStore(t.TempDir())
 				if err != nil {
 					t.Fatal(err)
