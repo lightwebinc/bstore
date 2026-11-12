@@ -180,6 +180,7 @@ func (st *Store) link(b LinkedBlob) (bool, error) {
 	if err := writeFileSync(filepath.Join(st.dir, "tmp"), p, raw); err != nil {
 		return false, err
 	}
+	st.grown.Add(int64(len(raw)))
 	return true, nil
 }
 
