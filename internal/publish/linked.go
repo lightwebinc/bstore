@@ -162,6 +162,9 @@ func (st *Store) link(b LinkedBlob) (bool, error) {
 	err = os.Link(b.Path, p)
 	switch {
 	case err == nil:
+		if info, serr := os.Stat(p); serr == nil {
+			st.grown.Add(info.Size())
+		}
 		return true, nil
 	case errors.Is(err, os.ErrExist):
 		return false, nil
