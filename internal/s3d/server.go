@@ -55,6 +55,7 @@ type Server struct {
 	reader *reader.Reader
 	fetch  *http.Client
 	store  *publish.Store
+	trimMu sync.Mutex // one store trim at a time (the clock's and the growth's)
 	pubs   map[string]*publish.Publisher
 	// local is the provider in this process (Config.LocalProvider).
 	local   *provider.Provider
@@ -381,6 +382,15 @@ func (s *Server) Close() error {
 	return nil
 }
 
+// trim holds the store to its bound; one trim at a time.
+func (s *Server) trim() {
+	s.trimMu.Lock()
+	defer s.trimMu.Unlock()
+	if _, err := s.store.Trim(s.cfg.StoreBytes); err != nil {
+		s.opts.Logf("store: %v", err)
+	}
+}
+
 func (s *Server) background(ctx context.Context) {
 	defer s.wg.Done()
 	t := time.NewTicker(s.opts.Tick)
@@ -416,6 +426,26 @@ func (s *Server) background(ctx context.Context) {
 			}(p)
 		}
 	}
+	// Between two trims on the clock a heavy ingest can write many times the
+	// store's bound, and at a gigabyte a second even one tick is ten of them:
+	// the growth is looked at every second, and half the bound written since
+	// the last trim trims then.
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		t := time.NewTicker(time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if s.store.Grown() > s.cfg.StoreBytes/2 {
+					s.trim()
+				}
+			}
+		}
+	}()
 	lastAge := time.Time{}
 	for {
 		minute := time.Since(lastAge) >= time.Minute
@@ -430,13 +460,10 @@ func (s *Server) background(ctx context.Context) {
 			}
 		}
 		// A trim reads every manifest and walks the store, which a tick would
-		// keep a core at once the store holds a day of small puts. Between
-		// two trims a heavy ingest can write many times the bound, so a tick
-		// that finds half the bound written since the last trim trims too.
-		if minute || s.store.Grown() > s.cfg.StoreBytes/2 {
-			if _, err := s.store.Trim(s.cfg.StoreBytes); err != nil {
-				s.opts.Logf("store: %v", err)
-			}
+		// keep a core at once the store holds a day of small puts (the
+		// growth between two of these is watched every second, above).
+		if minute {
+			s.trim()
 		}
 		s.st.expire()
 		s.uploads.expire(time.Duration(s.cfg.Limits.UploadSeconds) * time.Second)
