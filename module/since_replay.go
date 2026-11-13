@@ -173,6 +173,10 @@ func (s *Service) savePositions() {
 	if s.positions == nil {
 		return
 	}
+	// One save at a time, snapshot to write: an older snapshot never lands
+	// after a newer one.
+	s.saveMu.Lock()
+	defer s.saveMu.Unlock()
 	s.mu.Lock()
 	m := make(map[string]string, len(s.reached)+len(s.relisted))
 	for k, v := range s.reached {

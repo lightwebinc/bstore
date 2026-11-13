@@ -190,6 +190,34 @@ func TestSincePositionsHold(t *testing.T) {
 	}
 }
 
+// TestSinceClockBackToAnAnsweredTime: a clock that steps back to exactly
+// the time of the last position lists a new output above everything an
+// answer covered, whatever its txid.
+func TestSinceClockBackToAnAnsweredTime(t *testing.T) {
+	w := newWorld(t, worldOpts{})
+	r := w.r
+	a := w.alice.put(w.owner.id, "a", putOpts{created: uint64(w.clock.ms())})
+	if r.submitTx(a.tx, "") == nil {
+		t.Fatal("the entry")
+	}
+	w.clock.advance(5 * time.Millisecond)
+	_, positions := sinceAll(t, r)
+	if len(positions) != 1 {
+		t.Fatalf("listed %v", positions)
+	}
+	w.clock.advance(-5 * time.Millisecond)
+	for i := 0; i < 8; i++ {
+		e := w.alice.put(w.owner.id, fmt.Sprintf("b%d", i), putOpts{created: uint64(w.clock.ms())})
+		if r.submitTx(e.tx, "") == nil {
+			t.Fatal("the entry")
+		}
+	}
+	w.clock.advance(time.Hour)
+	if got := r.answer(sinceQ(positions[0])); len(got) != 8 {
+		t.Fatalf("%d of 8 outputs taken at an answered time were answered after it", len(got))
+	}
+}
+
 // TestSinceListsAgainAhead: an entry a token named, unnamed again when the
 // token goes (a reorganization), is listed at a new position above every
 // position given, so an asker that had passed its first position is

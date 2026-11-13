@@ -349,6 +349,7 @@ type Service struct {
 	// positionsDirty says either changed since they were saved.
 	relisted       map[string]int64
 	positionsDirty bool
+	saveMu         sync.Mutex
 
 	// What the journal holds.
 	rows      *omap[rowEntry]

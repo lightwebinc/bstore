@@ -32,6 +32,9 @@ type sinceIdx struct {
 	list sortedStrings
 	// last is the highest position given.
 	last int64
+	// asked is the latest time of the host's clock at an answer: every
+	// position below it may have been answered already.
+	asked int64
 }
 
 // sinceKey is an output's position as answered and as sorted.
@@ -69,6 +72,11 @@ func (s *Service) sinceIn(b, txid string, vout uint32, first int64, again bool) 
 		}
 		if pos < x.last || (again && pos <= x.last) {
 			pos = x.last + 1
+		}
+		// A clock that stepped back to a time already answered: at or
+		// above the time of the latest answer, never among what it covered.
+		if pos < x.asked {
+			pos = x.asked
 		}
 		if pos != first {
 			s.relisted[k] = pos
@@ -196,6 +204,9 @@ func (s *Service) answerSince(b, after string, now int64) []Formula {
 	if after != "" {
 		i = x.list.upper(after)
 	}
+	if now > x.asked {
+		x.asked = now
+	}
 	// Positions of the present millisecond and later are not answered yet.
 	limit := sinceKey(now, "", 0)[:17]
 	var gone []string
@@ -215,6 +226,10 @@ func (s *Service) answerSince(b, after string, now int64) []Formula {
 		txid, vout := sinceOutput(k)
 		s.sinceForget(b, txid, vout)
 		x.list.remove(k)
+		if hk := heldKey(b, txid, vout); s.relisted[hk] != 0 {
+			delete(s.relisted, hk)
+			s.positionsDirty = true
+		}
 	}
 	return out
 }
