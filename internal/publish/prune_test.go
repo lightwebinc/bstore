@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lightwebinc/bcommon/funding"
 )
@@ -58,5 +59,34 @@ func TestPruneDropsFinishedHoldsAndSpentTrees(t *testing.T) {
 	st, err := loadState(p.cfg.Dir)
 	if err != nil || len(st.Holds) != 4 || len(st.Entry.Trees) != 2 {
 		t.Fatalf("saved state: %v, %d holds, %d entry trees", err, len(st.Holds), len(st.Entry.Trees))
+	}
+}
+
+// A tree whose last outputs a put has just reserved is spent out and not
+// yet named by the outbox (the put writes its pieces there afterwards):
+// prune keeps it, or the pieces on those outputs could never be minted.
+// Past the grace the outbox is the record, and an unnamed tree goes.
+func TestPruneKeepsATreeJustSpentOut(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "tmp"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_800_000_000, 0)
+	p := &Publisher{cfg: Config{Dir: dir, Logf: t.Logf, Now: func() time.Time { return now }}, st: &state{}}
+	p.st.Piece = treeSet{Tree: &funding.Tree{Txid: "next", Count: 8},
+		Trees: []funding.Tree{{Txid: "last", Count: 8, Next: 8}, {Txid: "next", Count: 8}}}
+	p.mu.Lock()
+	p.spentNow("last")
+	p.mu.Unlock()
+	if n, err := p.pruneTrees(); err != nil || n != 0 || len(p.st.Piece.Trees) != 2 {
+		t.Fatalf("a tree just spent out: pruned %d, %v", n, err)
+	}
+	now = now.Add(treeGrace - time.Second)
+	if n, _ := p.pruneTrees(); n != 0 {
+		t.Fatalf("inside the grace: pruned %d", n)
+	}
+	now = now.Add(2 * time.Second)
+	if n, err := p.pruneTrees(); err != nil || n != 1 || len(p.st.Piece.Trees) != 1 || len(p.spentAt) != 0 {
+		t.Fatalf("past the grace: pruned %d, %v, %d notes left", n, err, len(p.spentAt))
 	}
 }

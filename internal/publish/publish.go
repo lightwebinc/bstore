@@ -215,6 +215,9 @@ type Publisher struct {
 	// entries logged meanwhile wait in entryLate. Under entryMu.
 	entryBuilding bool
 	entryLate     []lateEntry
+	// spentAt is when each tree's outputs were last reserved, under mu:
+	// pruneTrees keeps a tree spent out inside treeGrace (prune.go).
+	spentAt map[string]time.Time
 }
 
 type state struct {
@@ -780,6 +783,7 @@ func (p *Publisher) spend(ctx context.Context, kind string, need uint32) (*trans
 			s.Tree.Next = vout + need
 			s.Trees = producer.Index(s.Trees, s.Tree)
 		}
+		p.spentNow(id)
 		return tree, vout, p.markDirtyLocked(), nil
 	}()
 	if err != nil {

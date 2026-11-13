@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/lightwebinc/bcommon/funding"
 )
@@ -140,10 +141,15 @@ func (p *Publisher) pruneTrees() (int, error) {
 	named := p.outbox.treesNamed()
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	now := p.clock()
 	n := 0
 	for _, s := range []*treeSet{&p.st.Piece, &p.st.Entry, &p.st.Outcome} {
 		keep := s.Trees[:0]
 		for _, t := range s.Trees {
+			if at, ok := p.spentAt[t.Txid]; ok && now.Sub(at) < treeGrace {
+				keep = append(keep, t)
+				continue
+			}
 			if t.Remaining() == 0 && !named[t.Txid] && (s.Tree == nil || s.Tree.Txid != t.Txid) {
 				n++
 				continue
@@ -152,8 +158,39 @@ func (p *Publisher) pruneTrees() (int, error) {
 		}
 		s.Trees = slices.Clone(keep)
 	}
+	for txid, at := range p.spentAt {
+		if now.Sub(at) >= treeGrace {
+			delete(p.spentAt, txid)
+		}
+	}
 	if n == 0 {
 		return 0, nil
 	}
 	return n, p.saveLocked()
+}
+
+// treeGrace is how long after its outputs were last reserved a tree is
+// kept whatever the outbox names. A put reserves outputs and writes the
+// pieces to mint on them to the outbox afterwards, and the outbox is read
+// here before the state is locked: a tree whose last outputs a put in
+// flight had just taken looked spent out and unnamed, was dropped, and the
+// pieces on those outputs could never be minted. Past the grace the outbox
+// is the record: it names the tree of every piece still to mint.
+const treeGrace = 10 * time.Minute
+
+// spentNow notes that a tree's outputs were reserved now; the caller holds
+// mu.
+func (p *Publisher) spentNow(txid string) {
+	if p.spentAt == nil {
+		p.spentAt = map[string]time.Time{}
+	}
+	p.spentAt[txid] = p.clock()
+}
+
+// clock is the publisher's time.
+func (p *Publisher) clock() time.Time {
+	if p.cfg.Now != nil {
+		return p.cfg.Now()
+	}
+	return time.Now()
 }
