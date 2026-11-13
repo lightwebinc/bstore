@@ -175,11 +175,12 @@ func (p *Publisher) pruneTrees() (int, error) {
 // to the outbox afterwards, and the outbox is read here before the state is
 // locked: a tree whose last outputs a put in flight had just taken looked
 // spent out and unnamed, was dropped, and the pieces on those outputs could
-// never be minted. So a spend pins its tree (pinTree, inside the spend's own
-// hold of mu) until its caller has minted on the outputs or written its
-// pieces to the outbox, or failed (releaseTree), however long that takes;
-// and a tree is kept treeGrace longer, for a reader of the outbox that
-// started before the write. Past that the outbox is the record: it names
+// never be minted; and the batch a put writes them to is not listed until
+// the put's first sends are done. So a spend pins its tree (pinTree, inside
+// the spend's own hold of mu) until its caller has minted on the outputs,
+// or failed, or the batch naming the tree has closed (releaseTree), however
+// long that takes; and a tree is kept treeGrace longer, for a reader of the
+// outbox that started before the close. Past that the outbox is the record: it names
 // the tree of every piece still to mint.
 const treeGrace = 10 * time.Minute
 

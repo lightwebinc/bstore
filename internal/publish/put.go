@@ -352,8 +352,14 @@ func (p *Publisher) mintPieces(ctx context.Context, bucket string, root [32]byte
 				return err
 			})
 		}
-		// Minted, or in the outbox naming the tree, or failed: the pin ends.
-		p.releaseTree(tree)
+		// Minted, or failed: the pin ends. Pieces kept to mint later name the
+		// tree from a batch that is not listed while the put runs, so their
+		// pin ends when the batch closes, however the put ends.
+		if err == nil && byRef {
+			b.onClose(func() { p.releaseTree(tree) })
+		} else {
+			p.releaseTree(tree)
+		}
 		if err != nil {
 			b.abandon()
 			b.close()

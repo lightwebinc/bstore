@@ -107,3 +107,30 @@ func TestPruneKeepsATreeJustSpentOut(t *testing.T) {
 		t.Fatalf("past the grace: pruned %d, %v, %d notes left", n, err, len(p.spentAt))
 	}
 }
+
+// A batch's close runs what was held for it, once, after the batch is
+// listed again; a put's pin of a tree whose pieces it keeps to mint later
+// ends there.
+func TestBatchCloseReleases(t *testing.T) {
+	dir := t.TempDir()
+	o, err := openOutbox(dir, &Delivery{}, nil, t.Logf, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := o.newBatch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, live := 0, true
+	b.onClose(func() {
+		n++
+		o.mu.Lock()
+		live = len(o.live) > 0
+		o.mu.Unlock()
+	})
+	b.close()
+	b.close()
+	if n != 1 || live {
+		t.Fatalf("ran %d times, batch still live %v", n, live)
+	}
+}

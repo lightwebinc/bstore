@@ -883,6 +883,9 @@ type outBatch struct {
 	syncMu          sync.Mutex
 	// live is the file's name while the put that writes it runs.
 	live string
+	// closed runs once when the batch closes: a live batch's lines are not
+	// listed (load), so what they need kept is held until then.
+	closed []func()
 	// ids is every item the put wrote, in the batch or in a file of its
 	// own, for abandon.
 	ids []string
@@ -1048,6 +1051,13 @@ func (b *outBatch) abandon() {
 
 // close closes the file, removing it when every line is done.
 func (b *outBatch) close() {
+	// What was held for the batch is let go with no lock of the batch held.
+	var closed []func()
+	defer func() {
+		for _, fn := range closed {
+			fn()
+		}
+	}()
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.f != nil {
@@ -1063,6 +1073,15 @@ func (b *outBatch) close() {
 		b.o.mu.Unlock()
 		b.live = ""
 	}
+	// After the batch is listed again: what it names is found there.
+	closed, b.closed = b.closed, nil
+}
+
+// onClose runs fn once when the batch closes.
+func (b *outBatch) onClose(fn func()) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.closed = append(b.closed, fn)
 }
 
 // keptFacade is a facade that sends nothing: the library publishes each
