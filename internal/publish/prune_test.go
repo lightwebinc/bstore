@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/bsv-blockchain/go-sdk/transaction"
 
 	"github.com/lightwebinc/bcommon/funding"
 )
@@ -58,5 +61,76 @@ func TestPruneDropsFinishedHoldsAndSpentTrees(t *testing.T) {
 	st, err := loadState(p.cfg.Dir)
 	if err != nil || len(st.Holds) != 4 || len(st.Entry.Trees) != 2 {
 		t.Fatalf("saved state: %v, %d holds, %d entry trees", err, len(st.Holds), len(st.Entry.Trees))
+	}
+}
+
+// A tree whose last outputs a put has reserved is spent out and not yet
+// named by the outbox (the put writes its pieces there afterwards): prune
+// keeps it while any put pins it, and for the grace after the last
+// released it, or the pieces on those outputs could never be minted. Past
+// the grace the outbox is the record, and an unnamed tree goes.
+func TestPruneKeepsATreeJustSpentOut(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "tmp"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_800_000_000, 0)
+	p := &Publisher{cfg: Config{Dir: dir, Logf: t.Logf, Now: func() time.Time { return now }}, st: &state{}}
+	p.st.Piece = treeSet{Tree: &funding.Tree{Txid: "next", Count: 8},
+		Trees: []funding.Tree{{Txid: "last", Count: 8, Next: 8}, {Txid: "next", Count: 8}}}
+	last := transaction.NewTransaction()
+	id := last.TxID().String()
+	p.st.Piece.Trees[0].Txid = id
+	p.mu.Lock()
+	p.pinTree(id)
+	p.pinTree(id)
+	p.mu.Unlock()
+	// Pinned by two puts, however long they take.
+	now = now.Add(3 * treeGrace)
+	if n, err := p.pruneTrees(); err != nil || n != 0 || len(p.st.Piece.Trees) != 2 {
+		t.Fatalf("a pinned tree: pruned %d, %v", n, err)
+	}
+	p.releaseTree(last)
+	if n, _ := p.pruneTrees(); n != 0 {
+		t.Fatalf("one of two puts released: pruned %d", n)
+	}
+	p.releaseTree(last)
+	if n, err := p.pruneTrees(); err != nil || n != 0 || len(p.pinned) != 0 {
+		t.Fatalf("just released: pruned %d, %v, %d pins left", n, err, len(p.pinned))
+	}
+	now = now.Add(treeGrace - time.Second)
+	if n, _ := p.pruneTrees(); n != 0 {
+		t.Fatalf("inside the grace: pruned %d", n)
+	}
+	now = now.Add(2 * time.Second)
+	if n, err := p.pruneTrees(); err != nil || n != 1 || len(p.st.Piece.Trees) != 1 || len(p.spentAt) != 0 {
+		t.Fatalf("past the grace: pruned %d, %v, %d notes left", n, err, len(p.spentAt))
+	}
+}
+
+// A batch's close runs what was held for it, once, after the batch is
+// listed again; a put's pin of a tree whose pieces it keeps to mint later
+// ends there.
+func TestBatchCloseReleases(t *testing.T) {
+	dir := t.TempDir()
+	o, err := openOutbox(dir, &Delivery{}, nil, t.Logf, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := o.newBatch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, live := 0, true
+	b.onClose(func() {
+		n++
+		o.mu.Lock()
+		live = len(o.live) > 0
+		o.mu.Unlock()
+	})
+	b.close()
+	b.close()
+	if n != 1 || live {
+		t.Fatalf("ran %d times, batch still live %v", n, live)
 	}
 }
