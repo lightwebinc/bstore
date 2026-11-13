@@ -244,6 +244,7 @@ with an error for any other.
 | `hold` | the transaction holding the hold output | | 1 | free |
 | `outcomes`, `outcomes-of`, `outcomes-by`, `outcomes-of-by` | outcome records naming the answerer (or provider; and buyer), admitted within 31 days, never dated after the host's time | newest `created` first | 64 | free |
 | `sweep` | the held sweeps that spend the outpoint | height, position, txid | 8 | free |
+| `since` | what `unanchored`, `ads`, `hold`, `fronts`, `outcomes` and `sweep` answer for the bucket, after the position cursor, each output with its position as context; never an output taken in the host's present millisecond | the order the host took them | 64 | free |
 | `history` (served) | the rooted tokens below the `seq` whose changes set or remove the key, each followed by the entry its change names when held | newest first; a page never splits a `seq` | 64 tokens | priceable |
 | `chain` | the chain's rooted tokens above the `seq`; a page never splits a `seq` | `seq`, then txid | 64 | priceable |
 | `export` (served) | as `list` with no prefix | key bytes | 512 | priceable |
@@ -253,7 +254,7 @@ A question carrying the members of no class, a value that breaks its rule
 (spec section 11.2), a bucket the host does not carry, or a chain it does
 not serve for a served class is refused with an error, never answered
 empty. Every answer starts with a binary search and walks at most its page,
-plus anything that left a window (`ads`, `ad`, `unanchored`, the free
+plus anything that left a window (`ads`, `ad`, `unanchored`, `since`, the free
 `outcomes` classes) since the last retention pass, which the answer that
 meets it takes out of the index, so it is walked once: an index a stranger
 fills costs that stranger, not the next question. `chain` and the latest
@@ -416,7 +417,9 @@ lookup service is a bcommon `module.Replayer`, which a Go host that carries
 the hook asks on its catch-up schedule, once
 a round for each `tm_bstore_` topic and each peer. A walk asks the peer's
 `ls_bstore` only free classes and answers the objects to submit, which the
-host admits through its ordinary path, in five phases:
+host admits through its ordinary path, in three phases against a peer that
+answers `since` and in five against one that refuses it (a host from before
+the class, or the TypeScript module):
 
 1. tokens: for every chain of the bucket the host holds a token of or
    serves, `bucket`, then `bucket-seq` at each seq up to the peer's latest
@@ -431,22 +434,41 @@ host admits through its ordinary path, in five phases:
    token this host first saw inside the keep floor less a day names, that
    the host does not hold (an entry only older tokens name has left every
    host by its floor);
-3. unanchored: `unanchored` page by page for each served chain's owner and
+3. since: `since` page by page from the position this host last reached
+   with the peer, which answers the entries no token names, the
+   advertisements, hold outputs, statements, outcomes and sweeps the peer
+   took after it, in the peer's order. A peer that refuses the class is
+   asked phases 4 to 6 in its place:
+4. unanchored: `unanchored` page by page for each served chain's owner and
    latest writers;
-4. mined: `ads` for each root a held entry names, `hold` for each hold
+5. mined: `ads` for each root a held entry names, `hold` for each hold
    output a held entry names and the host lacks;
-5. attached: `fronts` and `outcomes-of` for each advertiser the host holds
+6. attached: `fronts` and `outcomes-of` for each advertiser the host holds
    an advertisement of, and `sweep` for each held carrier's funding
    outpoint.
+
+Phases 4 to 6 ask a question for every root and every carrier the host
+holds and page every unanchored entry again at each walk, whether or not
+anything is missing; phase 3 asks one question when the two hosts hold the
+same. The position reached is kept per bucket and peer in
+`bstore-replay.json` in the state directory, so a restart asks for nothing
+it was already answered; deleting the file costs one full reading of each
+peer. The position moves only past pages the walk answered nothing from: an
+object it answered is admitted after the call, so the next walk reads that
+page again, finds the object applied and moves on. An object answered in
+three walks and still not applied is passed over, so one the host never
+admits does not hold the position.
 
 Replay never lengthens a floor: an entry no token names is replayed only
 while dated within the pending floor less a day, an outcome or a statement
 within the 24-hour floor less an hour, an advertisement or a hold output
 within 4032 blocks of the tip, and nothing on a funding outpoint the host
 retracted or gave to another carrier. What no free class leads to is not
-replayed: a sweep of a carrier the host never held (it retracts nothing
-here), an entry of a chain the host does not serve, a chain the host holds
-nothing of and does not serve.
+replayed: an entry of a chain the host does not serve, a chain the host
+holds nothing of and does not serve, and, from a peer that refuses `since`,
+a sweep of a carrier the host never held (from one that answers it the
+sweep is offered, and the host keeps its outpoints as it does for any sweep
+that matches nothing).
 
 ## Metrics
 

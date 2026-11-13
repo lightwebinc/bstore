@@ -87,8 +87,9 @@ type Config struct {
 // Classes are the lookup classes as the route prices them, in the order of
 // spec section 11.1.
 var Classes = func() []termsroute.PricedClass {
-	out := make([]termsroute.PricedClass, len(storerec.Classes))
-	for i, c := range storerec.Classes {
+	all := storerec.AllClasses()
+	out := make([]termsroute.PricedClass, len(all))
+	for i, c := range all {
 		out[i] = termsroute.PricedClass{Name: c.Name, Free: c.Free}
 	}
 	return out

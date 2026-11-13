@@ -47,7 +47,7 @@ func (s *Service) Classify(service string, query []byte) (*Classified, error) {
 		return nil, errors.New("ls_bstore: refused: " + err.Error())
 	}
 	free := true
-	for _, c := range storerec.Classes {
+	for _, c := range storerec.AllClasses() {
 		if c.Name == q.Class {
 			free = c.Free
 		}
@@ -370,6 +370,8 @@ func (s *Service) Answer(ctx context.Context, c *Classified, paid bool) ([]Formu
 			out = append(out, Formula{Txid: sw.txid})
 		}
 		return out, nil
+	case "since":
+		return s.answerSince(b, m["since"], now), nil
 	case "history":
 		v := chainOf(m["owner"], m["id"])
 		if v == nil {
@@ -513,7 +515,7 @@ func (*Service) GetDocumentation() string {
 		"",
 		"Answers every bstore bucket this host carries (spec section 11). Free: `bucket`,",
 		"`bucket-seq`, `object`, `list`, `pending`, `unanchored`, `entry`, `ads`, `ad`, `fronts`,",
-		"`front`, `hold`, `outcomes`, `outcomes-of`, `outcomes-by`, `outcomes-of-by` and `sweep`.",
+		"`front`, `hold`, `outcomes`, `outcomes-of`, `outcomes-by`, `outcomes-of-by`, `sweep` and `since`.",
 		"Priceable: `history`, `chain`, `export`, `outcome-history` and `outcome-history-of`. The",
 		"map classes answer for the chains this host serves, each proven against its latest",
 		"rooted, consistent token. A question must carry exactly the members of one class;",

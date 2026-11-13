@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bsv-blockchain/go-sdk/chainhash"
 	"github.com/bsv-blockchain/go-sdk/overlay/lookup"
@@ -156,6 +157,32 @@ func peerOf(r *rig) bmodule.Ask {
 	}
 }
 
+// withoutSince is a peer that refuses the since class, as a host from
+// before it does: the walk then asks it the classes it always asked.
+func withoutSince(ask bmodule.Ask) bmodule.Ask {
+	return func(ctx context.Context, q *lookup.LookupQuestion) (*lookup.LookupAnswer, error) {
+		if strings.Contains(string(q.Query), `"since"`) {
+			return nil, fmt.Errorf("%w: the members of no class", bmodule.ErrRefused)
+		}
+		return ask(ctx, q)
+	}
+}
+
+// replayPeer is how replayFrom asks a rig; bothWays swaps it.
+var replayPeer = peerOf
+
+// bothWays runs a replay test against a peer that answers since and
+// against one that refuses it.
+func bothWays(t *testing.T, fn func(t *testing.T)) {
+	t.Helper()
+	t.Run("since", fn)
+	t.Run("refused", func(t *testing.T) {
+		replayPeer = func(r *rig) bmodule.Ask { return withoutSince(peerOf(r)) }
+		defer func() { replayPeer = peerOf }()
+		fn(t)
+	})
+}
+
 type walkResult struct {
 	calls, questions, gaps int
 	kinds                  map[string]int
@@ -169,13 +196,15 @@ type walkResult struct {
 func replayFrom(t *testing.T, into, from *rig, maxQ, maxO int) walkResult {
 	t.Helper()
 	res := walkResult{kinds: map[string]int{}}
+	// The peer answers what it took before its present millisecond.
+	from.clock.advance(time.Millisecond)
 	var cursor any
 	for {
 		res.calls++
 		if res.calls > 2000 {
 			t.Fatal("the walk does not end")
 		}
-		a, err := into.ls.Replay(context.Background(), &bmodule.ReplayRequest{Topic: topic, Peer: "a", Ask: peerOf(from), Cursor: cursor,
+		a, err := into.ls.Replay(context.Background(), &bmodule.ReplayRequest{Topic: topic, Peer: "a", Ask: replayPeer(from), Cursor: cursor,
 			MaxQuestions: maxQ, MaxObjects: maxO,
 			Applied: func(_ context.Context, txid chainhash.Hash) (bool, error) {
 				return into.storage.isApplied(txid.String(), topic), nil
@@ -244,7 +273,9 @@ func utxoSet(r *rig) []string {
 // walk from host A, asking only the free classes, leaves both with the same
 // unspent outputs and every class answered alike, tokens in order on their
 // parents; a second walk answers nothing.
-func TestReplayLevelsAHost(t *testing.T) {
+func TestReplayLevelsAHost(t *testing.T) { bothWays(t, testReplayLevelsAHost) }
+
+func testReplayLevelsAHost(t *testing.T) {
 	rw := newReplayWorld(t, "t2", "t3", "e2", "e3", "p", "pend", "hold", "ad", "renewed", "ad2", "front", "outcome", "sweep")
 	b := rw.hostB(t)
 	want := rw.snapshot(rw.a)
@@ -275,7 +306,9 @@ func TestReplayLevelsAHost(t *testing.T) {
 
 // TestReplayBounded: a call asks at most two questions and answers at
 // most one object, and the walks together level the host all the same.
-func TestReplayBounded(t *testing.T) {
+func TestReplayBounded(t *testing.T) { bothWays(t, testReplayBounded) }
+
+func testReplayBounded(t *testing.T) {
 	rw := newReplayWorld(t, "t2", "t3", "e2", "e3", "p", "pend", "hold", "ad", "renewed", "ad2", "front", "outcome", "sweep")
 	b := rw.hostB(t)
 	res := replayFrom(t, b, rw.a, 2, 1)
@@ -294,7 +327,9 @@ func TestReplayBounded(t *testing.T) {
 // sweep retracted: a sweep is found through the carriers the host holds,
 // and one of a carrier it never held is not replayed (no class lists
 // sweeps; it would retract nothing here).
-func TestReplayFirstToken(t *testing.T) {
+func TestReplayFirstToken(t *testing.T) { bothWays(t, testReplayFirstToken) }
+
+func testReplayFirstToken(t *testing.T) {
 	rw := newReplayWorld(t)
 	b := setup(t, setupOpts{chain: rw.w.chain, clock: rw.w.clock, config: func(c *Config) { c.Served = []string{rw.w.owner.served()} }})
 	for _, x := range rw.objects {
@@ -316,7 +351,9 @@ func TestReplayFirstToken(t *testing.T) {
 // TestReplayKeepsRetention: an object this host dropped by its floor is
 // not handed back by a peer that still holds it; nor is a carrier on an
 // outpoint this host retracted.
-func TestReplayKeepsRetention(t *testing.T) {
+func TestReplayKeepsRetention(t *testing.T) { bothWays(t, testReplayKeepsRetention) }
+
+func testReplayKeepsRetention(t *testing.T) {
 	rw := newReplayWorld(t, "pend")
 	b := rw.hostB(t)
 	rw.w.clock.advance(7 * dayDur)
@@ -333,7 +370,9 @@ func TestReplayKeepsRetention(t *testing.T) {
 // walk does not offer the entry back (the outpoint carries B's retraction
 // mark); A's walk finds the sweep through the entry it holds and retracts
 // it, after which the two answer alike.
-func TestReplayRetraction(t *testing.T) {
+func TestReplayRetraction(t *testing.T) { bothWays(t, testReplayRetraction) }
+
+func testReplayRetraction(t *testing.T) {
 	rw := newReplayWorld(t)
 	w := rw.w
 	x := w.alice.put(w.owner.id, "x", putOpts{created: uint64(w.clock.ms()) - 60_000})

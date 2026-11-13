@@ -394,6 +394,7 @@ func (s *Service) unnamedAdd(sv *servedIdx, e *carrierEntry) {
 	if s.nowMs()-e.at < UnanchoredDays*day {
 		sortedIn(sv.unanchored, e.owner).insert(e.txid)
 	}
+	s.sinceEntry(e)
 }
 
 func (s *Service) unnamedRemove(sv *servedIdx, e *carrierEntry) {
@@ -404,6 +405,7 @@ func (s *Service) unnamedRemove(sv *servedIdx, e *carrierEntry) {
 		}
 	}
 	sortedOut(sv.unanchored, e.owner, e.txid)
+	s.sinceEntry(e)
 }
 
 // name counts a commitment a served chain's held tokens name one more

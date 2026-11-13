@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/bsv-blockchain/go-sdk/chainhash"
+	"github.com/bsv-blockchain/go-sdk/overlay/lookup"
 	"github.com/bsv-blockchain/go-sdk/transaction"
 
 	bmodule "github.com/lightwebinc/bcommon/module"
@@ -29,7 +30,7 @@ import (
 // asked of the peer's ls_bstore; everything answered is admitted here
 // through the host's ordinary path, so every rule of section 12.1 holds.
 //
-// A walk is five phases, each finished before the next reads the index:
+// A walk is phases, each finished before the next reads the index:
 //
 //  1. tokens: for every chain of the bucket the host holds a token of or
 //     serves, the peer's latest (bucket), then each seq below it the host
@@ -41,12 +42,17 @@ import (
 //     token first seen inside the keep floor less a day names, that the
 //     host does not hold (entry): an entry only older tokens name has left
 //     every host by its floor;
-//  3. unanchored: for each served chain's owner and latest writers, the
+//  3. since: what the peer took after the position this host last reached
+//     with it, in the peer's order (since; since_replay.go): the entries no
+//     token names, advertisements, hold outputs, statements, outcomes and
+//     sweeps. A peer that refuses the class is asked phases 4 to 6 in its
+//     place, which ask about everything the host holds:
+//  4. unanchored: for each served chain's owner and latest writers, the
 //     peer's unanchored entries, page by page (unanchored);
-//  4. mined: the advertisements of each root the held entries name (ads),
+//  5. mined: the advertisements of each root the held entries name (ads),
 //     and each hold output a held entry names that the host does not hold
 //     (hold);
-//  5. attached: the front statements and outcomes of each advertiser the
+//  6. attached: the front statements and outcomes of each advertiser the
 //     host holds an advertisement of (fronts, outcomes-of), and the sweeps
 //     of each held carrier's funding outpoint (sweep).
 //
@@ -89,8 +95,20 @@ func (s *Service) Replay(ctx context.Context, r *bmodule.ReplayRequest) (*bmodul
 	if !s.Restored() {
 		return nil, errors.New("ls_bstore: the index is not restored yet")
 	}
-	w := replay.New(r)
-	return w.Run(ctx, s.replayTokens(b), s.replayNamed(b), s.replayUnanchored(b), s.replayMined(ctx, b), s.replayAttached(b))
+	// The asker says when the peer refused a question, which a walk answers
+	// as nothing: the since phase needs to tell the two apart.
+	refused := false
+	rr := *r
+	rr.Ask = func(ctx context.Context, q *lookup.LookupQuestion) (*lookup.LookupAnswer, error) {
+		ans, err := r.Ask(ctx, q)
+		if errors.Is(err, bmodule.ErrRefused) {
+			refused = true
+		}
+		return ans, err
+	}
+	w := replay.New(&rr)
+	return w.Run(ctx, s.replayTokens(b), s.replayNamed(b), s.replaySince(ctx, b, r.Peer, &refused),
+		unlessSince(s.replayUnanchored(b)), unlessSince(s.replayMined(ctx, b)), unlessSince(s.replayAttached(b)))
 }
 
 // withValue is q with one more member.
@@ -314,7 +332,7 @@ func (s *Service) unheldNamed(ctx context.Context, key, after string) []string {
 	return out
 }
 
-// ---- phase 3: entries no token names
+// ---- phase 4: entries no token names
 
 func (s *Service) replayUnanchored(b string) replay.Phase {
 	return replay.Phase{Name: "unanchored",
@@ -331,7 +349,7 @@ func (s *Service) replayUnanchored(b string) replay.Phase {
 		},
 		Do: func(ctx context.Context, w *replay.Walk, item string, page *string) (bool, error) {
 			parts := strings.Split(item, "|")
-			window := time.Duration(s.pending)*time.Millisecond - ReplayPendingMargin
+			window := s.pendingWindow()
 			keep := func(o *replay.Output) bool { return s.replayable(b, o.Tx, window) }
 			for {
 				q := map[string]string{"bucket": b, "owner": parts[0], "id": parts[1], "writer": parts[2], "after": *page}
@@ -388,12 +406,24 @@ func (s *Service) replayable(b string, tx *transaction.Transaction, window time.
 	return created > now-window.Milliseconds() && created <= now+ReplaySkew.Milliseconds()
 }
 
-// ---- phases 4 and 5: what hangs off what the host holds
+// ---- phases 5 and 6: what hangs off what the host holds
 
-func (s *Service) replayMined(ctx context.Context, b string) replay.Phase {
+// pendingWindow and otherWindow are how far back a carrier is replayed: an
+// entry no token names, and an outcome or a statement.
+func (s *Service) pendingWindow() time.Duration {
+	return time.Duration(s.pending)*time.Millisecond - ReplayPendingMargin
+}
+
+func (s *Service) otherWindow() time.Duration {
+	return time.Duration(s.other)*time.Millisecond - ReplayOtherMargin
+}
+
+// freshMined answers whether a mined output a peer answered is one to
+// replay: proven, within ReplayMinedBlocks of the tip, read once.
+func (s *Service) freshMined(ctx context.Context) func(*replay.Output) bool {
 	var tip uint32
 	tipKnown := false
-	fresh := func(o *replay.Output) bool {
+	return func(o *replay.Output) bool {
 		if o.Tx.MerklePath == nil {
 			return false
 		}
@@ -404,6 +434,10 @@ func (s *Service) replayMined(ctx context.Context, b string) replay.Phase {
 		}
 		return !tipKnown || o.Tx.MerklePath.BlockHeight+ReplayMinedBlocks >= tip
 	}
+}
+
+func (s *Service) replayMined(ctx context.Context, b string) replay.Phase {
+	fresh := s.freshMined(ctx)
 	return replay.Phase{Name: "mined",
 		Items: func(context.Context, *replay.Walk) ([]string, error) {
 			s.mu.Lock()
@@ -445,7 +479,7 @@ func (s *Service) replayMined(ctx context.Context, b string) replay.Phase {
 }
 
 func (s *Service) replayAttached(b string) replay.Phase {
-	window := time.Duration(s.other)*time.Millisecond - ReplayOtherMargin
+	window := s.otherWindow()
 	keep := func(o *replay.Output) bool { return s.replayable(b, o.Tx, window) }
 	return replay.Phase{Name: "attached",
 		Items: func(context.Context, *replay.Walk) ([]string, error) {

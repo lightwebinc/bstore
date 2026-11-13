@@ -18,6 +18,12 @@ func (s *sortedStrings) upper(k string) int {
 	return sort.Search(len(s.a), func(i int) bool { return s.a[i] > k })
 }
 
+// has is whether the list holds k.
+func (s *sortedStrings) has(k string) bool {
+	i := s.lower(k)
+	return i < len(s.a) && s.a[i] == k
+}
+
 func (s *sortedStrings) insert(k string) {
 	i := s.lower(k)
 	if i < len(s.a) && s.a[i] == k {
