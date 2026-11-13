@@ -11,6 +11,7 @@ import (
 
 	"github.com/bsv-blockchain/go-sdk/chainhash"
 	"github.com/bsv-blockchain/go-sdk/overlay/lookup"
+	"github.com/bsv-blockchain/go-sdk/transaction"
 
 	bmodule "github.com/lightwebinc/bcommon/module"
 
@@ -155,6 +156,10 @@ func TestSincePositionsHold(t *testing.T) {
 	if _, after := sinceAll(t, again); fmt.Sprint(after) != fmt.Sprint(before) {
 		t.Fatalf("after a restart:\n%v\nwant\n%v", after, before)
 	}
+	// A position given anywhere but at first sight is kept across a restart
+	// too: an entry taken while the clock was behind a position given.
+	again.config.Positions = &MemoryPositions{}
+	again = again.restart()
 	w := rw.w
 	last := before[len(before)-1]
 	w.clock.advance(-time.Hour)
@@ -170,6 +175,58 @@ func TestSincePositionsHold(t *testing.T) {
 	outs := again.outputs(sinceQ(last))
 	if len(outs) != 1 || outs[0].txid != x.txid || string(outs[0].context) <= last {
 		t.Fatalf("after the clock stepped back: %d outputs after %s", len(outs), last)
+	}
+	_, stepped := sinceAll(t, again)
+	third := again.restart()
+	if _, after := sinceAll(t, third); fmt.Sprint(after) != fmt.Sprint(stepped) {
+		t.Fatalf("after a second restart:\n%v\nwant\n%v", after, stepped)
+	}
+	// Once the output leaves the list its kept position goes too.
+	third.clock.advance(UnanchoredDays * dayDur)
+	third.ls.Prune(context.Background())
+	third.ls.Flush(context.Background())
+	if m, _ := third.config.Positions.Load(); len(m) != 0 {
+		t.Fatalf("positions kept for outputs no longer listed: %v", m)
+	}
+}
+
+// TestSinceListsAgainAhead: an entry a token named, unnamed again when the
+// token goes (a reorganization), is listed at a new position above every
+// position given, so an asker that had passed its first position is
+// answered it again.
+func TestSinceListsAgainAhead(t *testing.T) {
+	w := newWorld(t, worldOpts{})
+	r := w.r
+	x := w.alice.put(w.owner.id, "x", putOpts{created: uint64(w.clock.ms())})
+	if r.submitTx(x.tx, "") == nil {
+		t.Fatal("the entry")
+	}
+	w.clock.advance(time.Millisecond)
+	_, positions := sinceAll(t, r)
+	if len(positions) != 1 {
+		t.Fatalf("listed %v", positions)
+	}
+	first := positions[0]
+	t0 := w.owner.token(tokenOpts{writers: [][]byte{w.alice.id()}})
+	t1 := w.owner.token(tokenOpts{anchor: []*posted{x}})
+	for _, tok := range []*minted{t0, t1} {
+		if r.submit(tok.beef, "") == nil {
+			t.Fatal("a token")
+		}
+	}
+	if got := r.answer(sinceQ("")); len(got) != 0 {
+		t.Fatalf("a named entry is listed: %v", got)
+	}
+	// The token that names it goes, in the same millisecond the entry was
+	// last listed at or any other.
+	h, _ := chainhash.NewHashFromHex(t1.txid)
+	if err := r.ls.OutputEvicted(context.Background(), &transaction.Outpoint{Txid: *h, Index: 0}); err != nil {
+		t.Fatal(err)
+	}
+	w.clock.advance(time.Hour)
+	outs := r.outputs(sinceQ(first))
+	if len(outs) != 1 || outs[0].txid != x.txid || string(outs[0].context) <= first {
+		t.Fatalf("after its token went: %d outputs after the first position", len(outs))
 	}
 }
 
@@ -284,6 +341,50 @@ func TestReplayPositionWaitsForAdmission(t *testing.T) {
 	}
 	if n := walk(true); n != 0 || c.ls.reachedAt(bucket+"|a") < sinceKeyOf(t, rw.a, rw.label("pend")) {
 		t.Fatalf("the walk after offered %d, position %q", n, c.ls.reachedAt(bucket+"|a"))
+	}
+}
+
+// TestReplayBacklogPassedOnce: more objects than a page that the host never
+// admits are each offered SinceTries times and then passed over: clearing
+// the first page does not start the count of the next again.
+func TestReplayBacklogPassedOnce(t *testing.T) {
+	rw := newReplayWorld(t)
+	b := rw.hostB(t)
+	w := rw.w
+	const n = PageLimit + 6
+	for i := 0; i < n; i++ {
+		e := w.alice.put(w.owner.id, fmt.Sprintf("late%03d", i), putOpts{created: uint64(w.clock.ms())})
+		if rw.a.submitTx(e.tx, "") == nil {
+			t.Fatal("the entry")
+		}
+	}
+	offered := 0
+	replayPeer = func(r *rig) bmodule.Ask { return peerOf(r) }
+	defer func() { replayPeer = peerOf }()
+	walk := func() int {
+		rw.a.clock.advance(time.Millisecond)
+		var cursor any
+		got := 0
+		for {
+			a, err := b.ls.Replay(context.Background(), &bmodule.ReplayRequest{Topic: topic, Peer: "a", Ask: peerOf(rw.a), Cursor: cursor,
+				Applied: func(_ context.Context, txid chainhash.Hash) (bool, error) {
+					return b.storage.isApplied(txid.String(), topic), nil
+				}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got += len(a.Objects)
+			if a.Done {
+				return got
+			}
+			cursor = a.Cursor
+		}
+	}
+	for i := 0; i < SinceTries+3; i++ {
+		offered += walk()
+	}
+	if offered != n*SinceTries {
+		t.Fatalf("%d objects offered %d times in all, want %d each", n, offered, SinceTries)
 	}
 }
 

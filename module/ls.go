@@ -278,8 +278,9 @@ type Options struct {
 	// MaxBEEF and MaxSweepInputs are the topic managers' bounds, which a
 	// replay holds a token it assembles to; storerec's defaults when zero.
 	MaxBEEF, MaxSweepInputs int
-	// Positions keeps the position a replay reached with each peer across
-	// a restart; nil keeps them in memory only.
+	// Positions keeps the position a replay reached with each peer, and
+	// where since lists what it listed again, across a restart; nil keeps
+	// them in memory only.
 	Positions Positions
 }
 
@@ -342,7 +343,12 @@ type Service struct {
 	// page and did not see it applied.
 	positions  Positions
 	reached    map[string]string
-	sinceTries map[string]map[chainhash.Hash]int
+	sinceTries map[string]map[chainhash.Hash]sinceTry
+	// relisted: by <bucket>|<txid>.<vout>, the position of an output listed
+	// anywhere but at its first sight, kept across a restart with reached;
+	// positionsDirty says either changed since they were saved.
+	relisted       map[string]int64
+	positionsDirty bool
 
 	// What the journal holds.
 	rows      *omap[rowEntry]
@@ -433,17 +439,13 @@ func NewService(o Options) (*Service, error) {
 	s := &Service{buckets: map[string]bool{}, served: map[string]bool{}, servedBuckets: map[string]bool{}, host: o.Host, journal: o.Journal,
 		priced: o.Priced, keep: keep * day, pending: pend * day, other: other * hour, headers: o.Headers, now: o.Now, warned: map[string]bool{},
 		trees: o.Trees, maxBEEF: o.MaxBEEF, maxSweep: o.MaxSweepInputs,
-		positions: o.Positions, reached: map[string]string{}, sinceTries: map[string]map[chainhash.Hash]int{}}
+		positions: o.Positions, reached: map[string]string{}, sinceTries: map[string]map[chainhash.Hash]sinceTry{}, relisted: map[string]int64{}}
 	if s.positions != nil {
 		m, err := s.positions.Load()
 		if err != nil {
 			return nil, err
 		}
-		for k, v := range m {
-			if storerec.SincePosition(v) {
-				s.reached[k] = v
-			}
-		}
+		s.loadPositions(m)
 	}
 	for _, b := range o.Buckets {
 		s.buckets[b] = true
@@ -882,7 +884,11 @@ func (s *Service) queueDrop(b, txid string, vout uint32) {
 func (s *Service) Flush(ctx context.Context) {
 	s.mu.Lock()
 	keys := s.dropKeys()
+	dirty := s.positionsDirty
 	s.mu.Unlock()
+	if dirty {
+		s.savePositions()
+	}
 	for len(keys) > 0 {
 		s.mu.Lock()
 		n := s.flushKeys(ctx, keys[:min(FlushChunk, len(keys))], true)
@@ -1229,7 +1235,7 @@ func (s *Service) holdCarrier(e *carrierEntry) {
 	case "entry":
 		for _, sv := range s.servedFor(e.b, e.id) {
 			if v := s.chains[sv.chain]; v == nil || v.named[e.c] == 0 {
-				s.unnamedAdd(sv, e)
+				s.unnamedAdd(sv, e, false)
 			}
 		}
 	case "outcome":
@@ -1244,12 +1250,12 @@ func (s *Service) holdCarrier(e *carrierEntry) {
 			for _, k := range outcomeBuyerKeys(e) {
 				sortedIn(s.outcomesBy, k).insert(e.tkey)
 			}
-			e.fpos = s.sinceIn(e.b, e.txid, 0, e.at)
+			e.fpos = s.sinceIn(e.b, e.txid, 0, e.at, false)
 		}
 	default:
 		sortedIn(s.frontsByAdvertiser, e.b+"|"+e.advertiser).insert(e.txid)
 		sortedIn(s.frontsByPair, e.b+"|"+e.advertiser+"|"+e.owner).insert(e.tkey)
-		e.fpos = s.sinceIn(e.b, e.txid, 0, e.at)
+		e.fpos = s.sinceIn(e.b, e.txid, 0, e.at, false)
 	}
 }
 
@@ -1440,7 +1446,7 @@ func (s *Service) indexHold(b string, tx *transaction.Transaction, vout uint32, 
 		return true
 	}
 	h := &holdEntry{b: b, txid: txid, vout: vout, at: s.minedOutput(b, txid, vout, at), spent: s.spentHeld[k]}
-	h.fpos = s.sinceIn(b, txid, vout, h.at)
+	h.fpos = s.sinceIn(b, txid, vout, h.at, false)
 	s.holds.set(k, h)
 	s.holdOutput(b, txid, vout)
 	return true
@@ -1469,7 +1475,7 @@ func (s *Service) adLive(e *adEntry, live bool) {
 		sortedIn(s.adsLive, e.b+"|"+e.root).insert(k)
 		sortedIn(s.adsLive, e.b+"|"+e.root+"|"+e.advertiser).insert(k)
 		if e.fpos == 0 {
-			e.fpos = s.sinceIn(e.b, e.txid, e.vout, e.at)
+			e.fpos = s.sinceIn(e.b, e.txid, e.vout, e.at, false)
 		}
 		return
 	}
@@ -1533,7 +1539,7 @@ func (s *Service) indexSweep(b string, tx *transaction.Transaction, at int64) bo
 	}
 	height, offset, _ := place(tx)
 	sw := &sweepEntry{b: b, txid: txid, spent: spent, height: height, offset: offset, at: s.minedOutput(b, txid, 0, at)}
-	sw.fpos = s.sinceIn(b, txid, 0, sw.at)
+	sw.fpos = s.sinceIn(b, txid, 0, sw.at, false)
 	s.sweeps.set(k, sw)
 	for _, op := range spent {
 		addTo(s.sweepsByOp, b+"|"+op, txid)

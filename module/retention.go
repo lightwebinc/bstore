@@ -376,7 +376,7 @@ func (s *Service) Prune(ctx context.Context) int {
 					sortedOut(x.unanchored, w, txid)
 				}
 				if ok {
-					s.sinceEntry(e)
+					s.sinceEntry(e, false)
 				}
 			}
 		}

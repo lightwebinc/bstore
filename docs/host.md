@@ -453,7 +453,10 @@ anything is missing; phase 3 asks one question when the two hosts hold the
 same. The position reached is kept per bucket and peer in
 `bstore-replay.json` in the state directory, so a restart asks for nothing
 it was already answered; deleting the file costs one full reading of each
-peer. The position moves only past pages the walk answered nothing from: an
+peer. The same file keeps the position of each output this host lists
+anywhere but at its first sight (one listed again, or taken while the clock
+was behind a position already given), so its own answers hold across a
+restart; it is written with the next flush after either changes. The position moves only past pages the walk answered nothing from: an
 object it answered is admitted after the call, so the next walk reads that
 page again, finds the object applied and moves on. An object answered in
 three walks and still not applied is passed over, so one the host never

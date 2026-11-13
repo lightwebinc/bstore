@@ -122,7 +122,7 @@ func Mount(host bmodule.Host, c *Config, overlayTopics []string, journal Journal
 	if now == nil {
 		now = time.Now
 	}
-	var positions Positions
+	positions := c.Positions
 	if journal == nil {
 		fj, err := NewFileJournal(c.StateDir)
 		if err != nil {
@@ -131,7 +131,9 @@ func Mount(host bmodule.Host, c *Config, overlayTopics []string, journal Journal
 		fj.SyncEvery = c.JournalSync
 		fj.OnSync = journalSyncs(host)
 		journal = fj
-		positions = &FilePositions{Path: filepath.Join(c.StateDir, PositionsFile)}
+		if positions == nil {
+			positions = &FilePositions{Path: filepath.Join(c.StateDir, PositionsFile)}
+		}
 	}
 	ls, err := NewService(Options{Buckets: c.Buckets, Served: c.Served, Host: host, Journal: journal, Priced: priced, KeepDays: c.KeepDays,
 		PendingDays: c.PendingDays, OtherHours: c.OtherHours, Headers: hdrs, Now: now, Trees: chainView(c.Accept),

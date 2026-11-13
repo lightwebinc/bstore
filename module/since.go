@@ -3,6 +3,7 @@ package module
 import (
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 // The since class (spec section 11.1, frozen.md amendment A2): what the
@@ -17,11 +18,14 @@ import (
 // position already given: a clock that steps back does not put an output
 // behind a position an asker already passed. Only positions before the
 // host's present millisecond are answered, so nothing is ever listed at or
-// below a position already answered. A restore lists every held output at
-// its first sight; an output that was listed again later (an entry a
-// reorganization left unnamed) is then back at its first sight, behind an
-// asker that had passed it and not yet reached its later position. The
-// classes above still answer it.
+// below a position already answered.
+//
+// A position holds across a restart. A restore lists a held output at its
+// first sight, which is where it was listed when it was taken; one listed
+// anywhere else (listed again after a reorganization left an entry
+// unnamed, or taken while the clock was behind a position given) is kept
+// in relisted, saved with the positions replay reached (PositionsFile),
+// and listed there again.
 
 // sinceIdx is one bucket's listed outputs, by position.
 type sinceIdx struct {
@@ -42,16 +46,34 @@ func sinceOutput(k string) (txid string, vout uint32) {
 }
 
 // sinceIn lists an output of bucket b, first seen at first, and answers
-// the time of its position.
-func (s *Service) sinceIn(b, txid string, vout uint32, first int64) int64 {
+// the time of its position. An output taken now is listed at its first
+// sight; again is one listed before that a class answers once more, which
+// is listed now. Neither goes below a position already given, and one
+// listed again goes above every one: an asker may hold the position it was
+// listed at before.
+func (s *Service) sinceIn(b, txid string, vout uint32, first int64, again bool) int64 {
 	x := s.since[b]
 	if x == nil {
 		x = &sinceIdx{}
 		s.since[b] = x
 	}
+	k := heldKey(b, txid, vout)
 	pos := first
-	if !s.restoring && pos < x.last {
-		pos = x.last + 1
+	if s.restoring {
+		if p, ok := s.relisted[k]; ok {
+			pos = p
+		}
+	} else {
+		if again {
+			pos = s.nowMs()
+		}
+		if pos < x.last || (again && pos <= x.last) {
+			pos = x.last + 1
+		}
+		if pos != first {
+			s.relisted[k] = pos
+			s.positionsDirty = true
+		}
 	}
 	if pos > x.last {
 		x.last = pos
@@ -69,6 +91,25 @@ func (s *Service) sinceOut(b, txid string, vout uint32, pos int64) {
 	if x := s.since[b]; x != nil {
 		x.list.remove(sinceKey(pos, txid, vout))
 	}
+	k := heldKey(b, txid, vout)
+	if _, ok := s.relisted[k]; ok {
+		delete(s.relisted, k)
+		s.positionsDirty = true
+	}
+}
+
+// sinceSettle drops the positions kept for outputs a restore did not list:
+// the host no longer holds them.
+func (s *Service) sinceSettle() {
+	for k, pos := range s.relisted {
+		b, op, _ := strings.Cut(k, "|")
+		txid, v, _ := strings.Cut(op, ".")
+		n, _ := strconv.ParseUint(v, 10, 32)
+		if x := s.since[b]; x == nil || !x.list.has(sinceKey(pos, txid, uint32(n))) { //nolint:gosec // parsed as 32 bits
+			delete(s.relisted, k)
+			s.positionsDirty = true
+		}
+	}
 }
 
 // unanchoredHas is whether a served chain's unanchored list holds entry e.
@@ -81,11 +122,12 @@ func (s *Service) unanchoredHas(e *carrierEntry) bool {
 	return false
 }
 
-// sinceEntry lists or unlists an entry as the unanchored lists hold it.
-func (s *Service) sinceEntry(e *carrierEntry) {
+// sinceEntry lists or unlists an entry as the unanchored lists hold it;
+// again is an entry a token named that none names now.
+func (s *Service) sinceEntry(e *carrierEntry, again bool) {
 	switch has := s.unanchoredHas(e); {
 	case has && e.fpos == 0:
-		e.fpos = s.sinceIn(e.b, e.txid, 0, e.at)
+		e.fpos = s.sinceIn(e.b, e.txid, 0, e.at, again)
 	case !has && e.fpos != 0:
 		s.sinceOut(e.b, e.txid, 0, e.fpos)
 		e.fpos = 0

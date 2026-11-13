@@ -61,8 +61,12 @@ const DefaultListenPort = 8294
 
 // Config is the module's configuration.
 type Config struct {
-	Buckets    []string
-	StateDir   string
+	Buckets  []string
+	StateDir string
+	// Positions keeps what PositionsFile keeps, for a host that keeps it
+	// elsewhere; nil is that file in StateDir beside a journal file, and
+	// memory beside a journal the host supplies.
+	Positions  Positions
 	HeadersURL string
 	// Served are the chains this host serves: <bucket>|<owner hex>|<id hex>.
 	Served         []string

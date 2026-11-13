@@ -1138,9 +1138,10 @@ time the host listed the output, never below a position it already gave,
 then the output; a host answers only positions before its present
 millisecond, so no output is ever listed at or before a position already
 answered, and an asker that keeps the last position it was given misses
-nothing the host lists later. A host MAY list an output again at a later
-position (an entry a reorganization left unnamed); after a restart it lists
-every output at the time it first saw it.
+nothing the host lists later. An output a class stops answering and later
+answers again (an entry a reorganization left unnamed) is listed again at a
+new position above every position the host gave. A host keeps its positions
+across a restart.
 
 An empty answer means only that this host holds nothing that answers. The
 engine hydrates every answered output as BEEF, so a reader verifies every

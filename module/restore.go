@@ -292,6 +292,7 @@ func (s *Service) Restore(ctx context.Context, outputs []bmodule.Output, storage
 	s.recheck = nil
 	s.drain(ctx)
 	s.flush(ctx)
+	s.sinceSettle()
 	s.ready = true
 	return indexed, nil
 }
