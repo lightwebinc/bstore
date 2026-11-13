@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bsv-blockchain/go-sdk/transaction"
+
 	"github.com/lightwebinc/bcommon/funding"
 )
 
@@ -146,7 +148,7 @@ func (p *Publisher) pruneTrees() (int, error) {
 	for _, s := range []*treeSet{&p.st.Piece, &p.st.Entry, &p.st.Outcome} {
 		keep := s.Trees[:0]
 		for _, t := range s.Trees {
-			if at, ok := p.spentAt[t.Txid]; ok && now.Sub(at) < treeGrace {
+			if at, ok := p.spentAt[t.Txid]; p.pinned[t.Txid] > 0 || (ok && now.Sub(at) < treeGrace) {
 				keep = append(keep, t)
 				continue
 			}
@@ -169,18 +171,39 @@ func (p *Publisher) pruneTrees() (int, error) {
 	return n, p.saveLocked()
 }
 
-// treeGrace is how long after its outputs were last reserved a tree is
-// kept whatever the outbox names. A put reserves outputs and writes the
-// pieces to mint on them to the outbox afterwards, and the outbox is read
-// here before the state is locked: a tree whose last outputs a put in
-// flight had just taken looked spent out and unnamed, was dropped, and the
-// pieces on those outputs could never be minted. Past the grace the outbox
-// is the record: it names the tree of every piece still to mint.
+// A put reserves outputs of a tree and writes the pieces to mint on them
+// to the outbox afterwards, and the outbox is read here before the state is
+// locked: a tree whose last outputs a put in flight had just taken looked
+// spent out and unnamed, was dropped, and the pieces on those outputs could
+// never be minted. So a spend pins its tree (pinTree, inside the spend's own
+// hold of mu) until its caller has minted on the outputs or written its
+// pieces to the outbox, or failed (releaseTree), however long that takes;
+// and a tree is kept treeGrace longer, for a reader of the outbox that
+// started before the write. Past that the outbox is the record: it names
+// the tree of every piece still to mint.
 const treeGrace = 10 * time.Minute
 
-// spentNow notes that a tree's outputs were reserved now; the caller holds
-// mu.
-func (p *Publisher) spentNow(txid string) {
+// pinTree pins a tree for a spend; the caller holds mu.
+func (p *Publisher) pinTree(txid string) {
+	if p.pinned == nil {
+		p.pinned = map[string]int{}
+	}
+	p.pinned[txid]++
+}
+
+// releaseTree ends a spend's pin of its tree. A nil tree is no spend.
+func (p *Publisher) releaseTree(tree *transaction.Transaction) {
+	if tree == nil {
+		return
+	}
+	txid := tree.TxID().String()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.pinned[txid] > 1 {
+		p.pinned[txid]--
+	} else {
+		delete(p.pinned, txid)
+	}
 	if p.spentAt == nil {
 		p.spentAt = map[string]time.Time{}
 	}

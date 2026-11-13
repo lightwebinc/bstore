@@ -352,6 +352,8 @@ func (p *Publisher) mintPieces(ctx context.Context, bucket string, root [32]byte
 				return err
 			})
 		}
+		// Minted, or in the outbox naming the tree, or failed: the pin ends.
+		p.releaseTree(tree)
 		if err != nil {
 			b.abandon()
 			b.close()
@@ -769,6 +771,7 @@ func (p *Publisher) mintEntry(ctx context.Context, e *storerec.Entry, rec []byte
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	defer p.releaseTree(tree)
 	tx, err := carrier.Mint(ctx, p.wallet, p.wallet.Originator, carrierParams(storerec.EntryDerivation), rec, tree, vout)
 	if err != nil {
 		return nil, nil, nil, err

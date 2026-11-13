@@ -215,8 +215,11 @@ type Publisher struct {
 	// entries logged meanwhile wait in entryLate. Under entryMu.
 	entryBuilding bool
 	entryLate     []lateEntry
-	// spentAt is when each tree's outputs were last reserved, under mu:
-	// pruneTrees keeps a tree spent out inside treeGrace (prune.go).
+	// pinned counts, by tree, the spends whose caller has not yet minted on
+	// its outputs or written its pieces to the outbox; spentAt is when the
+	// last of them was released. Under mu: pruneTrees keeps a pinned tree,
+	// and one released inside treeGrace (prune.go).
+	pinned  map[string]int
 	spentAt map[string]time.Time
 }
 
@@ -783,16 +786,20 @@ func (p *Publisher) spend(ctx context.Context, kind string, need uint32) (*trans
 			s.Tree.Next = vout + need
 			s.Trees = producer.Index(s.Trees, s.Tree)
 		}
-		p.spentNow(id)
+		p.pinTree(id)
 		return tree, vout, p.markDirtyLocked(), nil
 	}()
 	if err != nil {
 		return nil, 0, err
 	}
+	// From here the tree is pinned for the caller, which releases it
+	// (releaseTree) once its carrier is minted or its pieces are in the
+	// outbox, or when it fails.
 	// The outputs are this put's once recorded; the record is durable
 	// before a carrier is signed on them, and the spends of other puts do
 	// not wait for this put's write (the saver batches them).
 	if err := p.awaitSave(gen); err != nil {
+		p.releaseTree(tree)
 		return nil, 0, err
 	}
 	return tree, vout, nil

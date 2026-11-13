@@ -193,6 +193,7 @@ func (p *Publisher) PublishOutcome(ctx context.Context, o *storerec.Outcome) (st
 	if err != nil {
 		return "", err
 	}
+	defer p.releaseTree(tree)
 	tx, err := carrier.Mint(ctx, p.wallet, p.wallet.Originator, carrierParams(storerec.OutcomeDerivation), rec, tree, vout)
 	if err != nil {
 		return "", err
