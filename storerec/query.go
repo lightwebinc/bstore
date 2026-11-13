@@ -45,6 +45,17 @@ var Classes = []Class{
 	{"outcome-history-of", []string{"bucket", "outcome-history-of", "before"}, false, false},
 }
 
+// Since is the free class amendment A2 adds (frozen.md section 15): what a
+// host took for a bucket after a position. It is kept apart from Classes,
+// which the query-v1 vectors pin as the classes of the first publish; a
+// question is parsed against both (AllClasses).
+var Since = Class{"since", []string{"bucket", "since"}, true, false}
+
+// AllClasses are Classes and the classes amendments added, in that order.
+func AllClasses() []Class {
+	return append(append([]Class(nil), Classes...), Since)
+}
+
 // Question is a validated question: its class and its members as given.
 type Question struct {
 	Class  string
@@ -53,7 +64,7 @@ type Question struct {
 
 func classOf(names []string) (Class, bool) {
 	sort.Strings(names)
-	for _, c := range Classes {
+	for _, c := range AllClasses() {
 		m := append([]string(nil), c.Members...)
 		sort.Strings(m)
 		if strings.Join(m, ",") == strings.Join(names, ",") {
@@ -107,6 +118,22 @@ func timeCursor(s string) bool {
 	return ok && okN && isLowerHex(t, 64)
 }
 
+// SincePosition reports whether s is a position a since answer gives: 16
+// decimal digits (the host's time, Unix milliseconds), a colon, a txid of
+// 64 lowercase hex digits in display order, a colon and the output index
+// as 10 decimal digits. Positions compare as bytes.
+func SincePosition(s string) bool {
+	if len(s) != 92 || s[16] != ':' || s[81] != ':' || !isLowerHex(s[17:81], 64) {
+		return false
+	}
+	for _, d := range s[:16] + s[82:] {
+		if d < '0' || d > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // outpoint is BRC-100's OutpointString: a txid of 64 lowercase hex digits,
 // a dot, and the output index in decimal with no leading zero, below 2^32.
 func outpoint(s string) bool {
@@ -143,6 +170,8 @@ func checkValue(class, name, v string) bool {
 	case "seq":
 		_, ok := decimal(v)
 		return ok
+	case "since":
+		return v == "" || SincePosition(v)
 	case "before":
 		if class == "history" {
 			_, ok := decimal(v)

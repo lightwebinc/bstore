@@ -371,8 +371,12 @@ func (s *Service) Prune(ctx context.Context) int {
 		x := s.servedIdx[k]
 		for w, list := range x.unanchored {
 			for _, txid := range append([]string(nil), list.a...) {
-				if e, ok := s.carriers.get(cOf(txid)); !ok || now-e.at >= UnanchoredDays*day {
+				e, ok := s.carriers.get(cOf(txid))
+				if !ok || now-e.at >= UnanchoredDays*day {
 					sortedOut(x.unanchored, w, txid)
+				}
+				if ok {
+					s.sinceEntry(e, false)
 				}
 			}
 		}
@@ -384,6 +388,8 @@ func (s *Service) Prune(ctx context.Context) int {
 		for _, k := range append(outcomeKeys(e), outcomeBuyerKeys(e)...) {
 			sortedOut(s.outcomesBy, k, e.tkey)
 		}
+		s.sinceOut(e.b, e.txid, 0, e.fpos)
+		e.fpos = 0
 	}
 	s.countMaps(views)
 	s.compact()

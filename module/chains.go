@@ -384,7 +384,9 @@ func (s *Service) servedFor(b, id string) []*servedIdx {
 	return out
 }
 
-func (s *Service) unnamedAdd(sv *servedIdx, e *carrierEntry) {
+// unnamedAdd indexes an entry no token of a served chain names; again is
+// one a token named until now.
+func (s *Service) unnamedAdd(sv *servedIdx, e *carrierEntry, again bool) {
 	byWriter := sv.pendingByKey[e.key]
 	if byWriter == nil {
 		byWriter = map[string]*sortedStrings{}
@@ -394,6 +396,7 @@ func (s *Service) unnamedAdd(sv *servedIdx, e *carrierEntry) {
 	if s.nowMs()-e.at < UnanchoredDays*day {
 		sortedIn(sv.unanchored, e.owner).insert(e.txid)
 	}
+	s.sinceEntry(e, again)
 }
 
 func (s *Service) unnamedRemove(sv *servedIdx, e *carrierEntry) {
@@ -404,6 +407,7 @@ func (s *Service) unnamedRemove(sv *servedIdx, e *carrierEntry) {
 		}
 	}
 	sortedOut(sv.unanchored, e.owner, e.txid)
+	s.sinceEntry(e, false)
 }
 
 // name counts a commitment a served chain's held tokens name one more
@@ -424,7 +428,7 @@ func (s *Service) name(v *chainIdx, c string, by int) {
 		s.unnamedRemove(sv, e)
 	}
 	if by == -1 && n == 0 {
-		s.unnamedAdd(sv, e)
+		s.unnamedAdd(sv, e, !s.restoring)
 	}
 }
 

@@ -61,8 +61,12 @@ const DefaultListenPort = 8294
 
 // Config is the module's configuration.
 type Config struct {
-	Buckets    []string
-	StateDir   string
+	Buckets  []string
+	StateDir string
+	// Positions keeps what PositionsFile keeps, for a host that keeps it
+	// elsewhere; nil is that file in StateDir beside a journal file, and
+	// memory beside a journal the host supplies.
+	Positions  Positions
 	HeadersURL string
 	// Served are the chains this host serves: <bucket>|<owner hex>|<id hex>.
 	Served         []string
@@ -87,8 +91,9 @@ type Config struct {
 // Classes are the lookup classes as the route prices them, in the order of
 // spec section 11.1.
 var Classes = func() []termsroute.PricedClass {
-	out := make([]termsroute.PricedClass, len(storerec.Classes))
-	for i, c := range storerec.Classes {
+	all := storerec.AllClasses()
+	out := make([]termsroute.PricedClass, len(all))
+	for i, c := range all {
 		out[i] = termsroute.PricedClass{Name: c.Name, Free: c.Free}
 	}
 	return out

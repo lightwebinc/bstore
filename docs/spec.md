@@ -1095,6 +1095,7 @@ host keeps the map of served chains only.
 | `outcomes-by` | `{"bucket": b, "answerer": a, "buyer": y}` | the same as `outcomes`, by buyer `y` only | free |
 | `outcomes-of-by` | `{"bucket": b, "provider": p, "buyer": y}` | the same as `outcomes-of`, by buyer `y` only | free |
 | `sweep` | `{"bucket": b, "spent": x}` | the admitted sweeps that spend outpoint `x`, at most 8 | free |
+| `since` | `{"bucket": b, "since": n}` | the outputs `unanchored`, `ads`, `hold`, `fronts`, `outcomes` and `sweep` answer for the bucket, in the order the host took them, strictly after position `n` (empty: from the start), at most 64, each with its position as its context | free |
 | `history` | `{"bucket": b, "owner": o, "id": i, "history": k, "before": s}` | served: the tokens below `seq` `s` whose `changes` set or remove `k`, newest first, each followed by the entry its change names (the put for a put, the delete for a removal) when the host holds it, at most 64 tokens | priceable |
 | `chain` | `{"bucket": b, "owner": o, "chain": i, "after": s}` | the chain's rooted tokens above `seq` `s`, in `seq` order, at most 64 | priceable |
 | `export` | `{"bucket": b, "owner": o, "export": i, "after": a}` | served: as `list` with an empty prefix, at most 512 entries a page | priceable |
@@ -1112,7 +1113,9 @@ rule, not the anyone key; `key`, `pending` and `history` are object keys;
 `prefix` and `after` in `list` and `export` are 0 to 1024 bytes and one line
 (empty means no prefix, or from the start); `entry`, and `after` in `unanchored`, `ads` and `fronts`, are a txid in display order or, for `after`, empty;
 `root` is 64 hex digits in natural order; `hold` and `spent` are BRC-100
-`OutpointString`s; `seq`, `before` in `history`, and `after` in `chain` are
+`OutpointString`s; `since` is empty or a position as a `since` answer's
+context gave it (16 decimal digits, a colon, a txid in display order, a
+colon and 10 decimal digits); `seq`, `before` in `history`, and `after` in `chain` are
 decimals from 0 to 2^53 - 1 with no leading zero; a time cursor `q` is
 `<created>:<txid>`, the decimal `created` with no leading zero and the txid
 in display order. A question MUST carry exactly the members of one class. A
@@ -1122,6 +1125,23 @@ marked served is refused with an error, never answered empty and never
 ignored.
 
 `outcomes` and `outcomes-of` hold the newest 64 records, and anyone can fill them with unsigned no-answer and unretrievable outcomes dated now; a reader computing a record therefore asks `outcomes-by` and `outcomes-of-by` for the buyers it weighs, and pays `outcome-history` or `outcome-history-of` for the rest.
+
+`since` is how one host learns what another took after a point, without
+asking about everything it holds (section 12.6). It lists an output for as
+long as one of the six classes it names would answer it: an entry no token
+of a served chain names, admitted within the last 7 days; a live
+advertisement; a hold output; a front statement; an outcome admitted within
+the last 31 days; an admitted sweep. It answers nothing those classes do
+not: no token, no entry a token names, no outcome outside its window. A
+position is the host's own and means nothing at another host. It is the
+time the host listed the output, never below a position it already gave,
+then the output; a host answers only positions before its present
+millisecond, so no output is ever listed at or before a position already
+answered, and an asker that keeps the last position it was given misses
+nothing the host lists later. An output a class stops answering and later
+answers again (an entry a reorganization left unnamed) is listed again at a
+new position above every position the host gave. A host keeps its positions
+across a restart.
 
 An empty answer means only that this host holds nothing that answers. The
 engine hydrates every answered output as BEEF, so a reader verifies every
@@ -1458,7 +1478,11 @@ A host that starts carrying a bucket, or missed part of it, is given it by
 replay: tokens, entries, advertisements, hold outputs, outcomes and
 statements are self-verifying, so anyone who holds one may submit it. A
 replayer assembles each token's BEEF from the token at `seq` and its parent
-at `seq - 1`. A host MUST NOT enable an unordered synchronization of
+at `seq - 1`. A host that repairs from one that answers `since` keeps the
+position of the last output that host answered it and asks only for what
+came after, in that host's order, so a repair costs what the two differ by;
+from a host that refuses the class it asks the other free classes about
+what it holds. A host MUST NOT enable an unordered synchronization of
 unspent outputs for `tm_bstore_` topics: it carries only unspent outputs,
 so it never carries a chain's spent tokens, and it drops without retrying
 what a topic manager refuses.
