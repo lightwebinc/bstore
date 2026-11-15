@@ -97,7 +97,8 @@ GB, and there are no public providers and no directory yet.
 ## Measured
 
 Measured on a lab fabric: one S3 gateway, one facade, a multicast plane and
-two providers on commodity hosts. Details and method in
+two providers on commodity hosts, and for the held runs a second user with a
+gateway, a facade and providers of its own. Details and method in
 [docs/benchmarks.md](docs/benchmarks.md).
 
 ```mermaid
@@ -112,6 +113,8 @@ xychart-beta horizontal
 | --- | --- |
 | A 4 GiB put acknowledged by the S3 gateway | 3.75 s, about 1,145 MB/s |
 | The same put carried over the multicast plane, lossless | 1,002 MB/s |
+| One user's puts delivered to every provider, held for a minute | 1,137 MB/s |
+| Two users at once, held for a minute, no datagram lost | 1,721 MB/s |
 | Every provider verified the object | 15 to 18 s after the put |
 | Small puts answered `200` by one gateway | 400 a second |
 | Roots held and advertised by one provider | about 150 a second |
