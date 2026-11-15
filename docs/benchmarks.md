@@ -124,9 +124,9 @@ two users deliver more than one link carries. A user that outgrows one link publ
 several lanes, each a numbered flow of its own. Two lanes carried the same user's stream across
 two links without raising its rate, because the link was no longer what bound it.
 
-What sets the pace in these runs is the storage node, not the plane. A put is hashed six ways
-(its blobs, its content, its segments, its field signature, its outputs and its transaction) and
-spooled before it is minted, and a node paced past what it can take refuses uploads. The second
+In every row but the first, the storage node sets the pace, not the plane. A put is hashed six
+ways (its blobs, its content, its segments, its field signature, its outputs and its transaction)
+and spooled before it is minted, and a node paced past what it can take refuses uploads. The second
 user ran on smaller hosts at about three fifths of the first user's rate; pushed harder, its
 receiving host falls behind before the fabric does. The hosts the users share, the edge that fans
 the pieces out and the listener that delivers them, lost no datagram in the two-user runs and
