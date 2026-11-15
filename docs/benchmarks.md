@@ -28,6 +28,13 @@ gateway's records and pieces on BSV Layered Multicast. The edge is the commercia
 listener of a 1BSV fabric; the open-source listener is what the numbers call "open-source". The
 settlement leg is an Arcade instance in front of a Teranode, mining the lab's own chain.
 
+The held runs ([Held for a minute](#held-for-a-minute-one-user-then-two)) give each user a rig of
+its own: a client, a bucket, a storage node (gateway and provider in one process), a facade and a
+second provider. The users share the edge, the listener and the retry endpoint, and every spool
+and store is held in memory. The first user's storage node is a 32-thread host and, in the
+two-user runs, the shared listener is a two-socket server; the rest, the second user's among
+them, are the 16-thread hosts above.
+
 ## A 4 GiB put
 
 ```bash
@@ -85,6 +92,46 @@ whose per-chain repair budget was sized for small objects could not repair it (f
 expired unrepaired in one run); the perf fabric runs with that budget raised, and the fleet's
 values are a matter of configuration.
 
+## Held for a minute: one user, then two
+
+A single put shows the path's peak; a held load shows what the path keeps up. Each user writes
+unique 256 MiB objects through its own S3 gateway at a set pace, 16 in flight (8 for the second
+user), and deletes each object behind the load so that a run can outlast the stores. A run counts
+only when every put is answered `200`, both of the user's providers hold every piece and every
+record of every object, and the listener has counted no gap, abandoned no object and shed none.
+
+```mermaid
+xychart-beta horizontal
+    title "Delivered to every provider, held for a minute, MB/s (higher is better)"
+    x-axis ["one user", "two users at once"]
+    y-axis "MB/s" 0 --> 1800
+    bar [1137, 1721]
+```
+
+_One user's puts reached both of its providers at 1,137 MB/s for 66 s: 280 objects, 70 GiB. Two users at once reached theirs at 1,721 MB/s for 68 s (1,075 and 646 MB/s): 432 objects, 108 GiB, with none of the plane's 13 million datagrams lost on the way._
+
+| Load | Delivered to every provider | Held for | What bounds it |
+| --- | --- | --- | --- |
+| One user | 1,137 MB/s (repeated at 1,090 and 1,142) | 66 s | one flow: every hop between the storage node and the providers at the rate of one 10 GbE link |
+| Two users at once | 1,721 MB/s (repeated at 1,714 and 1,697) | 68 s | the first user's storage node, and the smaller hosts behind the second user |
+| One user, measured beside the two-user runs | 1,063 to 1,070 MB/s | 68 to 69 s | its storage node: paced faster, it refuses uploads |
+| The same user over two lanes | 1,067 MB/s | 68 s | its storage node; each link carries three fifths of its rate |
+
+A user's stream is one flow, and the fabric grows by flows. A bucket is one topic, and a topic
+travels as one flow from its storage node's lane to every provider: at most 1,246 MB/s on the
+wire of one 10 GbE link. A second user brings a bucket, a lane and flows of its own, which is how
+two users deliver more than one link carries. A user that outgrows one link publishes over
+several lanes, each a numbered flow of its own. Two lanes carried the same user's stream across
+two links without raising its rate, because the link was no longer what bound it.
+
+What sets the pace in these runs is the storage node, not the plane. A put is hashed six ways
+(its blobs, its content, its segments, its field signature, its outputs and its transaction) and
+spooled before it is minted, and a node paced past what it can take refuses uploads. The second
+user ran on smaller hosts at about three fifths of the first user's rate; pushed harder, its
+receiving host falls behind before the fabric does. The hosts the users share, the edge that fans
+the pieces out and the listener that delivers them, lost no datagram in the two-user runs and
+were not what refused or fell behind.
+
 ## Small objects
 
 Small objects stress a different path: every object is its own entry, hold output and, at each
@@ -137,7 +184,10 @@ The figures bstore is measured against, from the same hosts and switch.
 
 - A put's cost to the writer is the transfer. Hashing, spooling, minting and publishing happen
   behind the acknowledgment or beside it, and the figures above say which.
-- The plane's rate is a property of the edge host, not of the group: one group carried every run.
+- The plane's rate is a property of the edge host, not of the group: one group carried every
+  one-user run.
+- A flow is bounded by one link, and the fabric's rate grows by flows: each user brings its own,
+  and a user that outgrows one link publishes over several lanes.
 - The chain never carries the bytes. A 4 GiB put is a handful of transactions and a few thousand
   satoshis whatever the object's size; the plane carries the pieces.
 - Every figure is from one lab fabric with its own chain and its own settlement node. A public
