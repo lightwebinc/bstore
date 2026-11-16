@@ -20,7 +20,6 @@ import (
 
 	"github.com/bsv-blockchain/go-sdk/chainhash"
 	ec "github.com/bsv-blockchain/go-sdk/primitives/ec"
-	sdkspv "github.com/bsv-blockchain/go-sdk/spv"
 	"github.com/bsv-blockchain/go-sdk/transaction"
 	"github.com/bsv-blockchain/go-sdk/transaction/chaintracker"
 	"github.com/bsv-blockchain/go-sdk/wallet"
@@ -28,6 +27,7 @@ import (
 	"github.com/lightwebinc/bcommon/carrier"
 	"github.com/lightwebinc/bcommon/nodeapi"
 	"github.com/lightwebinc/bcommon/pushdrop"
+	"github.com/lightwebinc/bcommon/verify"
 
 	"github.com/lightwebinc/bstore/storerec"
 )
@@ -600,18 +600,16 @@ func checkSet(ctx context.Context, set string, m *manifest, n int, hd chaintrack
 }
 
 // spvCheck is the bridge's SPV: every unproven transaction's scripts, the
-// proven ones' paths against the headers.
+// proven ones' paths against the headers. A corpus object is a carrier, not
+// final by design, so this is bcommon's overlay SPV (verify.Check), with no
+// finality rule.
 func spvCheck(ctx context.Context, obj []byte, hd chaintracker.ChainTracker) error {
 	tx, err := transaction.NewTransactionFromBEEF(obj)
 	if err != nil {
 		return err
 	}
-	ok, err := sdkspv.Verify(ctx, tx, hd, nil)
-	if err != nil {
+	if _, err := verify.Check(ctx, tx, hd); err != nil {
 		return fmt.Errorf("spv: %w", err)
-	}
-	if !ok {
-		return errors.New("spv: does not verify")
 	}
 	return nil
 }

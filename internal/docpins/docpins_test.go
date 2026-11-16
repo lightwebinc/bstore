@@ -126,3 +126,30 @@ func TestDocumentedVersionsMatchThePins(t *testing.T) {
 		}
 	}
 }
+
+// The TypeScript host vendors bcommon's package as a tarball. It must be
+// the release go.mod pins: the host and the Go codec read one contract.
+func TestHostBcommonMatchesGoMod(t *testing.T) {
+	req, _ := goMod(t)
+	var pkg struct {
+		Dependencies map[string]string `json:"dependencies"`
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "host", "package.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &pkg); err != nil {
+		t.Fatal(err)
+	}
+	dep := pkg.Dependencies["@lightwebinc/bcommon"]
+	m := regexp.MustCompile(`^file:vendor/lightwebinc-bcommon-(\d+\.\d+\.\d+)\.tgz$`).FindStringSubmatch(dep)
+	if m == nil {
+		t.Fatalf("host/package.json @lightwebinc/bcommon %q is not a vendored tarball", dep)
+	}
+	if want := strings.TrimPrefix(req["github.com/lightwebinc/bcommon"], "v"); m[1] != want {
+		t.Errorf("host vendors bcommon %s; go.mod pins %s", m[1], want)
+	}
+	if _, err := os.Stat(filepath.Join(root, "host", strings.TrimPrefix(dep, "file:"))); err != nil {
+		t.Errorf("host/package.json names a tarball that is not there: %v", err)
+	}
+}
