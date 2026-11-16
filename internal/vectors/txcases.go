@@ -274,7 +274,9 @@ func (e *txEnv) cases() ([]txCase, error) {
 	final.Inputs[0].SequenceNumber = transaction.MaxTxInSequenceNum
 	add(txCase{name: "carrier-final-input", note: "nSequence 0xFFFFFFFF", tx: signAll(final), reason: "mineable"})
 	spk := a.derivedPriv(ed)
-	add(txCase{name: "carrier-unlock-high-s", note: "entry-put with its input signature's high-S twin", tx: rewriteUnlock(k1, 0, func(sg []byte) []byte { return push(append(highSBytes(sg[:len(sg)-1]), sg[len(sg)-1])) }), reason: "unlock"})
+	add(txCase{name: "carrier-unlock-high-s", note: "entry-put with its input signature's high-S twin", tx: rewriteUnlock(k1, 0, func(sg []byte) []byte { return push(append(highSBytes(sg[:len(sg)-1]), sg[len(sg)-1])) }), reason: "unlock",
+		// go-sdk v1.7.5's interpreter refuses a high-S signature in a version 1 transaction.
+		noScripts: true})
 	add(txCase{name: "carrier-unlock-pushdata1", note: "the signature pushed by OP_PUSHDATA1", tx: rewriteUnlock(k1, 0, func(sg []byte) []byte { return append([]byte{script.OpPUSHDATA1, byte(len(sg))}, sg...) }), reason: "unlock"})
 	add(txCase{name: "carrier-unlock-extra-push", note: "OP_0 before the signature", tx: rewriteUnlock(k1, 0, func(sg []byte) []byte { return append([]byte{script.Op0}, push(sg)...) }), reason: "unlock"})
 	add(txCase{name: "carrier-unlock-sighash-single", note: "signed SIGHASH_SINGLE|FORKID", tx: carrierFrom(e.entryTree, 2, flagUnlocker{spk, sighash.SingleForkID}, out(1000, lock1)), reason: "unlock"})

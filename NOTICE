@@ -54,3 +54,71 @@ Prior work the design follows (docs/spec.md section 18)
 Third-party software is listed, with its licence text, in
 LICENSE-THIRD-PARTY (Go) and in host/package-lock.json (the host module,
 which inlines bcommon and imports the host's own @bsv/sdk).
+
+=========================================================================
+Third-Party Software
+
+go-sdk is under the Apache License 2.0 from v1.7.5, the version bstore
+builds on. Earlier versions were under the Open BSV License Version 5,
+whose grant was revocable and limited to the BSV Blockchains; those terms
+do not apply to v1.7.5.
+
+LICENSE-THIRD-PARTY is GENERATED from what the binaries link (make
+licences checks it) and holds every Go module's licence text. Section
+4(d) of the Apache License asks for more than its text: where a module
+ships a NOTICE file, its attribution notices travel too. Six of the
+modules bstore links ship one (bcommon's devkit ships bcommon's), and
+their attribution notices are these:
+
+  github.com/aws/aws-sdk-go-v2
+    AWS SDK for Go
+    Copyright 2015 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+    Copyright 2014-2015 Stripe, Inc.
+
+  github.com/aws/smithy-go
+    Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+
+  go.yaml.in/yaml/v3
+    Copyright 2011-2016 Canonical Ltd.
+
+  github.com/lightwebinc/bcommon
+    bcommon
+    Copyright 2026 Lightweb Inc. (https://lightweb.net)
+
+  github.com/bsv-blockchain/go-sdk
+    go-sdk
+    Copyright 2023-2026 BSV Association
+
+    This product includes software from these projects, under their own
+    licenses:
+    - btcd (chainhash, compat, script/interpreter): Copyright (c)
+      2013-2017 The btcsuite developers (ISC)
+    - btcec (primitives/ec): Copyright 2010 The Go Authors, Copyright
+      2011 ThePiachu, Copyright 2013-2014 The btcsuite developers (ISC)
+    - dcrd (chainhash, script/interpreter): Copyright (c) 2015-2018 The
+      Decred developers (ISC)
+    - Bitcoin Core script test data (script/interpreter/data): Copyright
+      (c) 2012-2014 The Bitcoin Core developers (MIT)
+
+go-sdk names those projects and ships no copy of the ISC License they
+are under, so LICENSE-THIRD-PARTY, which is generated from the license
+files modules ship, holds none. The ISC License asks that its copyright
+notice and its permission notice appear in all copies. The copyright
+notices are the ones go-sdk states, above. The permission notice, as
+btcd and dcrd publish it, is:
+
+  Permission to use, copy, modify, and distribute this software for any
+  purpose with or without fee is hereby granted, provided that the above
+  copyright notice and this permission notice appear in all copies.
+
+  THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+  WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+  MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+  ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+  WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+  ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+  OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+go-sdk also ships a PATENTS file, in which BSV Association states that it
+holds no patent rights and undertakes not to assert any against a user of
+the software. It travels with go-sdk's source.

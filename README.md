@@ -211,7 +211,7 @@ make module NODE=/path/to/node24  # host/bundle/bstore-module.js
 make docker-build                 # the images
 ```
 
-Go 1.27.2 and Node 24. bstore pins go-sdk v1.7.1 and bcommon v0.34.0
+Go 1.27.2 and Node 24. bstore pins go-sdk v1.7.5 and bcommon v0.35.1
 (exact tags in `go.mod`, asserted by `make verify`).
 
 ## License

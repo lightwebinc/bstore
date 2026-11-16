@@ -376,10 +376,11 @@ func tokenBEEF(t, parent *transaction.Transaction) []byte {
 }
 
 // scriptsVerify runs the interpreter over tx's own inputs, each against the
-// output it spends.
+// output it spends. It checks scripts only, with no finality rule, as bcommon's
+// vector generator does: a carrier is not final by design.
 func scriptsVerify(ctx context.Context, tx *transaction.Transaction) bool {
 	cp := tx.ShallowClone()
 	cp.MerklePath = nil
-	ok, err := spv.Verify(ctx, cp, &spv.GullibleHeadersClient{}, nil)
+	ok, err := spv.VerifyScripts(ctx, cp)
 	return err == nil && ok
 }
