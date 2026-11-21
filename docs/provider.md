@@ -791,11 +791,13 @@ publish),
 `bstore_provider_advertisement_batches_total` and
 `bstore_provider_advertisement_roots_total` (advertisement transactions
 journaled, and the roots they carry), `bstore_provider_async_takes_total{result}`
-(a feeder's pieces taken after its answer: `taken`, `refused` or `error`),
+(a feeder's takes made after its answer, one per topic, record topics
+included: `taken`, `refused` or `error`),
 `bstore_provider_local_takes_total{result,mode}` (a storage node's pieces and
 records from its own gateway, `mode` `trusted`, `verified` or `record`),
-`bstore_provider_local_leaves_total{leaves}` (whether a local piece's segment
-leaves were `carried` from the gateway or `hashed` here),
+`bstore_provider_local_leaves_total{leaves}` (for a trusted local piece,
+whether its segment leaves come `carried` from the gateway or are to be
+`hashed` here; counted before the piece is taken),
 `bstore_provider_closure_checks_total{mode}`, `bstore_provider_walk_reads_total`
 (objects a closure walk read back from the store),
 `bstore_provider_deletes_total` (puts a delete ended),
