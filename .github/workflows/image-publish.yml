@@ -19,10 +19,12 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   publish:
+    permissions:
+      contents: read
+      packages: write
     if: inputs.confirm == 'RELEASE'
     runs-on: ubuntu-latest
     env:
