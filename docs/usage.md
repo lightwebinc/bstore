@@ -562,7 +562,9 @@ crc32c   Zm9vYg==
 gateway ([s3.md](s3.md)), or to any S3, through the AWS SDK for Go v2:
 path-style addressing, Signature Version 4, credentials from
 `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, `AWS_PROFILE` or
-`~/.aws`, the endpoint from `-endpoint` or `AWS_ENDPOINT_URL`.
+`~/.aws`, the endpoint from `-endpoint`, `AWS_ENDPOINT_URL_S3` or
+`AWS_ENDPOINT_URL`, and the signing region from `-region` (default
+`us-east-1`).
 
 The point is speed with timings: the body is never hashed before it
 moves. A request is signed with `UNSIGNED-PAYLOAD`, and the checksum the

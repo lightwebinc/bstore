@@ -787,7 +787,19 @@ leg, `submit` the leg's answer), `bstore_provider_publish_seconds{host}` (each e
 publish),
 `bstore_provider_renewals_total`, `bstore_provider_payouts_total`,
 `bstore_provider_objects_served_total`, `bstore_provider_damaged_total`,
-`bstore_provider_evicted_total`, `bstore_provider_refused_total`, and the
+`bstore_provider_evicted_total`, `bstore_provider_refused_total`,
+`bstore_provider_advertisement_batches_total` and
+`bstore_provider_advertisement_roots_total` (advertisement transactions
+journaled, and the roots they carry), `bstore_provider_async_takes_total{result}`
+(a feeder's pieces taken after its answer: `taken`, `refused` or `error`),
+`bstore_provider_local_takes_total{result,mode}` (a storage node's pieces and
+records from its own gateway, `mode` `trusted`, `verified` or `record`),
+`bstore_provider_local_leaves_total{leaves}` (whether a local piece's segment
+leaves were `carried` from the gateway or `hashed` here),
+`bstore_provider_closure_checks_total{mode}`, `bstore_provider_walk_reads_total`
+(objects a closure walk read back from the store),
+`bstore_provider_deletes_total` (puts a delete ended),
+`bstore_provider_released_total` (roots whose waiting pieces were dropped), and the
 gauges `bstore_provider_holdings`, `bstore_provider_store_bytes`,
 `bstore_provider_sessions`, `bstore_provider_pool_satoshis`.
 
