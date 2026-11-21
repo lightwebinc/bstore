@@ -132,8 +132,9 @@ Release tarballs for Linux and macOS (amd64, arm64), each with its
 `SHA256SUMS` entry, are on the
 [releases page](https://github.com/lightwebinc/bstore/releases). The
 container images (`ghcr.io/lightwebinc/bstore`, `bstore-provider`,
-`bstore-devchain`, `bstore-host`) are published with each release, built
-from the [Dockerfile](Dockerfile) and [host/Dockerfile](host/Dockerfile); see
+`bstore-devchain`, `bstore-host`) are published for a tagged release by a
+manual workflow, built from the [Dockerfile](Dockerfile) and
+[host/Dockerfile](host/Dockerfile); see
 [docs/configuration.md](docs/configuration.md#container-images).
 
 ## On mainnet in five commands

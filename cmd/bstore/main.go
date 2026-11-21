@@ -52,9 +52,10 @@ const (
 const usageText = `usage: bstore [global flags] <command> [flags] [arguments]
 
 an identity (a home):
-  init -node URL -settle LEG -headers URL -hosts URLS [flags]
+  init [-network main|test|regtest] -hosts URLS [flags]
                               create the home: wallet and config.json
   fund                        print the fund address and the pool
+  fund -beef FILE             import a payment you sent to the fund address, as your wallet's BEEF
   fund -txid TXID             import a mined payment you sent to the fund address
   fund -blocks N              coinbase: only on a regtest chain you run (development and tests);
                               mine N blocks to the fund address
