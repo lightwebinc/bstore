@@ -114,7 +114,7 @@ func randomSuffix() string {
 	return string(b)
 }
 
-// feeKey is the root's txmint wallet: the key every fee coin pays.
+// feeKey is the root's fee wallet (wallet.json): the key every fee coin pays.
 type feeKey struct {
 	Priv *ec.PrivateKey
 	Addr *script.Address
@@ -151,7 +151,7 @@ func (f *feeKey) unlocker() transaction.UnlockingScriptTemplate {
 	return u
 }
 
-// funding is funding.json as `txmint corpus fund` writes it.
+// funding is funding.json as the corpus replay tool's funding step writes it.
 type funding struct {
 	TxID    string `json:"txid"`
 	Raw     string `json:"raw"`

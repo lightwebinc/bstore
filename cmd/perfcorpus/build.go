@@ -45,7 +45,7 @@ var shapeDoc = map[string]string{
 	"mix":     "a put cycle in order: entry, its hold output, one advertisement per provider; the owner's anchor token per 100 puts of a bucket",
 }
 
-// manifest is txmint's corpus manifest, which `txmint replay` reads.
+// manifest is the set's corpus manifest, which a corpus replay tool reads.
 type manifest struct {
 	Name     string                  `json:"name"`
 	Built    string                  `json:"built"`
@@ -70,7 +70,7 @@ type shapeSummary struct {
 
 type work struct{ Txs, Inputs, Scripts, Proofs, Depth int }
 
-// record is a BRC-149 submission record (txmint beef.RecordTopics).
+// record is a BRC-149 submission record naming one topic.
 func record(topic string, obj []byte) []byte {
 	out := make([]byte, 0, 8+1+len(topic)+len(obj))
 	out = binary.BigEndian.AppendUint16(out, 0xBEEF)
