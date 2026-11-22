@@ -25,16 +25,26 @@
 //	perfcorpus send  -root DIR -propagation URL  broadcast the plan level by level
 //	perfcorpus prove -root DIR -asset URL        wait for the blocks, record each minimal proof
 //	perfcorpus build -root DIR -name SET -shapes ... -count N
-//	                                             write a txmint replay set (offline carriers,
+//	                                             write a replay set (offline carriers,
 //	                                             the mined objects, the mix)
 //	perfcorpus check -set DIR -asset URL [-n K]  admit the first K objects of each shape
 //	                                             with storerec.Admit against the chain's headers
 //
-// The root holds wallet.json and funding.json as `txmint keygen` and
-// `txmint corpus fund` write them: the fee key and the one mined payment
-// every on-chain transaction descends from. The set directory is what
-// `txmint replay` reads: <shape>.bin of length-prefixed BRC-149 submission
-// records, manifest.json, and replay's cursor.
+// The root needs two files that no subcommand writes; they are put in it
+// before plan, by hand or by whatever holds the lab's coins
+// (TestCorpusAdmits writes both):
+//
+//   - wallet.json, {"wif": "<WIF>"}: the fee key every fee coin pays.
+//   - funding.json: the one mined payment to that key's P2PKH address that
+//     every on-chain transaction descends from, as {"txid", "raw" (the
+//     transaction, hex), "bump" (its BRC-74 merkle path, hex), "height",
+//     "address", "outputs": [{"vout", "satoshis"}, ...]}. plan refuses a
+//     raw that does not hash to txid or an address that is not the fee
+//     key's, and draws its coins from the listed outputs.
+//
+// The set directory is what a corpus replay tool reads: <shape>.bin of
+// length-prefixed BRC-149 submission records, manifest.json, and replay's
+// cursor.
 package main
 
 import (
