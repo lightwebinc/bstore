@@ -31,7 +31,7 @@ jobs:
       # The reference overlay host image the host module is added to: the
       # repository variable REFERENCE_HOST_IMAGE (an exact tag), else the one
       # the quickstart is checked against.
-      REFERENCE_HOST_IMAGE: ${{ vars.REFERENCE_HOST_IMAGE || 'ghcr.io/lightwebinc/overlay-blueprints:0.2.2' }}
+      REFERENCE_HOST_IMAGE: ${{ vars.REFERENCE_HOST_IMAGE || 'ghcr.io/lightwebinc/overlay-blueprints:0.5.0' }}
     steps:
       # Build from the git tag being published: input '0.11.0' -> tag
       # 'v0.11.0'. Checkout fails the run if that tag does not exist.

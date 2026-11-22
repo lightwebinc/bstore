@@ -53,6 +53,8 @@ interface Rig {
   ls: { lookup: (q: unknown) => Promise<unknown> }
   receiver: MemoryReceiver
   wallet: PayingWallet
+  /** The host's own wallet: the signatures it makes are counted. */
+  payeeWallet: ProtoWallet
   client: Party
   chain: Chain
   owner: OwnerSim
@@ -109,6 +111,7 @@ async function rig(prices: string, sessions?: { max: number; ttlSeconds: number 
   servers.push(server)
   return {
     url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    payeeWallet: wallet,
     server,
     ls: m.ls as unknown as Rig["ls"],
     receiver,
@@ -324,6 +327,7 @@ test('one coin pays once: conflicting unbroadcast payments that spend it buy one
   class OneCoin extends PayingWallet {
     readonly same = this.coin()
     override async createAction(args: CreateActionArgs): Promise<CreateActionResult> {
+      if (args.options?.sendWith !== undefined) return await super.createAction(args)
       const tx = await this.pay((args.outputs ?? []).map((o) => ({ satoshis: o.satoshis, lockingScript: o.lockingScript })), this.same)
       return { tx: tx.toAtomicBEEF(), txid: tx.id('hex') }
     }
@@ -449,7 +453,7 @@ async function shake(url: string, localAddress: string): Promise<{ status: numbe
     version: '0.1',
     messageType: 'initialRequest',
     identityKey: PrivateKey.fromRandom().toPublicKey().toString(),
-    initialNonce: Utils.toBase64(Random(32)),
+    initialNonce: Utils.toBase64(Random(48)),
     requestedCertificates: { certifiers: [], types: {} },
   })
   return await new Promise((resolve, reject) => {
@@ -547,7 +551,7 @@ test('a forged request on a live session is charged to the session before any ve
   const r = await rig('history=5', undefined, undefined, { perSec: 0.001, burst: 2 })
   const rec = await recording(r)
   let verifies = 0
-  const w = (r.front as unknown as { peer: { wallet: ProtoWallet } }).peer.wallet
+  const w = r.payeeWallet
   const verify = w.verifySignature.bind(w)
   w.verifySignature = async (args) => {
     verifies++
