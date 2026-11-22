@@ -471,8 +471,20 @@ export class PayingWallet extends ProtoWallet {
     return tx
   }
 
+  /**
+   * SDK 4's AuthFetch pays in two calls: one prepares the transaction
+   * (noSend), a second releases it by txid (sendWith). The second reports it
+   * unproven, as a wallet that broadcast it would; this wallet broadcasts
+   * nothing, the host under test does.
+   */
   async createAction(args: CreateActionArgs): Promise<CreateActionResult> {
+    const sendWith = args.options?.sendWith
+    if (sendWith !== undefined) return { sendWithResults: sendWith.map((txid) => ({ txid, status: 'unproven' as const })) }
     const tx = await this.pay((args.outputs ?? []).map((o) => ({ satoshis: o.satoshis, lockingScript: o.lockingScript })))
     return { tx: tx.toAtomicBEEF(), txid: tx.id('hex') }
+  }
+
+  async abortAction(): Promise<{ aborted: true }> {
+    return { aborted: true }
   }
 }
