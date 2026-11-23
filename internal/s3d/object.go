@@ -85,14 +85,14 @@ func (s *Server) resolve(ctx context.Context, b *bucket, key string) (*resolved,
 // the writer.
 func readError(err error) *s3Error {
 	switch {
-	case errors.Is(err, reader.ErrHeaders):
-		return &s3Error{"SlowDown", "The gateway's header source did not answer; try again.", http.StatusServiceUnavailable}
 	case errors.Is(err, reader.ErrRefused), errors.Is(err, reader.ErrContentHash):
 		return &s3Error{"InternalError", "bstore refused the object: " + err.Error(), http.StatusInternalServerError}
-	case errors.Is(err, reader.ErrNoSource):
-		return &s3Error{"SlowDown", "No provider served the object's bytes; try again.", http.StatusServiceUnavailable}
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return &s3Error{"RequestTimeout", "The request timed out.", http.StatusServiceUnavailable}
+	case errors.Is(err, reader.ErrHeaders):
+		return &s3Error{"SlowDown", "The gateway's header source did not answer; try again.", http.StatusServiceUnavailable}
+	case errors.Is(err, reader.ErrNoSource):
+		return &s3Error{"SlowDown", "No provider served the object's bytes; try again.", http.StatusServiceUnavailable}
 	}
 	return &s3Error{"SlowDown", "No host proves the key now; try again.", http.StatusServiceUnavailable}
 }

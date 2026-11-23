@@ -46,9 +46,9 @@ func (r *Reader) Sources(ctx context.Context, bucket string, root [32]byte) []So
 }
 
 // sources is Sources with the header source's failure kept: an
-// advertisement whose proof could not be checked is left out, and when that
-// left none the ErrHeaders error comes back. A list a failure shortened is
-// not kept.
+// advertisement whose proof could not be checked is left out and the
+// ErrHeaders error comes back beside what was found, so a blob no source
+// serves names it. A list a failure shortened is not kept.
 func (r *Reader) sources(ctx context.Context, bucket string, root [32]byte) ([]Source, error) {
 	if s, ok := r.ads.get(root, r.now()); ok {
 		return s, nil
@@ -105,10 +105,7 @@ func (r *Reader) sources(ctx context.Context, bucket string, root [32]byte) ([]S
 	})
 	if headers != nil {
 		r.logf("advertisements of %x: %v", root[:6], headers)
-		if len(out) == 0 {
-			return nil, headers
-		}
-		return out, nil
+		return out, headers
 	}
 	r.ads.put(root, out, r.now())
 	return out, nil

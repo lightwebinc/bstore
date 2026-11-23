@@ -1,6 +1,8 @@
 package reader
 
 import (
+	"bytes"
+
 	"context"
 	"errors"
 	"fmt"
@@ -75,5 +77,22 @@ func TestUnavailableCarriesTheHeaders(t *testing.T) {
 	ref := fmt.Errorf("%w: writer", ErrRefused)
 	if err := unavailable(ref, h); err != ref {
 		t.Fatalf("got %v, want the refusal", err)
+	}
+}
+
+// An object whose advertisements could not be checked: a blob the local
+// store holds is still served, and one it does not hold names the headers.
+func TestABlobDuringAHeaderOutage(t *testing.T) {
+	content := bytes.Repeat([]byte("x"), 10)
+	o, l := testObject(t, content)
+	o.sourcesErr = fmt.Errorf("%w: dial", ErrHeaders)
+	h := o.blobs[0].Hash
+	if b, err := o.fetch(context.Background(), h, o.blobs[0].Length); err != nil || !bytes.Equal(b, content) {
+		t.Fatalf("held locally: (%q, %v), want the blob", b, err)
+	}
+	delete(l.m, h)
+	_, err := o.fetch(context.Background(), h, o.blobs[0].Length)
+	if !errors.Is(err, ErrNoSource) || !errors.Is(err, ErrHeaders) {
+		t.Fatalf("not held: %v, want ErrNoSource naming the headers", err)
 	}
 }

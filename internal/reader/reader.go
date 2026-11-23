@@ -58,7 +58,7 @@ var (
 func (r *Reader) mined(ctx context.Context, tx *transaction.Transaction) error {
 	ok, err := chaintoken.MinedCheck(ctx, tx, r.Headers)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrHeaders, err)
+		return fmt.Errorf("%w: %w", ErrHeaders, err)
 	}
 	if !ok {
 		return errNotMined
@@ -321,6 +321,12 @@ func (r *Reader) latest(ctx context.Context, host string, c Chain, t *Token) err
 			defer cancel()
 			job.err = r.walk(wctx, host, c, t)
 			close(job.done)
+			// A walk the header source stopped is asked again at once, not
+			// answered from this job for a minute.
+			if errors.Is(job.err, ErrHeaders) {
+				r.walks.Delete(key)
+				return
+			}
 			time.AfterFunc(time.Minute, func() { r.walks.Delete(key) })
 		}()
 	}
@@ -430,6 +436,7 @@ func (r *Reader) tokenAt(ctx context.Context, host string, c Chain, seq uint64, 
 	if t := r.walkSaved(ctx, c, seq, want); t != nil {
 		return t, nil
 	}
+	var headers error
 	hosts := append([]string{host}, r.others(host)...)
 	for _, h := range hosts {
 		a, err := r.ask(ctx, h, c.query("seq", strconv.FormatUint(seq, 10)))
@@ -444,7 +451,14 @@ func (r *Reader) tokenAt(ctx context.Context, host string, c Chain, seq uint64, 
 				}
 				return t, nil
 			}
+			if errors.Is(err, ErrHeaders) {
+				headers = err
+			}
 		}
+	}
+	// A walk the headers stopped is not a chain that fails its check.
+	if headers != nil {
+		return nil, fmt.Errorf("%w: the token at seq %d: %w", ErrUnavailable, seq, headers)
 	}
 	return nil, fmt.Errorf("%w: no host answers the token at seq %d", storerec.ErrBucket, seq)
 }
@@ -501,6 +515,7 @@ func (r *Reader) VerifyEntry(ctx context.Context, bucket string, beef []byte) (*
 // EntryByC asks every host for the entry carrier whose commitment is c
 // (`entry`, spec section 11.1) and returns the first that verifies.
 func (r *Reader) EntryByC(ctx context.Context, bucket string, c [32]byte, skip string) (*Entry, error) {
+	var headers error
 	for _, h := range r.Hosts {
 		if h == skip && len(r.Hosts) > 1 {
 			continue
@@ -515,9 +530,15 @@ func (r *Reader) EntryByC(ctx context.Context, bucket string, c [32]byte, skip s
 				return e, nil
 			}
 			if err != nil {
+				if errors.Is(err, ErrHeaders) {
+					headers = err
+				}
 				r.logf("host %s answered entry %s with something that does not verify: %v", h, short(displayHex(c)), err)
 			}
 		}
+	}
+	if headers != nil {
+		return nil, fmt.Errorf("%w: %w", ErrUnheld, headers)
 	}
 	return nil, ErrUnheld
 }
