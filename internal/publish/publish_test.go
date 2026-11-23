@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"net/http"
@@ -280,5 +281,58 @@ func TestStoreGrownCountsWritesSinceTheLastTrim(t *testing.T) {
 	st.Release()
 	if g := store.Grown(); g != 0 {
 		t.Fatalf("grown %d after staging bytes already held", g)
+	}
+}
+
+// An object kept from a read (Keep) is one no closure names until its
+// manifest is saved: the sweep takes it after orphanAge, and leaves it once
+// a manifest names it.
+func TestKeepIsAnOrphanUntilItsManifest(t *testing.T) {
+	old := func(dir string) {
+		_ = filepath.Walk(filepath.Join(dir, "objects"), func(p string, info os.FileInfo, err error) error {
+			if err == nil && !info.IsDir() {
+				at := time.Now().Add(-2 * orphanAge)
+				_ = os.Chtimes(p, at, at)
+			}
+			return nil
+		})
+	}
+	blob, root := []byte("a blob a reader fetched"), []byte("its root node")
+	bh, rh := sha256.Sum256(blob), sha256.Sum256(root)
+
+	dir := t.TempDir()
+	store, err := OpenStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for h, b := range map[[32]byte][]byte{bh: blob, rh: root} {
+		if err := store.Keep(h, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := store.Get(bh); err != nil || !bytes.Equal(got, blob) {
+		t.Fatalf("a kept object is not read back: %v", err)
+	}
+	if err := store.SaveManifest(&Manifest{Root: hex.EncodeToString(rh[:]), Size: uint64(len(blob)), Blobs: []string{hex.EncodeToString(bh[:])}}); err != nil {
+		t.Fatal(err)
+	}
+	old(dir)
+	if _, err := store.Trim(1 << 40); err != nil {
+		t.Fatal(err)
+	}
+	if !store.Has(bh) || !store.Has(rh) {
+		t.Fatal("a closure a manifest names was swept as an orphan")
+	}
+
+	dir = t.TempDir()
+	if store, err = OpenStore(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Keep(bh, blob); err != nil {
+		t.Fatal(err)
+	}
+	old(dir)
+	if got, err := store.Trim(1 << 40); err != nil || got != 0 || store.Has(bh) {
+		t.Fatalf("a kept object no manifest names outlived the sweep (%d bytes, %v)", got, err)
 	}
 }

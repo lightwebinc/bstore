@@ -100,6 +100,22 @@ type Local interface {
 	Get(h [32]byte) ([]byte, error)
 }
 
+// Keeper is a Local that also keeps what a reader fetched from an
+// advertiser, so the next reader of the same object is served locally. A
+// node that began holding a bucket after an object was published has none
+// of its pieces; with a Keeper it fills as it is read.
+type Keeper interface {
+	Local
+	// Keep stores an object the reader fetched and held to its hash h.
+	Keep(h [32]byte, b []byte) error
+	// Closure is told, once, that every object of a closure is now held
+	// locally and at least one of them was kept by this read: the root,
+	// the object's size, the branches, and the blobs in content order
+	// (repeats included). Until then a kept object is one no closure
+	// names, and a store may drop it as such.
+	Closure(root [32]byte, size uint64, branches, blobs [][32]byte) error
+}
+
 // Object is an object's closure opened for reading: the root and every
 // branch fetched and checked, the blob references in content order.
 type Object struct {
@@ -109,6 +125,16 @@ type Object struct {
 	nodes   [][32]byte // the root and the branches, each once
 	sources []Source
 	local   Local
+
+	// What a Keeper needs to know when the closure is whole locally: the
+	// objects seen held (a local hit, or kept), whether any was kept, and
+	// whether Closure was told. opened is set once blobs and nodes are final.
+	keepMu   sync.Mutex
+	held     map[[32]byte]bool
+	kept     bool
+	told     bool
+	opened   bool
+	distinct int // the closure's distinct objects, counted once it is open
 }
 
 // Size is the object's length.
@@ -178,6 +204,9 @@ func (r *Reader) Open(ctx context.Context, e *storerec.Entry, local Local) (*Obj
 	if err != nil || built.RootHash != e.Root {
 		return nil, fmt.Errorf("%w: the closure is not profile 1's canonical construction", ErrRefused)
 	}
+	o.keepMu.Lock()
+	o.opened = true
+	o.keepMu.Unlock()
 	return o, nil
 }
 
@@ -209,6 +238,7 @@ func (o *Object) Object(ctx context.Context, h [32]byte) ([]byte, error) {
 func (o *Object) fetch(ctx context.Context, h [32]byte, max uint64) ([]byte, error) {
 	if o.local != nil {
 		if b, err := o.local.Get(h); err == nil && sha256.Sum256(b) == h {
+			o.noteHeld(h, false)
 			return b, nil
 		}
 	}
@@ -231,9 +261,64 @@ func (o *Object) fetch(ctx context.Context, h [32]byte, max uint64) ([]byte, err
 			o.r.bad.mark(s.Advertiser, o.r.now())
 			continue
 		}
+		if k, ok := o.local.(Keeper); ok {
+			// A failed keep costs the next reader a fetch, never this one
+			// its bytes.
+			if err := k.Keep(h, b); err != nil {
+				o.r.logf("object %x fetched from %s was not kept: %v", h[:6], short(s.Advertiser), err)
+			} else {
+				o.noteHeld(h, true)
+			}
+		}
 		return b, nil
 	}
 	return nil, fmt.Errorf("%w: object %x (%d advertiser(s) asked)", ErrNoSource, h[:6], tried)
+}
+
+// noteHeld records that the local copy holds h (kept: this read put it
+// there), and tells a Keeper once when the whole closure is held and
+// something of it was kept.
+func (o *Object) noteHeld(h [32]byte, kept bool) {
+	k, ok := o.local.(Keeper)
+	if !ok {
+		return
+	}
+	o.keepMu.Lock()
+	if o.held == nil {
+		o.held = map[[32]byte]bool{}
+	}
+	o.held[h] = true
+	o.kept = o.kept || kept
+	o.keepMu.Unlock()
+	o.closureHeld(k)
+}
+
+// closureHeld tells k the closure is whole locally, if it is, something of
+// it was kept, the object is open, and k was not told before.
+func (o *Object) closureHeld(k Keeper) {
+	o.keepMu.Lock()
+	if !o.opened || o.told || !o.kept || len(o.nodes) == 0 {
+		o.keepMu.Unlock()
+		return
+	}
+	// held has only objects of this closure, each once, so the closure is
+	// whole when it has as many as the closure has distinct objects.
+	if o.distinct == 0 {
+		o.distinct = len(o.Objects())
+	}
+	if len(o.held) < o.distinct {
+		o.keepMu.Unlock()
+		return
+	}
+	o.told = true
+	o.keepMu.Unlock()
+	blobs := make([][32]byte, len(o.blobs))
+	for i, c := range o.blobs {
+		blobs[i] = c.Hash
+	}
+	if err := k.Closure(o.nodes[0], o.entry.Size, o.nodes[1:], blobs); err != nil {
+		o.r.logf("closure %x is held and was not recorded: %v", o.nodes[0][:6], err)
+	}
 }
 
 // maxTries bounds the advertisers asked for one object, and fetchTimeout

@@ -199,7 +199,7 @@ func (s *Server) serveObject(ctx context.Context, w http.ResponseWriter, r *http
 		return fail(e)
 	}
 	defer release()
-	obj, err := s.reader.Open(ctx, ent, s.store)
+	obj, err := s.reader.Open(ctx, ent, s.readLocal())
 	if err != nil {
 		return fail(readError(err))
 	}
@@ -788,7 +788,7 @@ func (s *Server) closureOf(ctx context.Context, e *storerec.Entry) (publish.Clos
 		st.Release()
 		return publish.StoreClosure{Store: s.store, Manifest: st.Manifest}, nil
 	}
-	obj, err := s.reader.Open(ctx, e, s.store)
+	obj, err := s.reader.Open(ctx, e, s.readLocal())
 	if err != nil {
 		return nil, readError(err)
 	}
