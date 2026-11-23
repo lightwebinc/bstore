@@ -45,7 +45,28 @@ var (
 	ErrRefused = errors.New("reader: refused")
 	// ErrNoSource is a blob no advertiser served as its hash names it.
 	ErrNoSource = errors.New("reader: no advertiser served the object")
+	// ErrHeaders is the reader's header source not answering while a proof
+	// was checked: not a proof that fails. A reader answers it as "try
+	// again" and names the cause; it also satisfies ErrUnavailable or
+	// ErrNoSource where it ended the read.
+	ErrHeaders = errors.New("reader: the header source did not answer")
 )
+
+// mined holds tx's proof to the reader's headers: nil when it verifies,
+// errNotMined when it does not, and an ErrHeaders error when the headers
+// could not be asked.
+func (r *Reader) mined(ctx context.Context, tx *transaction.Transaction) error {
+	ok, err := chaintoken.MinedCheck(ctx, tx, r.Headers)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrHeaders, err)
+	}
+	if !ok {
+		return errNotMined
+	}
+	return nil
+}
+
+var errNotMined = errors.New("not mined")
 
 // Chain is a bucket chain a reader reads: the identifier, the owner and the
 // bucket id (spec section 3.3).
@@ -239,7 +260,10 @@ func (r *Reader) verifyToken(ctx context.Context, c Chain, o lookup.Output) (*To
 	if b.Bucket != c.Bucket || !bytes.Equal(b.Owner, c.Owner) || b.ID != c.ID {
 		return nil, errors.New("token: another chain's")
 	}
-	if !chaintoken.Mined(ctx, tx, r.Headers) {
+	if err := r.mined(ctx, tx); err != nil {
+		if errors.Is(err, ErrHeaders) {
+			return nil, fmt.Errorf("token: %w", err)
+		}
 		return nil, errors.New("token: its proof does not verify in the reader's headers")
 	}
 	t := &Token{Txid: txid, Vout: tk.Vout, Bucket: b, tx: tx}
@@ -462,7 +486,13 @@ func (r *Reader) VerifyEntry(ctx context.Context, bucket string, beef []byte) (*
 	if err != nil {
 		return nil, err
 	}
-	if len(tx.Inputs) != 1 || tx.Inputs[0].SourceTransaction == nil || !chaintoken.Mined(ctx, tx.Inputs[0].SourceTransaction, r.Headers) {
+	if len(tx.Inputs) != 1 || tx.Inputs[0].SourceTransaction == nil {
+		return nil, errors.New("entry: its funding tree's proof does not verify in the reader's headers")
+	}
+	if err := r.mined(ctx, tx.Inputs[0].SourceTransaction); err != nil {
+		if errors.Is(err, ErrHeaders) {
+			return nil, fmt.Errorf("entry: funding tree: %w", err)
+		}
 		return nil, errors.New("entry: its funding tree's proof does not verify in the reader's headers")
 	}
 	return &Entry{Entry: a.Carrier.Entry, Record: a.Carrier.Record, C: a.Carrier.Commitment, BEEF: beef}, nil
@@ -507,7 +537,7 @@ type Found struct {
 // answer does not verify is named and the next asked; ErrUnavailable when
 // none answers anything that verifies.
 func (r *Reader) Object(ctx context.Context, c Chain, key string) (*Found, error) {
-	var refused error
+	var refused, headers error
 	for _, h := range r.Hosts {
 		f, err := r.objectAt(ctx, h, c, key)
 		if err == nil {
@@ -520,12 +550,25 @@ func (r *Reader) Object(ctx context.Context, c Chain, key string) (*Found, error
 		if errors.Is(err, ErrUnheld) {
 			return nil, err
 		}
+		if errors.Is(err, ErrHeaders) {
+			headers = err
+		}
 		r.logf("%v", &hostError{h, err})
 	}
+	return nil, unavailable(refused, headers)
+}
+
+// unavailable is how a read across every host ends: the refusal when one
+// verified and failed, else ErrUnavailable, carrying the header source's
+// failure when that is what stopped a host's answer from verifying.
+func unavailable(refused, headers error) error {
 	if refused != nil {
-		return nil, refused
+		return refused
 	}
-	return nil, ErrUnavailable
+	if headers != nil {
+		return fmt.Errorf("%w: %w", ErrUnavailable, headers)
+	}
+	return ErrUnavailable
 }
 
 func (r *Reader) objectAt(ctx context.Context, host string, c Chain, key string) (*Found, error) {
@@ -621,7 +664,7 @@ type Page struct {
 // listed from its entry fetched by `entry` at another host; ErrUnheld when
 // no host produces it (spec section 16.2).
 func (r *Reader) List(ctx context.Context, c Chain, prefix, after string) (*Page, error) {
-	var refused error
+	var refused, headers error
 	for _, h := range r.Hosts {
 		p, err := r.listAt(ctx, h, c, prefix, after)
 		if err == nil {
@@ -634,12 +677,12 @@ func (r *Reader) List(ctx context.Context, c Chain, prefix, after string) (*Page
 			refused = err
 			continue
 		}
+		if errors.Is(err, ErrHeaders) {
+			headers = err
+		}
 		r.logf("%v", &hostError{h, err})
 	}
-	if refused != nil {
-		return nil, refused
-	}
-	return nil, ErrUnavailable
+	return nil, unavailable(refused, headers)
 }
 
 // PageList is the frozen `list` page maximum.
