@@ -44,6 +44,7 @@ var ErrNoChain = errors.New("reader: no host answers a token of the chain that v
 // highest seq is spent, or the source cannot say, the answer is an error:
 // the tooling mints only on a token it holds evidence is the latest.
 func (r *Reader) Tokens(ctx context.Context, c Chain) ([]*Token, error) {
+	var headers error
 	var cands []*Token
 	var hostOf []string
 	for _, h := range r.Hosts {
@@ -55,6 +56,9 @@ func (r *Reader) Tokens(ctx context.Context, c Chain) ([]*Token, error) {
 		for _, o := range a.Outputs {
 			t, err := r.verifyToken(ctx, c, o)
 			if err != nil {
+				if errors.Is(err, ErrHeaders) {
+					headers = err
+				}
 				r.logf("%v", &hostError{h, err})
 				continue
 			}
@@ -63,6 +67,9 @@ func (r *Reader) Tokens(ctx context.Context, c Chain) ([]*Token, error) {
 		}
 	}
 	if len(cands) == 0 {
+		if headers != nil {
+			return nil, fmt.Errorf("%w: %w", ErrNoChain, headers)
+		}
 		return nil, ErrNoChain
 	}
 	// Highest seq first, then lowest txid, each once.

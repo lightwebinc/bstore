@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lightwebinc/bcommon/chaintoken"
 	"github.com/lightwebinc/bcommon/chirp"
 
 	"github.com/lightwebinc/bstore/storerec"
@@ -42,9 +41,19 @@ const maxAdPages = 4
 // advertiser (its latest expiry), latest expiry first. A host's answer is
 // kept for a short while.
 func (r *Reader) Sources(ctx context.Context, bucket string, root [32]byte) []Source {
+	s, _ := r.sources(ctx, bucket, root)
+	return s
+}
+
+// sources is Sources with the header source's failure kept: an
+// advertisement whose proof could not be checked is left out and the
+// ErrHeaders error comes back beside what was found, so a blob no source
+// serves names it. A list a failure shortened is not kept.
+func (r *Reader) sources(ctx context.Context, bucket string, root [32]byte) ([]Source, error) {
 	if s, ok := r.ads.get(root, r.now()); ok {
-		return s
+		return s, nil
 	}
+	var headers error
 	best := map[string]Source{}
 	for _, h := range r.Hosts {
 		after := ""
@@ -67,7 +76,10 @@ func (r *Reader) Sources(ctx context.Context, bucket string, root [32]byte) []So
 					string(ad.Host) == string(storerec.AnyoneKey) {
 					continue
 				}
-				if !chaintoken.Mined(ctx, tx, r.Headers) {
+				if err := r.mined(ctx, tx); err != nil {
+					if errors.Is(err, ErrHeaders) {
+						headers = err
+					}
 					continue
 				}
 				k := hex.EncodeToString(ad.Host)
@@ -91,8 +103,12 @@ func (r *Reader) Sources(ctx context.Context, bucket string, root [32]byte) []So
 		}
 		return out[i].Advertiser < out[j].Advertiser
 	})
+	if headers != nil {
+		r.logf("advertisements of %x: %v", root[:6], headers)
+		return out, headers
+	}
 	r.ads.put(root, out, r.now())
-	return out
+	return out, nil
 }
 
 // Local is a reader's own copy of closures, tried before any advertiser.
@@ -131,7 +147,11 @@ type Object struct {
 	blobs   []chirp.Child
 	nodes   [][32]byte // the root and the branches, each once
 	sources []Source
-	local   Local
+	// sourcesErr is why sources may be short: the header source did not
+	// answer while advertisements were checked. A blob the local store
+	// holds is still served.
+	sourcesErr error
+	local      Local
 
 	// What a Keeper needs to know: the closure's objects seen held (a local
 	// hit, kept by this read, or found held when the closure was opened),
@@ -166,7 +186,7 @@ func (r *Reader) Open(ctx context.Context, e *storerec.Entry, local Local) (*Obj
 	if e.Size == 0 {
 		return o, nil
 	}
-	o.sources = r.Sources(ctx, e.Bucket, e.Root)
+	o.sources, o.sourcesErr = r.sources(ctx, e.Bucket, e.Root)
 	rootBytes, err := o.fetch(ctx, e.Root, chirp.MaxNode)
 	if err != nil {
 		return nil, err
@@ -312,6 +332,9 @@ func (o *Object) fetch(ctx context.Context, h [32]byte, max uint64) ([]byte, err
 			o.keep(k, h, b, s)
 		}
 		return b, nil
+	}
+	if o.sourcesErr != nil {
+		return nil, fmt.Errorf("%w: object %x (%d advertiser(s) asked): %w", ErrNoSource, h[:6], tried, o.sourcesErr)
 	}
 	return nil, fmt.Errorf("%w: object %x (%d advertiser(s) asked)", ErrNoSource, h[:6], tried)
 }
