@@ -82,6 +82,11 @@ type Config struct {
 	// resolves to a loopback, private or link-local address; off, such an
 	// advertisement is never fetched from.
 	FetchPrivate bool `json:"fetch_private,omitempty"`
+	// KeepFetched keeps, in the local store, each object a read fetched
+	// from an advertiser, so the next read of it is served from disk. Off,
+	// the store holds this gateway's own writes only. The store's bound
+	// (store_bytes) covers what is kept.
+	KeepFetched bool `json:"keep_fetched,omitempty"`
 	// Identities are the writer identities, each with a wallet under
 	// identities/<name>; AccessKeys map S3 access keys to them; Buckets are
 	// the chains served.

@@ -57,6 +57,8 @@ type Server struct {
 	store  *publish.Store
 	trimMu sync.Mutex // one store trim at a time (the clock's and the growth's)
 	pubs   map[string]*publish.Publisher
+	// keep is the store as a reader.Keeper (Config.KeepFetched), else nil.
+	keep *keepStore
 	// local is the provider in this process (Config.LocalProvider).
 	local   *provider.Provider
 	buckets map[string]*bucket // by S3 name
@@ -112,6 +114,9 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Server, error) {
 	}
 	if s.store, err = publish.OpenStore(filepath.Join(cfg.Data, "store")); err != nil {
 		return nil, err
+	}
+	if cfg.KeepFetched {
+		s.keep = &keepStore{Store: s.store}
 	}
 	if s.uploads, err = openUploads(filepath.Join(cfg.Data, "uploads"), opts.Now, cfg.Limits.PartWriters); err != nil {
 		return nil, err

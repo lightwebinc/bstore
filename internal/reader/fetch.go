@@ -100,6 +100,29 @@ type Local interface {
 	Get(h [32]byte) ([]byte, error)
 }
 
+// Keeper is a Local that also keeps what a reader fetched from an
+// advertiser, so the next reader of the same object is served locally. A
+// node that began holding a bucket after an object was published has none
+// of its pieces; with a Keeper it fills as it is read.
+type Keeper interface {
+	Local
+	// Keep stores an object the reader fetched and held to its hash h. A
+	// closure's root and branches are kept only once the closure passed
+	// every check of Open.
+	Keep(h [32]byte, b []byte) error
+	// Held reports whether an object is held, without reading it.
+	Held(h [32]byte) bool
+	// Closure is told that every object of a closure is held locally: the
+	// root, the object's size, the branches, and the blobs in content order
+	// (repeats included). It is told at most once by a read that succeeds
+	// in telling it, whoever fetched the objects and whenever: a closure
+	// several ranged reads filled is told by the read that sees it whole.
+	// Until then a kept object is one no closure names, and a store may
+	// drop it as such. A Keeper is told of closures it already knows, and
+	// decides for itself what that is worth.
+	Closure(root [32]byte, size uint64, branches, blobs [][32]byte) error
+}
+
 // Object is an object's closure opened for reading: the root and every
 // branch fetched and checked, the blob references in content order.
 type Object struct {
@@ -109,6 +132,24 @@ type Object struct {
 	nodes   [][32]byte // the root and the branches, each once
 	sources []Source
 	local   Local
+
+	// What a Keeper needs to know: the closure's objects seen held (a local
+	// hit, kept by this read, or found held when the closure was opened),
+	// how many distinct objects it has, whether the Keeper was told it is
+	// whole, and the nodes fetched while it was being opened, which are
+	// kept only if it opens. opened is set once blobs and nodes are final.
+	keepMu   sync.Mutex
+	held     map[[32]byte]bool
+	distinct int
+	told     bool
+	opened   bool
+	pending  []fetched
+}
+
+// fetched is a node an advertiser served while a closure was being opened.
+type fetched struct {
+	h [32]byte
+	b []byte
 }
 
 // Size is the object's length.
@@ -178,7 +219,42 @@ func (r *Reader) Open(ctx context.Context, e *storerec.Entry, local Local) (*Obj
 	if err != nil || built.RootHash != e.Root {
 		return nil, fmt.Errorf("%w: the closure is not profile 1's canonical construction", ErrRefused)
 	}
+	o.open()
 	return o, nil
+}
+
+// open marks the closure final. For a Keeper it keeps the nodes fetched on
+// the way, now that the closure passed every check, and looks once at what
+// of the closure is held already, so that a closure earlier reads filled
+// is seen whole by this one.
+func (o *Object) open() {
+	k, ok := o.local.(Keeper)
+	o.keepMu.Lock()
+	o.opened = true
+	pending := o.pending
+	o.pending = nil
+	o.keepMu.Unlock()
+	if !ok {
+		return
+	}
+	for _, f := range pending {
+		if err := k.Keep(f.h, f.b); err != nil {
+			o.r.logf("node %x of closure %x was not kept: %v", f.h[:6], o.entry.Root[:6], err)
+		}
+	}
+	objects := o.Objects()
+	o.keepMu.Lock()
+	if o.held == nil {
+		o.held = map[[32]byte]bool{}
+	}
+	o.distinct = len(objects)
+	for _, h := range objects {
+		if !o.held[h] && k.Held(h) {
+			o.held[h] = true
+		}
+	}
+	o.keepMu.Unlock()
+	o.closureHeld(k)
 }
 
 // Objects are the closure's distinct objects: the root, the branches, then
@@ -209,6 +285,7 @@ func (o *Object) Object(ctx context.Context, h [32]byte) ([]byte, error) {
 func (o *Object) fetch(ctx context.Context, h [32]byte, max uint64) ([]byte, error) {
 	if o.local != nil {
 		if b, err := o.local.Get(h); err == nil && sha256.Sum256(b) == h {
+			o.noteHeld(h)
 			return b, nil
 		}
 	}
@@ -231,9 +308,72 @@ func (o *Object) fetch(ctx context.Context, h [32]byte, max uint64) ([]byte, err
 			o.r.bad.mark(s.Advertiser, o.r.now())
 			continue
 		}
+		if k, ok := o.local.(Keeper); ok {
+			o.keep(k, h, b, s)
+		}
 		return b, nil
 	}
 	return nil, fmt.Errorf("%w: object %x (%d advertiser(s) asked)", ErrNoSource, h[:6], tried)
+}
+
+// keep hands a fetched object to k. While the closure is being opened the
+// object is a node not yet checked against the closure's rules: it waits,
+// and is kept by open or dropped with a closure that is refused.
+func (o *Object) keep(k Keeper, h [32]byte, b []byte, s Source) {
+	o.keepMu.Lock()
+	if !o.opened {
+		o.pending = append(o.pending, fetched{h, b})
+		o.keepMu.Unlock()
+		return
+	}
+	o.keepMu.Unlock()
+	// A failed keep costs the next reader a fetch, never this one its bytes.
+	if err := k.Keep(h, b); err != nil {
+		o.r.logf("object %x fetched from %s was not kept: %v", h[:6], short(s.Advertiser), err)
+		return
+	}
+	o.noteHeld(h)
+}
+
+// noteHeld records that the local copy holds h and, for a Keeper, looks
+// whether that made the closure whole.
+func (o *Object) noteHeld(h [32]byte) {
+	k, ok := o.local.(Keeper)
+	if !ok {
+		return
+	}
+	o.keepMu.Lock()
+	if o.held == nil {
+		o.held = map[[32]byte]bool{}
+	}
+	o.held[h] = true
+	o.keepMu.Unlock()
+	o.closureHeld(k)
+}
+
+// closureHeld tells k the closure is whole locally, once it is open and
+// every one of its objects was seen held. held has only objects of this
+// closure, each once, so it is whole when it has as many as the closure
+// has distinct objects. A telling that fails is tried again by the next
+// object held, or by the next read of the closure.
+func (o *Object) closureHeld(k Keeper) {
+	o.keepMu.Lock()
+	if !o.opened || o.told || len(o.nodes) == 0 || len(o.held) < o.distinct {
+		o.keepMu.Unlock()
+		return
+	}
+	o.told = true
+	o.keepMu.Unlock()
+	blobs := make([][32]byte, len(o.blobs))
+	for i, c := range o.blobs {
+		blobs[i] = c.Hash
+	}
+	if err := k.Closure(o.nodes[0], o.entry.Size, o.nodes[1:], blobs); err != nil {
+		o.r.logf("closure %x is held and was not recorded: %v", o.nodes[0][:6], err)
+		o.keepMu.Lock()
+		o.told = false
+		o.keepMu.Unlock()
+	}
 }
 
 // maxTries bounds the advertisers asked for one object, and fetchTimeout

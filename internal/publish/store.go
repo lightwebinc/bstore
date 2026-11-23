@@ -106,6 +106,14 @@ func (s *Store) Put(b []byte) ([32]byte, error) {
 	return h, err
 }
 
+// Keep stores an object whose SHA-256 the caller just computed as h: what a
+// reader fetched from an advertiser and held to its hash (reader.Keeper).
+// Until SaveManifest names it, it is an object no closure names.
+func (s *Store) Keep(h [32]byte, b []byte) error {
+	_, _, err := s.putHashed(h, b, false)
+	return err
+}
+
 // put stores an object and, with pin, pins it in the same step, so Trim
 // cannot remove an object a stage found already held.
 func (s *Store) put(b []byte, pin bool) ([32]byte, bool, error) {
