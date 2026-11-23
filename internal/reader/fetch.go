@@ -469,17 +469,20 @@ func (o *Object) WriteRange(ctx context.Context, w io.Writer, off, n uint64) err
 	}()
 
 	// The content hash of a whole read runs beside the writes, in order.
+	// The hasher is handed its channel: hashIn is set to nil below once the
+	// last blob is in, and a hasher that read the variable after that would
+	// wait on a nil channel forever, and the read with it.
 	var hashIn chan []byte
 	var hashOut chan [32]byte
 	if whole {
 		hashIn, hashOut = make(chan []byte, 1), make(chan [32]byte, 1)
-		go func() {
+		go func(in <-chan []byte) {
 			ch := sha256.New()
-			for b := range hashIn {
+			for b := range in {
 				ch.Write(b)
 			}
 			hashOut <- [32]byte(ch.Sum(nil))
-		}()
+		}(hashIn)
 		defer func() {
 			if hashIn != nil {
 				close(hashIn)
@@ -511,8 +514,13 @@ func (o *Object) WriteRange(ctx context.Context, w io.Writer, off, n uint64) err
 			if i == last {
 				close(hashIn)
 				hashIn = nil
-				if <-hashOut != o.entry.ContentHash {
-					return ErrContentHash
+				select {
+				case sum := <-hashOut:
+					if sum != o.entry.ContentHash {
+						return ErrContentHash
+					}
+				case <-ctx.Done():
+					return ctx.Err()
 				}
 			}
 		}
