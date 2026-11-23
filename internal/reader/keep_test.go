@@ -25,6 +25,8 @@ type keepLocal struct {
 	keeps    int
 	closures []keptClosure
 	failKeep bool
+	// failClosure is how many tellings fail before one is taken.
+	failClosure int
 }
 
 type keptClosure struct {
@@ -55,9 +57,20 @@ func (l *keepLocal) Keep(h [32]byte, b []byte) error {
 	return nil
 }
 
+func (l *keepLocal) Held(h [32]byte) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_, ok := l.m[h]
+	return ok
+}
+
 func (l *keepLocal) Closure(root [32]byte, size uint64, branches, blobs [][32]byte) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.failClosure > 0 {
+		l.failClosure--
+		return errors.New("no room for the manifest")
+	}
 	l.closures = append(l.closures, keptClosure{root, size, branches, blobs})
 	return nil
 }
@@ -162,8 +175,74 @@ func TestKeeperKeepsWhatIsFetched(t *testing.T) {
 	if hits.Load() != before {
 		t.Fatalf("the second read asked the advertiser %d time(s)", hits.Load()-before)
 	}
+	// A read that finds the closure whole tells it again: that is how a
+	// Keeper learns it is in use.
+	if len(l.closures) != 2 || l.closures[1].root != e.Root {
+		t.Fatalf("a read served locally told %d closure(s)", len(l.closures))
+	}
+}
+
+// Ranged reads, each of one blob, fill a closure between them: no read
+// fetched it all, and the one that holds the last object tells it.
+func TestKeeperRangesCompleteAClosure(t *testing.T) {
+	content := randomContent(2*storerec.BlobSize + 999)
+	r, e, objects, _ := advertised(t, content)
+	l := &keepLocal{m: map[[32]byte][]byte{}}
+	ctx := context.Background()
+	for i := uint64(0); i < 3; i++ {
+		o, err := r.Open(ctx, e, l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		off := i*storerec.BlobSize + 7
+		if err := o.WriteRange(ctx, &out, off, 50); err != nil || !bytes.Equal(out.Bytes(), content[off:off+50]) {
+			t.Fatalf("range %d: %v", i, err)
+		}
+		if want := map[uint64]int{0: 0, 1: 0, 2: 1}[i]; len(l.closures) != want {
+			t.Fatalf("after range %d the closure was told %d time(s), want %d", i, len(l.closures), want)
+		}
+	}
+	if len(l.m) != len(objects) {
+		t.Fatalf("%d of %d object(s) held", len(l.m), len(objects))
+	}
+}
+
+// A telling that fails is tried again; a closure that is refused keeps
+// nothing, its nodes included.
+func TestKeeperRetriesAndRefusals(t *testing.T) {
+	content := randomContent(storerec.BlobSize + 5)
+	ctx := context.Background()
+	r, e, _, _ := advertised(t, content)
+	l := &keepLocal{m: map[[32]byte][]byte{}, failClosure: 1}
+	o, err := r.Open(ctx, e, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := o.WriteRange(ctx, &out, 0, e.Size); err != nil {
+		t.Fatal(err)
+	}
+	if len(l.closures) != 0 {
+		t.Fatal("a telling that failed was counted")
+	}
+	// The next read finds the closure whole and tells it.
+	if _, err := r.Open(ctx, e, l); err != nil {
+		t.Fatal(err)
+	}
 	if len(l.closures) != 1 {
-		t.Fatal("a read served locally told the closure again")
+		t.Fatalf("after one failed telling the closure was told %d time(s)", len(l.closures))
+	}
+
+	r, e, _, hits := advertised(t, content)
+	bad := *e
+	bad.Size++ // the root's length is not the entry's: CheckRoot refuses it
+	l = &keepLocal{m: map[[32]byte][]byte{}}
+	if _, err := r.Open(ctx, &bad, l); !errors.Is(err, ErrRefused) {
+		t.Fatalf("a closure whose size is not the entry's opened: %v", err)
+	}
+	if hits.Load() == 0 || len(l.m) != 0 || l.keeps != 0 {
+		t.Fatalf("a refused closure kept %d object(s) (%d fetched)", len(l.m), hits.Load())
 	}
 }
 
