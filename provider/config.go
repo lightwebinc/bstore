@@ -16,9 +16,9 @@ import (
 	"github.com/lightwebinc/bcommon/feepolicy"
 	"github.com/lightwebinc/bcommon/guard"
 
+	"github.com/lightwebinc/bcommon/engineask"
 	"github.com/lightwebinc/bstore/chaincfg"
 	"github.com/lightwebinc/bstore/internal/acceptcfg"
-	"github.com/lightwebinc/bstore/internal/engineask"
 	"github.com/lightwebinc/bstore/storerec"
 )
 

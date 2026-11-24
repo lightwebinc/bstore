@@ -44,8 +44,8 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/klauspost/cpuid/v2 v2.2.9 h1:66ze0taIn2H33fBvCkXuv9BmCwDfafmiIVpKV9kKGuY=
 github.com/klauspost/cpuid/v2 v2.2.9/go.mod h1:rqkxqrZ1EhYM9G+hXH7YdowN5R5RGN6NK4QwQ3WMXF8=
-github.com/lightwebinc/bcommon v0.38.0 h1:jxwSjPvD0FfCQOf0U/4dNSarbYDD34mNa5Qlu0Q8Eek=
-github.com/lightwebinc/bcommon v0.38.0/go.mod h1:7W6qvoNbvyWjqjx6rczAtFP3yG63jx7wy3UtA5iXJ64=
+github.com/lightwebinc/bcommon v0.39.0 h1:Lk+szKQTmKpOc2Rzgh1IbhFONGgXE5lSzqdDH08UQTE=
+github.com/lightwebinc/bcommon v0.39.0/go.mod h1:7W6qvoNbvyWjqjx6rczAtFP3yG63jx7wy3UtA5iXJ64=
 github.com/lightwebinc/bcommon/devkit v0.2.0 h1:A8qDwqdVKqClqIqh/r8cAGaATPJYW9FfIoX2JYhzZYs=
 github.com/lightwebinc/bcommon/devkit v0.2.0/go.mod h1:Q3w8inDsWd+436iMdepNSz+4VoIHZp8dKAaD8hzceQQ=
 github.com/minio/crc64nvme v1.1.1 h1:8dwx/Pz49suywbO+auHCBpCtlW1OfpcLN7wYgVR6wAI=
