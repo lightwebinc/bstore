@@ -3,6 +3,7 @@ package engineask
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ type engine struct {
 	asks   []map[string]any
 	refuse int // answer 400 to this many asks first
 	fail   int // then answer 503 to this many
+	status int // answer this to every ask
 }
 
 func (e *engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -37,6 +39,10 @@ func (e *engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if e.fail > 0 {
 		e.fail--
 		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	if e.status != 0 {
+		w.WriteHeader(e.status)
 		return
 	}
 	if e.refuse > 0 {
@@ -87,10 +93,15 @@ func run(t *testing.T, a *Asker, e *engine, n int) (oks []bool, logs []string) {
 	done := make(chan struct{})
 	go func() { a.Run(ctx); close(done) }()
 	deadline := time.Now().Add(10 * time.Second)
-	for e.count() < n && time.Now().Before(deadline) {
-		time.Sleep(20 * time.Millisecond)
+	for {
+		mu.Lock()
+		got := len(oks)
+		mu.Unlock()
+		if got >= n || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	time.Sleep(50 * time.Millisecond) // the last answer's outcome
 	cancel()
 	<-done
 	mu.Lock()
@@ -159,5 +170,28 @@ func TestCheck(t *testing.T) {
 		if a.Check() == nil {
 			t.Fatalf("accepted %+v", a)
 		}
+	}
+}
+
+func TestTransientAnswersAreNotRefusals(t *testing.T) {
+	for _, code := range []int{408, 425, 429, 500, 503} {
+		e := &engine{status: code}
+		srv := httptest.NewServer(e)
+		a := &Asker{URL: srv.URL, ID: "x", Settings: map[string][]string{"OVERLAY_TOPICS": {"t"}}}
+		var ref *Refused
+		if err := a.Ask(t.Context()); err == nil || errors.As(err, &ref) {
+			t.Fatalf("%d: %v", code, err)
+		}
+		srv.Close()
+	}
+	for _, code := range []int{400, 403, 404, 405, 413} {
+		e := &engine{status: code}
+		srv := httptest.NewServer(e)
+		a := &Asker{URL: srv.URL, ID: "x", Settings: map[string][]string{"OVERLAY_TOPICS": {"t"}}}
+		var ref *Refused
+		if err := a.Ask(t.Context()); !errors.As(err, &ref) || ref.Status != code {
+			t.Fatalf("%d: %v", code, err)
+		}
+		srv.Close()
 	}
 }

@@ -82,10 +82,12 @@ func (a *Asker) ttl() time.Duration {
 	return a.TTL
 }
 
-// Refused is an engine's refusal of the ask (an answer of 4xx): the engine
-// does not allow a setting, an item, the lifetime, or one more ask. Asking
-// again changes nothing until the engine's or the application's settings
-// do.
+// Refused is an engine's refusal of the ask: 400 (the engine does not allow
+// a setting, an item, the lifetime, or one more ask), 403 (the caller is not
+// on the engine's host), 404 or 405 (an engine without the route), 413.
+// Asking again changes nothing until the engine's or the application's
+// settings do. Every other answer, 408, 425 and 429 included, is a failure
+// that passes.
 type Refused struct {
 	Status int
 	Reason string
@@ -113,7 +115,9 @@ func (a *Asker) Run(ctx context.Context) {
 				return
 			}
 			var ref *Refused
-			if !errors.As(err, &ref) {
+			if errors.As(err, &ref) {
+				retry = time.Second // the engine answered
+			} else {
 				wait, retry = min(retry, every), min(retry*2, every)
 			}
 		} else {
@@ -195,7 +199,8 @@ func (a *Asker) ask(ctx context.Context) error {
 		Error string `json:"error"`
 	}
 	_ = json.Unmarshal(msg, &e)
-	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+	switch resp.StatusCode {
+	case http.StatusBadRequest, http.StatusForbidden, http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusRequestEntityTooLarge:
 		return &Refused{Status: resp.StatusCode, Reason: e.Error}
 	}
 	if e.Error != "" {
