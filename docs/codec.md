@@ -30,9 +30,9 @@ What the codec takes from elsewhere:
   `chirp` (CHIRP Profile 1: node encoding, the canonical construction, the
   closure check, identifiers) and, for the vectors, `mint`; in TypeScript the
   same readers and checks.
-- go-sdk v1.7.5 and `@bsv/sdk` 4.1.2, the versions bcommon pins.
+- go-sdk v1.7.8 and `@bsv/sdk` 4.1.2, the versions bcommon pins.
   `@bsv/sdk` 4.1.2 ships the SDK's advertisement check
-  (`storage/UHRPAdvertisementValidation.ts`); go-sdk v1.7.5 has none. bstore
+  (`storage/UHRPAdvertisementValidation.ts`); go-sdk v1.7.8 has none. bstore
   keeps its own check in both codecs, step for step (`advert.go`,
   `advert.ts`), so the two languages refuse the same advertisements.
 

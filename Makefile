@@ -72,7 +72,7 @@ licences-update:
 #    (Apache-2.0): the gateway checks the AWS CLI's default checksum,
 #    CRC-64/NVME, over nearly every body, and hash/crc64's table runs at a
 #    seventh of its speed (internal/s3d/checksum.go);
-#  - go-sdk resolves to exactly v1.7.5, the version bcommon pins and the
+#  - go-sdk resolves to exactly v1.7.8, the version bcommon pins and the
 #    vectors were made with. Minimal version selection takes the higher of
 #    two pins, so a library asking for a later go-sdk would change what
 #    bstore ships without a line changing here.
@@ -80,7 +80,7 @@ DEPS_DIRECT := github.com/aws/aws-sdk-go-v2 github.com/aws/aws-sdk-go-v2/config 
                github.com/aws/aws-sdk-go-v2/service/s3 github.com/aws/smithy-go \
                github.com/bsv-blockchain/go-sdk github.com/lightwebinc/bcommon github.com/lightwebinc/bcommon/devkit \
                github.com/minio/crc64nvme
-DEPS_SDK    := github.com/bsv-blockchain/go-sdk v1.7.5
+DEPS_SDK    := github.com/bsv-blockchain/go-sdk v1.7.8
 
 deps-check:
 	@set -eu; \

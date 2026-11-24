@@ -4567,10 +4567,10 @@ linked binary contains them whether they were asked for directly or not.
 The list is every module reachable from this library's packages; a binary
 that imports only some of those packages may link fewer.
 
-go-sdk is under the Apache License 2.0 from v1.7.5, the version this
-library builds on. Earlier versions were under the Open BSV License
+go-sdk is under the Apache License 2.0 from v1.7.5; this library builds
+on v1.7.8. Versions before v1.7.5 were under the Open BSV License
 Version 5, whose grant was revocable and limited to the BSV Blockchains;
-those terms do not apply to v1.7.5. A reader carrying this notice to a
+those terms do not apply from v1.7.5. A reader carrying this notice to a
 repository pinned below v1.7.5 must check which applies there rather than
 assume.
 
@@ -4974,10 +4974,10 @@ linked binary contains them whether they were asked for directly or not.
 The list is every module reachable from this library's packages; a binary
 that imports only some of those packages may link fewer.
 
-go-sdk is under the Apache License 2.0 from v1.7.5, the version this
-library builds on. Earlier versions were under the Open BSV License
+go-sdk is under the Apache License 2.0 from v1.7.5; this library builds
+on v1.7.8. Versions before v1.7.5 were under the Open BSV License
 Version 5, whose grant was revocable and limited to the BSV Blockchains;
-those terms do not apply to v1.7.5. A reader carrying this notice to a
+those terms do not apply from v1.7.5. A reader carrying this notice to a
 repository pinned below v1.7.5 must check which applies there rather than
 assume.
 
