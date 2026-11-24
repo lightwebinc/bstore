@@ -37,13 +37,33 @@ type resolved struct {
 // pending put or delete newer than the anchored entry decides; one the
 // anchored entry equals or follows is dropped.
 func (s *Server) resolve(ctx context.Context, b *bucket, key string) (*resolved, *s3Error) {
+	return s.resolveBy(ctx, b, key, s.reader.Object)
+}
+
+// resolveNow is resolve asking a host whatever the reader remembers
+// (read_memory_ms): for a read whose answer is written down.
+func (s *Server) resolveNow(ctx context.Context, b *bucket, key string) (*resolved, *s3Error) {
+	return s.resolveBy(ctx, b, key, s.reader.ObjectNow)
+}
+
+func (s *Server) resolveBy(ctx context.Context, b *bucket, key string,
+	object func(context.Context, reader.Chain, string) (*reader.Found, error)) (*resolved, *s3Error) {
 	done, e := acquire(s.lookups)
 	if e != nil {
 		return nil, e
 	}
-	f, err := s.reader.Object(ctx, b.chain, key)
-	done()
+	// The pending entry is read before the proof. A newer token drops the
+	// pending entries it names only after the reader forgot what it
+	// remembered against the older one, so a pending entry gone here means
+	// the proof below is not older than the token that anchored it. Read
+	// after, a remembered proof could be paired with a pending entry
+	// already dropped, and answer the key as it was before this gateway's
+	// own write.
 	p := s.st.newest(b.chain.Bucket, key)
+	began := time.Now()
+	f, err := object(ctx, b.chain, key)
+	done()
+	s.metrics.observe("bstore_s3d_proof_seconds", time.Since(began).Seconds())
 	if err != nil {
 		// No host proves anything. The gateway's own pending put is still
 		// its own write to read; a pending delete is not NoSuchKey, which
@@ -721,7 +741,7 @@ func (s *Server) copyObject(ctx context.Context, w http.ResponseWriter, r *http.
 	if sb == b && skey == key && dir == "COPY" {
 		return &s3Error{"InvalidRequest", "This copy request is illegal because it is trying to copy an object to itself without changing the object's metadata.", http.StatusBadRequest}
 	}
-	res, e := s.resolve(ctx, sb, skey)
+	res, e := s.resolveNow(ctx, sb, skey)
 	if e != nil {
 		return e
 	}

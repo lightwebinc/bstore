@@ -120,7 +120,15 @@ type Reader struct {
 	// WalkDir, when set, keeps a walk's progress across a restart
 	// (walkstore.go).
 	WalkDir string
+	// Memory, when positive, is how long a chain's latest token is held to
+	// be the latest after an answer proved it so: inside that time a key
+	// already proven against it is answered without asking a host
+	// (memory.go). Zero asks a host for every read.
+	Memory time.Duration
 
+	mem     memory
+	ents    entryCache
+	n       counters
 	walkMu  sync.Map // chain key -> *sync.Mutex
 	walks   sync.Map // chain key and target txid -> *walkJob
 	tokens  tokenCache
@@ -382,6 +390,11 @@ func (r *Reader) walk(ctx context.Context, host string, c Chain, t *Token) error
 	if err := r.checkUnspent(ctx, t); err != nil {
 		return err
 	}
+	// What was remembered against an older token goes first: OnToken's
+	// listener acts on the newer one (the gateway drops the pending
+	// entries it names), and a read answered from memory after that would
+	// see neither.
+	r.mem.passed(c.key(), t.Bucket.Seq)
 	if r.OnToken != nil {
 		for i := len(walk) - 1; i >= 0; i-- {
 			if held != nil && walk[i].Bucket.Seq <= held.Seq {
@@ -489,6 +502,21 @@ func (e *Entry) Txid() string { return displayHex(e.C) }
 // VerifyEntry holds a carrier's BEEF to the carrier rules of an entry of
 // bucket, and its funding tree's proof to the reader's headers.
 func (r *Reader) VerifyEntry(ctx context.Context, bucket string, beef []byte) (*Entry, error) {
+	k := entryKey(bucket, beef)
+	if e := r.ents.get(k); e != nil {
+		r.n.known.Add(1)
+		return e, nil
+	}
+	e, err := r.verifyEntry(ctx, bucket, beef)
+	if err != nil {
+		return nil, err
+	}
+	r.n.verified.Add(1)
+	r.ents.put(k, e)
+	return e, nil
+}
+
+func (r *Reader) verifyEntry(ctx context.Context, bucket string, beef []byte) (*Entry, error) {
 	a, err := storerec.Admit(ctx, beef, nil, storerec.Host{Bucket: bucket, Headers: r.Headers})
 	if err != nil {
 		return nil, fmt.Errorf("entry: %w", err)
@@ -558,10 +586,36 @@ type Found struct {
 // answer does not verify is named and the next asked; ErrUnavailable when
 // none answers anything that verifies.
 func (r *Reader) Object(ctx context.Context, c Chain, key string) (*Found, error) {
+	if r.Memory > 0 {
+		if f := r.mem.get(c.key(), key, r.now(), r.Memory); f != nil && !r.heldPast(c, f.Token) {
+			r.n.remembered.Add(1)
+			return f, nil
+		}
+	}
+	return r.ObjectNow(ctx, c, key)
+}
+
+// heldPast reports a token older than the one the reader holds.
+func (r *Reader) heldPast(c Chain, t *Token) bool {
+	if r.Held == nil {
+		return false
+	}
+	h := r.Held.Held(c.key())
+	return h != nil && h.Seq > t.Bucket.Seq
+}
+
+// ObjectNow is Object asking a host whatever is remembered: for a read
+// whose answer is written down, as a copy's source is.
+func (r *Reader) ObjectNow(ctx context.Context, c Chain, key string) (*Found, error) {
+	began := r.now()
+	r.n.asked.Add(1)
 	var refused, headers error
 	for _, h := range r.Hosts {
 		f, err := r.objectAt(ctx, h, c, key)
 		if err == nil {
+			if r.Memory > 0 {
+				r.mem.put(c.key(), key, f, began)
+			}
 			return f, nil
 		}
 		if errors.Is(err, ErrRefused) {

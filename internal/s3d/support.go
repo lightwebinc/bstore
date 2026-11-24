@@ -203,6 +203,8 @@ type metrics struct {
 	mu sync.Mutex
 	c  map[string]*atomic.Int64
 	h  map[string]*hist
+	// extra, when set, writes lines read at serving time.
+	extra func(b *strings.Builder)
 }
 
 func newMetrics() *metrics { return &metrics{c: map[string]*atomic.Int64{}, h: map[string]*hist{}} }
@@ -301,6 +303,9 @@ func (m *metrics) serve(w http.ResponseWriter, _ *http.Request) {
 		h := m.h[n]
 		m.mu.Unlock()
 		h.render(&b, n)
+	}
+	if m.extra != nil {
+		m.extra(&b)
 	}
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	_, _ = w.Write([]byte(b.String()))

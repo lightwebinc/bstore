@@ -136,7 +136,14 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Server, error) {
 	}
 	v.CacheSpends()
 	s.reader = &reader.Reader{Hosts: cfg.Hosts, HTTP: hostHTTP, Fetch: fetchHTTP, Headers: v.Headers, Held: s.st, Logf: opts.Logf, Now: opts.Now,
-		WalkDir: filepath.Join(cfg.Data, "walks")}
+		WalkDir: filepath.Join(cfg.Data, "walks"), Memory: time.Duration(cfg.ReadMemoryMS) * time.Millisecond}
+	s.metrics.extra = func(b *strings.Builder) {
+		n := s.reader.Counts()
+		fmt.Fprintf(b, "bstore_s3d_proofs_total{how=\"asked\"} %d\n", n.Asked)
+		fmt.Fprintf(b, "bstore_s3d_proofs_total{how=\"remembered\"} %d\n", n.Remembered)
+		fmt.Fprintf(b, "bstore_s3d_entries_verified_total{how=\"verified\"} %d\n", n.EntriesVerified)
+		fmt.Fprintf(b, "bstore_s3d_entries_verified_total{how=\"known\"} %d\n", n.EntriesKnown)
+	}
 	s.fetch = fetchHTTP
 	s.reader.Spender = v.Chain.Spender
 	s.reader.OnToken = s.st.named
