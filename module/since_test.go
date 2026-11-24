@@ -464,19 +464,19 @@ func TestFilePositions(t *testing.T) {
 		t.Fatalf("no file: %v, %v", m, err)
 	}
 	pos := sinceKey(7, strings.Repeat("a", 64), 3)
-	if err := f.Save(map[string]string{"b|peer": pos}); err != nil {
+	if err := f.Save(map[string]string{bucket + "|peer": pos}); err != nil {
 		t.Fatal(err)
 	}
-	if m, err := f.Load(); err != nil || m["b|peer"] != pos {
+	if m, err := f.Load(); err != nil || m[bucket+"|peer"] != pos {
 		t.Fatalf("read back %v, %v", m, err)
 	}
 	s, err := NewService(Options{Buckets: []string{bucket}, Host: newFakeHost(), Positions: f})
-	if err != nil || s.reachedAt("b|peer") != pos {
-		t.Fatalf("the service read %q, %v", s.reachedAt("b|peer"), err)
+	if err != nil || s.reachedAt(bucket+"|peer") != pos {
+		t.Fatalf("the service read %q, %v", s.reachedAt(bucket+"|peer"), err)
 	}
-	s.reach("b|peer", sinceKey(8, strings.Repeat("a", 64), 3))
+	s.reach(bucket+"|peer", sinceKey(8, strings.Repeat("a", 64), 3), 0)
 	s.savePositions()
-	if m, _ := f.Load(); m["b|peer"] != sinceKey(8, strings.Repeat("a", 64), 3) {
+	if m, _ := f.Load(); m[bucket+"|peer"] != sinceKey(8, strings.Repeat("a", 64), 3) {
 		t.Fatalf("saved %v", m)
 	}
 }

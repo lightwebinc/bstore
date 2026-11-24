@@ -324,8 +324,16 @@ type Service struct {
 	// at its next drop while one waits.
 	admitting atomic.Int32
 
-	buckets       map[string]bool
-	served        map[string]bool
+	// buckets and served are replaced whole, never written in place, and
+	// published in sets for the calls that read them without mu (Classify,
+	// Replay, the admission paths' first check): AddBuckets and
+	// ForgetBuckets change them on a running host.
+	buckets map[string]bool
+	served  map[string]bool
+	sets    atomic.Pointer[bucketSets]
+	// bucketGen counts each bucket's drops (ForgetBuckets): a replay walk
+	// that began in an earlier generation moves no position.
+	bucketGen     map[string]uint64
 	servedList    []string
 	servedBuckets map[string]bool
 	host          bmodule.Host
@@ -437,7 +445,7 @@ func NewService(o Options) (*Service, error) {
 	if o.Journal == nil {
 		o.Journal = &MemoryJournal{}
 	}
-	s := &Service{buckets: map[string]bool{}, served: map[string]bool{}, servedBuckets: map[string]bool{}, host: o.Host, journal: o.Journal,
+	s := &Service{buckets: map[string]bool{}, served: map[string]bool{}, servedBuckets: map[string]bool{}, bucketGen: map[string]uint64{}, host: o.Host, journal: o.Journal,
 		priced: o.Priced, keep: keep * day, pending: pend * day, other: other * hour, headers: o.Headers, now: o.Now, warned: map[string]bool{},
 		trees: o.Trees, maxBEEF: o.MaxBEEF, maxSweep: o.MaxSweepInputs,
 		positions: o.Positions, reached: map[string]string{}, sinceTries: map[string]map[chainhash.Hash]sinceTry{}, relisted: map[string]int64{}}
@@ -470,7 +478,30 @@ func NewService(o Options) (*Service, error) {
 	for i := range lines {
 		s.apply(&lines[i])
 	}
+	s.publish()
 	return s, nil
+}
+
+// bucketSets are the buckets and served chains as published for reads
+// without mu: never written after publish.
+type bucketSets struct {
+	buckets, served map[string]bool
+}
+
+// publish makes the current buckets and served chains the ones read
+// without mu. The caller holds mu (or owns s), and never writes the maps
+// again.
+func (s *Service) publish() {
+	s.sets.Store(&bucketSets{buckets: s.buckets, served: s.served})
+}
+
+// liveBucketOf is bucketOf for a call that does not hold mu.
+func (s *Service) liveBucketOf(topic string) (string, bool) {
+	if !strings.HasPrefix(topic, storerec.RecordsPrefix) || strings.HasPrefix(topic, storerec.BlobPrefix) {
+		return "", false
+	}
+	b := topic[len(storerec.RecordsPrefix):]
+	return b, s.sets.Load().buckets[b]
 }
 
 func (s *Service) clear() {
@@ -507,9 +538,14 @@ func (s *Service) clear() {
 func (s *Service) servedIndexes() {
 	s.servedIdx = map[string]*servedIdx{}
 	for _, sv := range s.servedList {
-		p := strings.Split(sv, "|")
-		s.servedIdx[sv] = &servedIdx{chain: sv, b: p[0], owner: p[1], id: p[2], pendingByKey: map[string]map[string]*sortedStrings{}, unanchored: map[string]*sortedStrings{}}
+		s.servedIdx[sv] = newServedIdx(sv)
 	}
+}
+
+// newServedIdx is an empty index of a served chain's unnamed entries.
+func newServedIdx(sv string) *servedIdx {
+	p := strings.Split(sv, "|")
+	return &servedIdx{chain: sv, b: p[0], owner: p[1], id: p[2], pendingByKey: map[string]map[string]*sortedStrings{}, unanchored: map[string]*sortedStrings{}}
 }
 
 func (s *Service) nowMs() int64 { return s.now().UnixMilli() }
@@ -1003,7 +1039,7 @@ func (s *Service) OutputAdmittedByTopic(ctx context.Context, p *bmodule.OutputAd
 	if p.Mode != bmodule.AdmitWholeTx {
 		return nil
 	}
-	b, ok := s.bucketOf(p.Topic)
+	b, ok := s.liveBucketOf(p.Topic)
 	if !ok {
 		return nil
 	}
@@ -1014,6 +1050,9 @@ func (s *Service) OutputAdmittedByTopic(ctx context.Context, p *bmodule.OutputAd
 	}
 	s.lockAdmission()
 	defer s.mu.Unlock()
+	if !s.buckets[b] { // dropped meanwhile (ForgetBuckets)
+		return nil
+	}
 	s.index(b, tx, p.Outpoint.Index, s.nowMs())
 	s.drain(ctx)
 	return nil
@@ -1070,12 +1109,15 @@ func (s *Service) OutputEvicted(_ context.Context, op *transaction.Outpoint) err
 
 // OutputNoLongerRetainedInHistory implements module.RetentionListener.
 func (s *Service) OutputNoLongerRetainedInHistory(_ context.Context, op *transaction.Outpoint, topic string) error {
-	b, ok := s.bucketOf(topic)
+	b, ok := s.liveBucketOf(topic)
 	if !ok {
 		return nil
 	}
 	s.lockAdmission()
 	defer s.mu.Unlock()
+	if !s.buckets[b] { // dropped meanwhile (ForgetBuckets)
+		return nil
+	}
 	s.forget(op.Txid.String(), op.Index, b)
 	return nil
 }

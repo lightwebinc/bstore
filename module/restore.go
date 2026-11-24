@@ -66,12 +66,24 @@ func (s *Service) Restore(ctx context.Context, outputs []bmodule.Output, storage
 	}
 	s.storage = storage
 	s.ready = false
+	return s.restore(ctx, outputs, storage, nil)
+}
+
+// restore indexes the outputs handed over and what the journal names, as
+// Restore describes, for the buckets in only (every configured bucket when
+// only is nil). The index of every other bucket is left as it is: each piece
+// of the index is keyed by its bucket, and the journal's state, which is not,
+// is already loaded and is the same for every bucket (AddBuckets). The caller
+// holds mu.
+func (s *Service) restore(ctx context.Context, outputs []bmodule.Output, storage bmodule.RestoreStorage, only map[string]bool) (int, error) {
+	in := func(b string) bool { return s.buckets[b] && (only == nil || only[b]) }
+	s.recheck = nil
 	seen := map[string]bool{}
 	key := func(topic, txid string, vout uint32) string { return topic + "|" + outpoint(txid, vout) }
 	var queue []bmodule.Output
 	for _, o := range outputs {
 		k := key(o.Topic, o.Outpoint.Txid.String(), o.Outpoint.Index)
-		if _, ok := s.bucketOf(o.Topic); !ok || seen[k] {
+		if b, ok := s.bucketOf(o.Topic); !ok || !in(b) || seen[k] {
 			continue
 		}
 		seen[k] = true
@@ -83,7 +95,7 @@ func (s *Service) Restore(ctx context.Context, outputs []bmodule.Output, storage
 	}
 	var names []named
 	for _, txid := range s.tokenSeen.keys() {
-		if t, _ := s.tokenSeen.get(txid); s.buckets[t.b] {
+		if t, _ := s.tokenSeen.get(txid); in(t.b) {
 			names = append(names, named{storerec.RecordsPrefix + t.b, txid, t.vout})
 		}
 	}
@@ -92,7 +104,7 @@ func (s *Service) Restore(ctx context.Context, outputs []bmodule.Output, storage
 	// crash between leaves one spent that no w line names, and the unspent
 	// rows never carry it.
 	for _, k := range s.minedSeen.keys() {
-		if o, _ := s.minedSeen.get(k); s.buckets[o.b] {
+		if o, _ := s.minedSeen.get(k); in(o.b) {
 			names = append(names, named{storerec.RecordsPrefix + o.b, o.txid, o.vout})
 		}
 	}
@@ -260,8 +272,10 @@ func (s *Service) Restore(ctx context.Context, outputs []bmodule.Output, storage
 	}
 	s.restoring = false
 	keys := make([]string, 0, len(s.chains))
-	for k := range s.chains {
-		keys = append(keys, k)
+	for k, v := range s.chains {
+		if only == nil || only[v.b] {
+			keys = append(keys, k)
+		}
 	}
 	sort.Strings(keys)
 	for _, k := range keys {

@@ -46,6 +46,11 @@ type Mounted struct {
 	host    bmodule.Host
 	ledger  *termsroute.Ledger
 	journal Journal
+	// headers is the header source the records managers check against.
+	headers chaintracker.ChainTracker
+	// changeMu serializes Change and Apply, the only readers and writers of
+	// config and Module after Mount.
+	changeMu sync.Mutex
 }
 
 // Front is the terms route and where it listens.
@@ -74,19 +79,8 @@ func chainView(a termsroute.AcceptConfig) replay.TreeSource {
 // the state directory's, hdrs the configured header source and now the
 // host's clock, for tests.
 func Mount(host bmodule.Host, c *Config, overlayTopics []string, journal Journal, hdrs chaintracker.ChainTracker, now func() time.Time) (*Mounted, error) {
-	records := map[string]bool{}
-	blobs := map[string]bool{}
-	for _, b := range c.Buckets {
-		records[storerec.RecordsPrefix+b] = true
-		blobs[storerec.BlobPrefix+b] = true
-	}
-	for _, t := range overlayTopics {
-		if strings.HasPrefix(t, storerec.BlobPrefix) && !blobs[t] {
-			return nil, fmt.Errorf("OVERLAY_TOPICS names %s but BSTORE_BUCKETS does not configure its bucket; it would be admitted by the default manager", t)
-		}
-		if strings.HasPrefix(t, storerec.RecordsPrefix) && !strings.HasPrefix(t, storerec.BlobPrefix) && !records[t] {
-			return nil, fmt.Errorf("OVERLAY_TOPICS names %s but BSTORE_BUCKETS does not configure it; it would be admitted by the default manager", t)
-		}
+	if err := checkTopics(c.Buckets, overlayTopics); err != nil {
+		return nil, err
 	}
 	m := host.Metrics()
 	for _, kind := range AdmitKinds {
@@ -141,7 +135,7 @@ func Mount(host bmodule.Host, c *Config, overlayTopics []string, journal Journal
 	if err != nil {
 		return nil, err
 	}
-	m.Gauge("bstore_buckets", func() float64 { return float64(len(c.Buckets)) })
+	m.Gauge("bstore_buckets", func() float64 { return float64(ls.BucketCount()) })
 	m.Gauge("bstore_tokens", func() float64 { return float64(ls.Counts().Tokens) })
 	m.Gauge("bstore_tokens_pending", func() float64 { return float64(ls.Counts().PendingTokens) })
 	m.Gauge("bstore_entries", func() float64 { return float64(ls.Counts().Entries) })
@@ -159,30 +153,12 @@ func Mount(host bmodule.Host, c *Config, overlayTopics []string, journal Journal
 	m.Gauge("bstore_maps_incomplete", func() float64 { return float64(ls.Counts().Tally.MapsIncomplete) })
 	m.Gauge("bstore_chains_broken", func() float64 { return float64(ls.Counts().Tally.ChainsBroken) })
 	m.Gauge("bstore_anchored_entries", func() float64 { return float64(ls.Counts().Tally.Anchored) })
-	topics := map[string]bmodule.TopicManager{}
-	var recordNames []string
-	for _, b := range c.Buckets {
-		t := storerec.RecordsPrefix + b
-		tm, err := NewRecordsTopicManager(t, host, hdrs, c.MaxBEEF, c.MaxSweepInputs)
-		if err != nil {
-			return nil, err
-		}
-		topics[t] = tm
-		recordNames = append(recordNames, t)
+	out := &Mounted{LS: ls, config: c, host: host, journal: journal, headers: hdrs}
+	topics, recordNames, mountedBlobs, err := out.managers(c, overlayTopics)
+	if err != nil {
+		return nil, err
 	}
-	var mountedBlobs []string
-	for _, t := range overlayTopics {
-		if !blobs[t] || topics[t] != nil {
-			continue
-		}
-		tm, err := NewBlobTopicManager(t, host)
-		if err != nil {
-			return nil, err
-		}
-		topics[t] = tm
-		mountedBlobs = append(mountedBlobs, t)
-	}
-	out := &Mounted{Module: bmodule.Module{Topics: topics, Lookups: map[string]bmodule.LookupService{storerec.LookupService: ls}}, LS: ls, config: c, host: host, journal: journal}
+	out.Module = bmodule.Module{Topics: topics, Lookups: map[string]bmodule.LookupService{storerec.LookupService: ls}}
 	var gate *termsroute.Gate
 	if c.Listen != "" {
 		var receiver termsroute.Receiver
@@ -242,6 +218,60 @@ func Mount(host bmodule.Host, c *Config, overlayTopics []string, journal Journal
 		"served": len(c.Served), "headers": headersLine, "floors": fmt.Sprintf("keep %dd, pending %dd, other %dh", ls.keep/day, ls.pending/day, ls.other/hour), "journal_sync": journalLine,
 		"terms": terms, "priced": orNone(pricedNames), "sessions": sessions, "handshakes": handshakes, "responses": responses, "payments": payments, "build": Build})
 	return out, nil
+}
+
+// checkTopics refuses a bstore topic in the carried topics that no bucket
+// configures: the host would admit it under its default manager.
+func checkTopics(buckets, overlayTopics []string) error {
+	records := map[string]bool{}
+	blobs := map[string]bool{}
+	for _, b := range buckets {
+		records[storerec.RecordsPrefix+b] = true
+		blobs[storerec.BlobPrefix+b] = true
+	}
+	for _, t := range overlayTopics {
+		if strings.HasPrefix(t, storerec.BlobPrefix) && !blobs[t] {
+			return fmt.Errorf("OVERLAY_TOPICS names %s but BSTORE_BUCKETS does not configure its bucket; it would be admitted by the default manager", t)
+		}
+		if strings.HasPrefix(t, storerec.RecordsPrefix) && !strings.HasPrefix(t, storerec.BlobPrefix) && !records[t] {
+			return fmt.Errorf("OVERLAY_TOPICS names %s but BSTORE_BUCKETS does not configure it; it would be admitted by the default manager", t)
+		}
+	}
+	return nil
+}
+
+// managers are the topic managers for c's buckets: each bucket's records
+// topic, and its blob topic where the carried topics name it. A manager the
+// module runs already is kept (Change), the others are made.
+func (m *Mounted) managers(c *Config, overlayTopics []string) (topics map[string]bmodule.TopicManager, recordNames, mountedBlobs []string, err error) {
+	topics = map[string]bmodule.TopicManager{}
+	blobs := map[string]bool{}
+	for _, b := range c.Buckets {
+		blobs[storerec.BlobPrefix+b] = true
+		t := storerec.RecordsPrefix + b
+		tm := m.Module.Topics[t]
+		if tm == nil {
+			if tm, err = NewRecordsTopicManager(t, m.host, m.headers, c.MaxBEEF, c.MaxSweepInputs); err != nil {
+				return nil, nil, nil, err
+			}
+		}
+		topics[t] = tm
+		recordNames = append(recordNames, t)
+	}
+	for _, t := range overlayTopics {
+		if !blobs[t] || topics[t] != nil {
+			continue
+		}
+		tm := m.Module.Topics[t]
+		if tm == nil {
+			if tm, err = NewBlobTopicManager(t, m.host); err != nil {
+				return nil, nil, nil, err
+			}
+		}
+		topics[t] = tm
+		mountedBlobs = append(mountedBlobs, t)
+	}
+	return topics, recordNames, mountedBlobs, nil
 }
 
 // journalSyncs counts the rows journal's timed fsyncs and logs the first

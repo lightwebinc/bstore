@@ -88,7 +88,7 @@ func (s *Service) Replay(ctx context.Context, r *bmodule.ReplayRequest) (*bmodul
 	if strings.HasPrefix(r.Topic, storerec.BlobPrefix) {
 		return &bmodule.ReplayAnswer{Done: true}, nil
 	}
-	b, ok := s.bucketOf(r.Topic)
+	b, ok := s.liveBucketOf(r.Topic)
 	if !ok {
 		return nil, bmodule.ErrNoReplay
 	}
