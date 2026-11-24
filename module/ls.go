@@ -324,8 +324,13 @@ type Service struct {
 	// at its next drop while one waits.
 	admitting atomic.Int32
 
+	// buckets and served are replaced whole, never written in place, and
+	// published in sets for the calls that read them without mu (Classify,
+	// Replay, the admission paths' first check): AddBuckets and
+	// ForgetBuckets change them on a running host.
 	buckets       map[string]bool
 	served        map[string]bool
+	sets          atomic.Pointer[bucketSets]
 	servedList    []string
 	servedBuckets map[string]bool
 	host          bmodule.Host
@@ -470,7 +475,30 @@ func NewService(o Options) (*Service, error) {
 	for i := range lines {
 		s.apply(&lines[i])
 	}
+	s.publish()
 	return s, nil
+}
+
+// bucketSets are the buckets and served chains as published for reads
+// without mu: never written after publish.
+type bucketSets struct {
+	buckets, served map[string]bool
+}
+
+// publish makes the current buckets and served chains the ones read
+// without mu. The caller holds mu (or owns s), and never writes the maps
+// again.
+func (s *Service) publish() {
+	s.sets.Store(&bucketSets{buckets: s.buckets, served: s.served})
+}
+
+// liveBucketOf is bucketOf for a call that does not hold mu.
+func (s *Service) liveBucketOf(topic string) (string, bool) {
+	if !strings.HasPrefix(topic, storerec.RecordsPrefix) || strings.HasPrefix(topic, storerec.BlobPrefix) {
+		return "", false
+	}
+	b := topic[len(storerec.RecordsPrefix):]
+	return b, s.sets.Load().buckets[b]
 }
 
 func (s *Service) clear() {
@@ -1008,7 +1036,7 @@ func (s *Service) OutputAdmittedByTopic(ctx context.Context, p *bmodule.OutputAd
 	if p.Mode != bmodule.AdmitWholeTx {
 		return nil
 	}
-	b, ok := s.bucketOf(p.Topic)
+	b, ok := s.liveBucketOf(p.Topic)
 	if !ok {
 		return nil
 	}
@@ -1019,6 +1047,9 @@ func (s *Service) OutputAdmittedByTopic(ctx context.Context, p *bmodule.OutputAd
 	}
 	s.lockAdmission()
 	defer s.mu.Unlock()
+	if !s.buckets[b] { // dropped meanwhile (ForgetBuckets)
+		return nil
+	}
 	s.index(b, tx, p.Outpoint.Index, s.nowMs())
 	s.drain(ctx)
 	return nil
@@ -1075,12 +1106,15 @@ func (s *Service) OutputEvicted(_ context.Context, op *transaction.Outpoint) err
 
 // OutputNoLongerRetainedInHistory implements module.RetentionListener.
 func (s *Service) OutputNoLongerRetainedInHistory(_ context.Context, op *transaction.Outpoint, topic string) error {
-	b, ok := s.bucketOf(topic)
+	b, ok := s.liveBucketOf(topic)
 	if !ok {
 		return nil
 	}
 	s.lockAdmission()
 	defer s.mu.Unlock()
+	if !s.buckets[b] { // dropped meanwhile (ForgetBuckets)
+		return nil
+	}
 	s.forget(op.Txid.String(), op.Index, b)
 	return nil
 }

@@ -96,6 +96,13 @@ func (f *FilePositions) Save(m map[string]string) error {
 	return os.Rename(tmp, f.Path)
 }
 
+// configuredKey is whether a <bucket>|<peer> key's bucket is configured.
+// The caller holds mu.
+func (s *Service) configuredKey(key string) bool {
+	b, _, _ := strings.Cut(key, "|")
+	return s.buckets[b]
+}
+
 // reachedAt is the position reached with a peer for a bucket, "" for none.
 func (s *Service) reachedAt(key string) string {
 	s.mu.Lock()
@@ -116,6 +123,9 @@ type sinceTry struct {
 func (s *Service) reach(key, pos string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !s.configuredKey(key) { // a walk still running for a dropped bucket
+		return
+	}
 	s.reached[key] = pos
 	s.positionsDirty = true
 	m := s.sinceTries[key]
@@ -134,6 +144,9 @@ func (s *Service) reach(key, pos string) {
 func (s *Service) tried(key string, txid chainhash.Hash, pos string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !s.configuredKey(key) { // a walk still running for a dropped bucket
+		return false
+	}
 	m := s.sinceTries[key]
 	if m == nil {
 		m = map[chainhash.Hash]sinceTry{}

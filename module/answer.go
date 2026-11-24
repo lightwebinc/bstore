@@ -42,7 +42,8 @@ func (s *Service) Classify(service string, query []byte) (*Classified, error) {
 	if service != storerec.LookupService {
 		return nil, fmt.Errorf("ls_bstore: this service is %s, not %s", storerec.LookupService, service)
 	}
-	q, err := storerec.ParseQuery(query, func(b string) bool { return s.buckets[b] }, func(b, o, i string) bool { return s.served[b+"|"+o+"|"+i] })
+	sets := s.sets.Load()
+	q, err := storerec.ParseQuery(query, func(b string) bool { return sets.buckets[b] }, func(b, o, i string) bool { return sets.served[b+"|"+o+"|"+i] })
 	if err != nil {
 		return nil, errors.New("ls_bstore: refused: " + err.Error())
 	}

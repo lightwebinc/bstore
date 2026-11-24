@@ -428,9 +428,19 @@ the host.
 The result is the index that a restart with the new buckets builds. Every
 part of the index is keyed by its bucket. The journal is not keyed that
 way, but it is loaded for every bucket, configured or not. Positions listed
-in a dropped bucket go, as they do at a restart. Its journal lines stay, so
-adding the bucket again later picks them up. The log says `bstore buckets
-changed in place`.
+in a dropped bucket go, as they do at a restart, and so do its replay
+tries; a replay still running for it changes nothing. Its journal lines
+stay until the journal is next compacted, which drops the admission lines of
+a bucket not configured: a bucket added again later then has the lines a
+restart at that moment would give it. The log says `bstore buckets changed
+in place`.
+
+Lookups, the terms route, replays and the module's background work may run
+while `Apply` does: each waits on the index's lock, and the bucket lists
+they read without it are replaced whole, never written in place. The host
+must hold its admissions from before it reads the rows until `Apply`
+returns. A failed `Apply` leaves the dropped buckets dropped and the added
+ones not added; the host then builds the module afresh.
 
 ### Ordered replay on a Go host
 

@@ -3,11 +3,16 @@ package module
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"reflect"
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/bsv-blockchain/go-sdk/chainhash"
+	"github.com/bsv-blockchain/go-sdk/transaction"
 
 	bmodule "github.com/lightwebinc/bcommon/module"
 
@@ -42,6 +47,16 @@ func newTwoBuckets(t *testing.T) *twoBuckets {
 	for _, b := range []string{bucket, otherBucket} {
 		tb.fill(t, b)
 	}
+	// One sweep admitted in both buckets: the same txid, outpoints and
+	// carrier funding in two buckets' indexes.
+	there := newAuthor(otherBucket, "shared alice", ch)
+	e := there.put(tb.owners[otherBucket].id, "shared", putOpts{})
+	one(t, tb.r.submitTx(e.tx, storerec.RecordsPrefix+otherBucket), "shared carrier")
+	sw := mintSweep(e.tree, []uint32{e.vout}, there.party, storerec.EntryDerivation, ch)
+	one(t, tb.r.submitTx(sw, storerec.RecordsPrefix+bucket), "shared sweep here")
+	one(t, tb.r.submitTx(sw, storerec.RecordsPrefix+otherBucket), "shared sweep there")
+	tb.probes[otherBucket] = append(tb.probes[otherBucket], map[string]string{"bucket": otherBucket, "spent": e.op})
+	tb.probes[bucket] = append(tb.probes[bucket], map[string]string{"bucket": bucket, "spent": e.op})
 	return tb
 }
 
@@ -292,6 +307,18 @@ func TestChangeTakesBucketsOnly(t *testing.T) {
 	}
 	sameIndex(t, r.ls, tb.restartWith(t, bucket).ls, "dropped")
 
+	// A blob topic carried later, the buckets unchanged: taken in place,
+	// with nothing to index.
+	env["OVERLAY_TOPICS"] = "tm_x," + storerec.RecordsPrefix + bucket + "," + storerec.BlobPrefix + bucket
+	ch, err = r.m.Change(get)
+	if err != nil || ch == nil || len(ch.Added()) != 0 || len(ch.Removed()) != 0 || ch.Module().Topics[storerec.BlobPrefix+bucket] == nil {
+		t.Fatalf("a blob topic added later: %v %v", ch, err)
+	}
+	if _, err := ch.Apply(context.Background(), nil, nil); err != nil || r.m.Module.Topics[storerec.BlobPrefix+bucket] == nil {
+		t.Fatalf("apply: %v", err)
+	}
+	env["OVERLAY_TOPICS"] = "tm_x," + storerec.RecordsPrefix + bucket
+
 	// Anything else is a rebuild.
 	env["BSTORE_KEEP_DAYS"] = "40"
 	if ch, err := r.m.Change(get); err != nil || ch != nil {
@@ -318,4 +345,112 @@ func plainOf[V any](o *omap[V]) map[string]V {
 		out[k] = x.v
 	}
 	return out
+}
+
+// failingStorage fails every read, as a store that went away mid-change.
+type failingStorage struct{ *memStorage }
+
+func (failingStorage) FindOutput(context.Context, *transaction.Outpoint, string) (*bmodule.Output, error) {
+	return nil, errors.New("storage went away")
+}
+
+// A failed AddBuckets leaves the buckets as they were: the added bucket is
+// neither configured nor half indexed.
+func TestAddBucketsFailedLeavesNothing(t *testing.T) {
+	tb := newTwoBuckets(t)
+	one := tb.restartWith(t, bucket)
+	if _, err := one.ls.AddBuckets(context.Background(), []string{otherBucket}, []string{tb.served[otherBucket]}, tb.rows(otherBucket), failingStorage{one.storage}); err == nil {
+		t.Fatal("a storage failure was not reported")
+	}
+	sameIndex(t, one.ls, tb.restartWith(t, bucket).ls, "after a failed add")
+	if one.ls.BucketCount() != 1 || one.ls.sets.Load().buckets[otherBucket] {
+		t.Fatal("the failed bucket is still configured")
+	}
+}
+
+// Lookups, admissions' first checks and replays read the buckets without
+// the index's lock while buckets come and go (run with -race).
+func TestBucketsChangeUnderLookups(t *testing.T) {
+	tb := newTwoBuckets(t)
+	r := tb.restartWith(t, bucket, otherBucket)
+	q := question(tb.probes[otherBucket][0])
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				_, _ = r.ls.Lookup(context.Background(), q)
+				_, _ = r.ls.Classify(storerec.LookupService, q.Query)
+				_ = r.ls.OutputNoLongerRetainedInHistory(context.Background(), &transaction.Outpoint{}, storerec.RecordsPrefix+otherBucket)
+				_, _ = r.ls.Replay(context.Background(), &bmodule.ReplayRequest{Topic: storerec.RecordsPrefix + otherBucket, Peer: "peer", Ask: replayPeer(r),
+					MaxQuestions: 4, MaxObjects: 4, Applied: func(context.Context, chainhash.Hash) (bool, error) { return true, nil }})
+			}
+		}()
+	}
+	for range 50 {
+		if err := r.ls.ForgetBuckets([]string{otherBucket}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.ls.AddBuckets(context.Background(), []string{otherBucket}, []string{tb.served[otherBucket]}, tb.rows(otherBucket), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	close(stop)
+	wg.Wait()
+	// Lookups and walks update what they cache in the index (heads, since
+	// lists), so the index is compared by its answers here; the quiet churn
+	// below is compared whole.
+	full := tb.restartWith(t, bucket, otherBucket)
+	if !reflect.DeepEqual(tb.answers(t, r), tb.answers(t, full)) {
+		t.Fatal("answers after the churn differ from a full restore")
+	}
+	quiet := tb.restartWith(t, bucket, otherBucket)
+	for range 5 {
+		if err := quiet.ls.ForgetBuckets([]string{otherBucket}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := quiet.ls.AddBuckets(context.Background(), []string{otherBucket}, []string{tb.served[otherBucket]}, tb.rows(otherBucket), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sameIndex(t, quiet.ls, tb.restartWith(t, bucket, otherBucket).ls, "after a quiet churn")
+}
+
+// A dropped bucket's walk tries go, as at a restart, and a walk still
+// running for it moves no position and counts no try.
+func TestForgetBucketsFencesWalks(t *testing.T) {
+	tb := newTwoBuckets(t)
+	r := tb.restartWith(t, bucket, otherBucket)
+	key := otherBucket + "|peer"
+	var txid chainhash.Hash
+	for range SinceTries {
+		r.ls.tried(key, txid, "p1")
+	}
+	if !r.ls.tried(key, txid, "p1") {
+		t.Fatal("not counted")
+	}
+	if err := r.ls.ForgetBuckets([]string{otherBucket}); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.ls.sinceTries[key]) != 0 {
+		t.Fatal("the dropped bucket's tries stay")
+	}
+	before := r.ls.reachedAt(key)
+	r.ls.reach(key, "p9")
+	if r.ls.tried(key, txid, "p1") || r.ls.reachedAt(key) != before || len(r.ls.sinceTries[key]) != 0 {
+		t.Fatal("a walk for a dropped bucket changed its state")
+	}
+	if _, err := r.ls.AddBuckets(context.Background(), []string{otherBucket}, []string{tb.served[otherBucket]}, tb.rows(otherBucket), nil); err != nil {
+		t.Fatal(err)
+	}
+	if r.ls.tried(key, txid, "p1") {
+		t.Fatal("an object tried before the drop is passed over after the add")
+	}
 }

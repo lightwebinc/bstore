@@ -48,6 +48,9 @@ type Mounted struct {
 	journal Journal
 	// headers is the header source the records managers check against.
 	headers chaintracker.ChainTracker
+	// changeMu serializes Change and Apply, the only readers and writers of
+	// config and Module after Mount.
+	changeMu sync.Mutex
 }
 
 // Front is the terms route and where it listens.

@@ -3,6 +3,7 @@ package module
 import (
 	"context"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -25,6 +26,11 @@ import (
 // indexes them from rows (their records topics' unspent rows, as a restore
 // is handed them) and what the journal names for them. The other buckets'
 // index is untouched. storage, when not nil, replaces the restore seam.
+//
+// Lookups may run meanwhile: they wait on the index's lock. The host must
+// hold its admissions from before it reads rows until AddBuckets returns,
+// or an admission between the two is missed. A failed AddBuckets forgets
+// what it added, so the buckets are as they were.
 func (s *Service) AddBuckets(ctx context.Context, buckets, served []string, rows []bmodule.Output, storage bmodule.RestoreStorage) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -40,6 +46,8 @@ func (s *Service) AddBuckets(ctx context.Context, buckets, served []string, rows
 			return 0, fmt.Errorf("ls_bstore: served chain %s is not of a bucket being added", sv)
 		}
 	}
+	// Replaced whole: published sets are never written (publish).
+	s.buckets, s.served = maps.Clone(s.buckets), maps.Clone(s.served)
 	for b := range only {
 		s.buckets[b] = true
 	}
@@ -53,10 +61,16 @@ func (s *Service) AddBuckets(ctx context.Context, buckets, served []string, rows
 		s.servedBuckets[b] = true
 		s.servedIdx[sv] = newServedIdx(sv)
 	}
+	s.publish()
 	if storage != nil {
 		s.storage = storage
 	}
-	return s.restore(ctx, rows, s.storage, only)
+	n, err := s.restore(ctx, rows, s.storage, only)
+	if err != nil {
+		s.forgetLocked(only)
+		return 0, err
+	}
+	return n, nil
 }
 
 // ForgetBuckets stops serving buckets: they are no longer configured, their
@@ -72,6 +86,14 @@ func (s *Service) ForgetBuckets(buckets []string) error {
 		}
 		drop[b] = true
 	}
+	s.forgetLocked(drop)
+	return nil
+}
+
+// forgetLocked is ForgetBuckets with mu held and the buckets checked.
+func (s *Service) forgetLocked(drop map[string]bool) {
+	// Replaced whole: published sets are never written (publish).
+	s.buckets, s.served = maps.Clone(s.buckets), maps.Clone(s.served)
 	for b := range drop {
 		delete(s.buckets, b)
 	}
@@ -88,10 +110,17 @@ func (s *Service) ForgetBuckets(buckets []string) error {
 	for b := range drop {
 		delete(s.servedBuckets, b)
 	}
+	s.publish()
 	s.forgetIndex(drop)
-	// As a restore does: positions listed in a bucket no index holds now go.
+	// As a restart does: the walks' tries are not kept (the positions
+	// reached are, and a walk still running is fenced off by reach and
+	// tried), and positions listed in a bucket no index holds go.
+	for k := range s.sinceTries {
+		if b, _, _ := strings.Cut(k, "|"); drop[b] {
+			delete(s.sinceTries, k)
+		}
+	}
 	s.sinceSettle()
-	return nil
 }
 
 // forgetIndex removes the buckets' part of what the host holds from storage.
@@ -194,11 +223,16 @@ func (c *BucketChange) Topics() []string {
 }
 
 // Apply makes the change: the removed buckets are forgotten and the added
-// ones indexed from rows (Topics' unspent rows). The host calls it with no
-// admission in flight, as it would a restore. A failed Apply leaves the
-// index part changed: the host then builds the module afresh.
+// ones indexed from rows (Topics' unspent rows). Lookups, the terms route,
+// a replay and the module's background work may run meanwhile: each waits
+// on the index's lock, and a walk for a dropped bucket is fenced off. The
+// host must hold its admissions from before it reads rows until Apply
+// returns. A failed Apply leaves the dropped buckets forgotten and the
+// added ones not added: the host then builds the module afresh.
 func (c *BucketChange) Apply(ctx context.Context, rows []bmodule.Output, storage bmodule.RestoreStorage) (int, error) {
 	m := c.m
+	m.changeMu.Lock()
+	defer m.changeMu.Unlock()
 	if len(c.removed) > 0 {
 		if err := m.LS.ForgetBuckets(c.removed); err != nil {
 			return 0, err
@@ -226,6 +260,8 @@ func (m *Mounted) Change(getenv func(string) string) (*BucketChange, error) {
 	if getenv == nil {
 		return nil, nil
 	}
+	m.changeMu.Lock()
+	defer m.changeMu.Unlock()
 	var topics []string
 	for _, t := range strings.Split(getenv("OVERLAY_TOPICS"), ",") {
 		if t = strings.TrimSpace(t); t != "" {
