@@ -248,7 +248,8 @@ func (g *global) open(ctx context.Context) (*home, error) {
 	if err != nil {
 		return nil, err
 	}
-	rd := &reader.Reader{Hosts: cfg.Hosts, HTTP: hostHC, Fetch: fetchHC, Headers: v.Headers, Logf: g.logf, Spender: v.Chain.Spender}
+	rd := &reader.Reader{Hosts: cfg.Hosts, HTTP: hostHC, Fetch: fetchHC, Headers: v.Headers, Logf: g.logf, Spender: v.Chain.Spender,
+		Mined: reader.MinedBy(v.Chain.Proof)}
 	d := &publish.Delivery{Facade: cfg.Facade, Hosts: cfg.Hosts, Providers: cfg.Providers, Uploads: cfg.Uploads, HTTP: hostHC, Quorum: cfg.Quorum}
 	var status acceptance.StatusSource
 	if v.Arcade != nil {
