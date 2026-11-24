@@ -87,6 +87,12 @@ type Config struct {
 	// the store holds this gateway's own writes only. The store's bound
 	// (store_bytes) covers what is kept.
 	KeepFetched bool `json:"keep_fetched,omitempty"`
+	// ReadMemoryMS, when positive, is for how many milliseconds a bucket's
+	// latest token is held to be the latest after a read proved it so: a
+	// key already proven against it is answered meanwhile without asking a
+	// host, and a new token is seen at most this late. Zero (the default)
+	// asks a host for every read. At most 60000.
+	ReadMemoryMS int `json:"read_memory_ms,omitempty"`
 	// Identities are the writer identities, each with a wallet under
 	// identities/<name>; AccessKeys map S3 access keys to them; Buckets are
 	// the chains served.
@@ -329,6 +335,9 @@ func (c *Config) Check() error {
 	}
 	if (c.TLSCert == "") != (c.TLSKey == "") {
 		return errors.New("tls_cert and tls_key go together")
+	}
+	if c.ReadMemoryMS < 0 || c.ReadMemoryMS > 60000 {
+		return errors.New("read_memory_ms is 0 to 60000")
 	}
 	if c.Region == "" {
 		c.Region = "us-east-1"

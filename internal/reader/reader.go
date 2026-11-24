@@ -120,7 +120,15 @@ type Reader struct {
 	// WalkDir, when set, keeps a walk's progress across a restart
 	// (walkstore.go).
 	WalkDir string
+	// Memory, when positive, is how long a chain's latest token is held to
+	// be the latest after an answer proved it so: inside that time a key
+	// already proven against it is answered without asking a host
+	// (memory.go). Zero asks a host for every read.
+	Memory time.Duration
 
+	mem     memory
+	ents    entryCache
+	n       counters
 	walkMu  sync.Map // chain key -> *sync.Mutex
 	walks   sync.Map // chain key and target txid -> *walkJob
 	tokens  tokenCache
@@ -489,6 +497,21 @@ func (e *Entry) Txid() string { return displayHex(e.C) }
 // VerifyEntry holds a carrier's BEEF to the carrier rules of an entry of
 // bucket, and its funding tree's proof to the reader's headers.
 func (r *Reader) VerifyEntry(ctx context.Context, bucket string, beef []byte) (*Entry, error) {
+	k := entryKey(bucket, beef)
+	if e := r.ents.get(k); e != nil {
+		r.n.known.Add(1)
+		return e, nil
+	}
+	e, err := r.verifyEntry(ctx, bucket, beef)
+	if err != nil {
+		return nil, err
+	}
+	r.n.verified.Add(1)
+	r.ents.put(k, e)
+	return e, nil
+}
+
+func (r *Reader) verifyEntry(ctx context.Context, bucket string, beef []byte) (*Entry, error) {
 	a, err := storerec.Admit(ctx, beef, nil, storerec.Host{Bucket: bucket, Headers: r.Headers})
 	if err != nil {
 		return nil, fmt.Errorf("entry: %w", err)
@@ -558,10 +581,21 @@ type Found struct {
 // answer does not verify is named and the next asked; ErrUnavailable when
 // none answers anything that verifies.
 func (r *Reader) Object(ctx context.Context, c Chain, key string) (*Found, error) {
+	began := r.now()
+	if r.Memory > 0 {
+		if f := r.mem.get(c.key(), key, began, r.Memory); f != nil {
+			r.n.remembered.Add(1)
+			return f, nil
+		}
+	}
+	r.n.asked.Add(1)
 	var refused, headers error
 	for _, h := range r.Hosts {
 		f, err := r.objectAt(ctx, h, c, key)
 		if err == nil {
+			if r.Memory > 0 {
+				r.mem.put(c.key(), key, f, began)
+			}
 			return f, nil
 		}
 		if errors.Is(err, ErrRefused) {

@@ -41,8 +41,10 @@ func (s *Server) resolve(ctx context.Context, b *bucket, key string) (*resolved,
 	if e != nil {
 		return nil, e
 	}
+	began := time.Now()
 	f, err := s.reader.Object(ctx, b.chain, key)
 	done()
+	s.metrics.observe("bstore_s3d_proof_seconds", time.Since(began).Seconds())
 	p := s.st.newest(b.chain.Bucket, key)
 	if err != nil {
 		// No host proves anything. The gateway's own pending put is still
