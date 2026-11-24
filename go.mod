@@ -8,9 +8,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.23.26
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.115.0
 	github.com/aws/smithy-go v1.28.9
-	github.com/bsv-blockchain/go-sdk v1.7.5
-	github.com/lightwebinc/bcommon v0.39.0
-	github.com/lightwebinc/bcommon/devkit v0.2.0
+	github.com/bsv-blockchain/go-sdk v1.7.8
+	github.com/lightwebinc/bcommon v0.40.0
+	github.com/lightwebinc/bcommon/devkit v0.2.3
 	github.com/minio/crc64nvme v1.1.1
 )
 
@@ -30,7 +30,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.44.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.52.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.9 // indirect
-	github.com/mrz1836/go-whatsonchain v1.3.0 // indirect
+	github.com/mrz1836/go-whatsonchain v1.3.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
 	go.yaml.in/yaml/v3 v3.0.6 // indirect

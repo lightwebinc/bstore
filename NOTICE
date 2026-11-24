@@ -58,10 +58,10 @@ which inlines bcommon and imports the host's own @bsv/sdk).
 =========================================================================
 Third-Party Software
 
-go-sdk is under the Apache License 2.0 from v1.7.5, the version bstore
-builds on. Earlier versions were under the Open BSV License Version 5,
+go-sdk is under the Apache License 2.0 from v1.7.5; bstore builds on
+v1.7.8. Versions before v1.7.5 were under the Open BSV License Version 5,
 whose grant was revocable and limited to the BSV Blockchains; those terms
-do not apply to v1.7.5.
+do not apply from v1.7.5.
 
 LICENSE-THIRD-PARTY is GENERATED from what the binaries link (make
 licences checks it) and holds every Go module's licence text. Section
