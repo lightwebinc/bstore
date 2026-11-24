@@ -20,11 +20,17 @@ import (
 // Inside that time a read of a remembered key asks no host. Any read that
 // does ask (a key not yet remembered, or the first read after the time ran
 // out) proves the latest token again for every key of the chain; a newer
-// token forgets them all. A new token is therefore seen at most Memory late,
-// and never rolled back to.
+// token forgets them all, and so does a walk that verifies one, before it
+// tells anyone (OnToken) what the newer token names. A new token is
+// therefore seen at most Memory later than a read that asks would see it,
+// and an older one is never gone back to.
+//
+// What "the latest" rests on is unchanged: the host's answer, the walk, and
+// the spend check of section 15.1, which is itself taken for unspentTTL.
 
-// memoryKeys bounds the keys remembered per chain.
-const memoryKeys = 65536
+// memoryKeys bounds the keys remembered per chain. A remembered answer
+// keeps its entry carrier, about a kilobyte.
+const memoryKeys = 16384
 
 type chainMemory struct {
 	tip  [32]byte
@@ -81,7 +87,19 @@ func (m *memory) put(chain, key string, f *Found, at time.Time) {
 	cm.keys[key] = f
 }
 
-// entryCache remembers verified entry carriers by bucket and bytes.
+// passed forgets what is remembered of a chain against a token older than
+// seq: a newer one has verified.
+func (m *memory) passed(chain string, seq uint64) {
+	m.mu.Lock()
+	if cm := m.chains[chain]; cm != nil && cm.seq < seq {
+		delete(m.chains, chain)
+	}
+	m.mu.Unlock()
+}
+
+// entryCache remembers verified entry carriers by bucket and bytes. Like a
+// verified token, a carrier whose funding tree's proof verified is not held
+// to the headers again.
 type entryCache struct {
 	mu sync.Mutex
 	m  map[[32]byte]*Entry

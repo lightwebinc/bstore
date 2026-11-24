@@ -134,3 +134,47 @@ func TestEntryCacheKey(t *testing.T) {
 		t.Fatal("the cache does not answer by bucket and bytes")
 	}
 }
+
+type heldStub struct{ h *storerec.Held }
+
+func (s *heldStub) Held(string) *storerec.Held          { return s.h }
+func (s *heldStub) SetHeld(string, storerec.Held) error { return nil }
+
+// A token verified by any route (a listing's walk, another key's read)
+// forgets what was remembered against an older one, and a remembered answer
+// older than the token held is not given.
+func TestMemoryPassedAndHeld(t *testing.T) {
+	now := time.Unix(1000, 0)
+	held := &heldStub{}
+	r := &Reader{Memory: time.Minute, Now: func() time.Time { return now }, Held: held, Logf: t.Logf}
+	c := Chain{Bucket: "b"}
+	f := &Found{Token: tokenAtSeq(2, 7), Result: storerec.ObjectFound}
+	r.mem.put(c.key(), "k", f, now)
+	if got, err := r.Object(context.Background(), c, "k"); err != nil || got != f {
+		t.Fatalf("got %v, %v", got, err)
+	}
+	// The reader holds a later token: the remembered answer is passed over.
+	held.h = &storerec.Held{Seq: 3}
+	if _, err := r.Object(context.Background(), c, "k"); err == nil {
+		t.Fatal("an answer older than the token held was given from memory")
+	}
+	held.h = &storerec.Held{Seq: 2}
+	if got, _ := r.Object(context.Background(), c, "k"); got != f {
+		t.Fatal("an answer against the token held was not given")
+	}
+	// A walk that verified seq 3 forgets the chain; one at the same seq
+	// does not.
+	r.mem.passed(c.key(), 2)
+	if r.mem.get(c.key(), "k", now, time.Minute) != f {
+		t.Fatal("a walk to the same token forgot the chain")
+	}
+	r.mem.passed(c.key(), 3)
+	if r.mem.get(c.key(), "k", now, time.Minute) != nil {
+		t.Fatal("a walk to a newer token left the chain remembered")
+	}
+	// ObjectNow asks whatever is remembered.
+	r.mem.put(c.key(), "k", f, now)
+	if _, err := r.ObjectNow(context.Background(), c, "k"); err == nil {
+		t.Fatal("ObjectNow answered from memory")
+	}
+}

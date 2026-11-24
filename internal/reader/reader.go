@@ -390,6 +390,11 @@ func (r *Reader) walk(ctx context.Context, host string, c Chain, t *Token) error
 	if err := r.checkUnspent(ctx, t); err != nil {
 		return err
 	}
+	// What was remembered against an older token goes first: OnToken's
+	// listener acts on the newer one (the gateway drops the pending
+	// entries it names), and a read answered from memory after that would
+	// see neither.
+	r.mem.passed(c.key(), t.Bucket.Seq)
 	if r.OnToken != nil {
 		for i := len(walk) - 1; i >= 0; i-- {
 			if held != nil && walk[i].Bucket.Seq <= held.Seq {
@@ -581,13 +586,28 @@ type Found struct {
 // answer does not verify is named and the next asked; ErrUnavailable when
 // none answers anything that verifies.
 func (r *Reader) Object(ctx context.Context, c Chain, key string) (*Found, error) {
-	began := r.now()
 	if r.Memory > 0 {
-		if f := r.mem.get(c.key(), key, began, r.Memory); f != nil {
+		if f := r.mem.get(c.key(), key, r.now(), r.Memory); f != nil && !r.heldPast(c, f.Token) {
 			r.n.remembered.Add(1)
 			return f, nil
 		}
 	}
+	return r.ObjectNow(ctx, c, key)
+}
+
+// heldPast reports a token older than the one the reader holds.
+func (r *Reader) heldPast(c Chain, t *Token) bool {
+	if r.Held == nil {
+		return false
+	}
+	h := r.Held.Held(c.key())
+	return h != nil && h.Seq > t.Bucket.Seq
+}
+
+// ObjectNow is Object asking a host whatever is remembered: for a read
+// whose answer is written down, as a copy's source is.
+func (r *Reader) ObjectNow(ctx context.Context, c Chain, key string) (*Found, error) {
+	began := r.now()
 	r.n.asked.Add(1)
 	var refused, headers error
 	for _, h := range r.Hosts {

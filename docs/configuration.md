@@ -160,7 +160,7 @@ serves all three).
 | `uploads` | none | providers' public URLs: without a facade, a closure goes to each by BRC-167 upload session instead of as piece carriers, and the entry to the submit route at each URL's origin |
 | `quorum` | 1 | hosts that must take an entry when there is no facade |
 | `ca`, `fetch_private` | none, false | certificates trusted besides the system's; whether advertised URLs at loopback, private or link-local addresses are reached |
-| `read_memory_ms` | 0 | for how long a key's proof is reused while the bucket's token is unchanged; 0 asks a host for every read ([s3.md](s3.md), "Reads") |
+| `read_memory_ms` | 0 | for how long a key's proof is reused while the bucket's token is unchanged; 0 asks a host for every read; at most 60000 ([s3.md](s3.md), "Reads") |
 | `keep_fetched` | false | whether an object a read fetched from an advertiser is kept in the local store ([s3.md](s3.md), "Reads") |
 | `bounty` | none | what a put asks for unless told otherwise: `satoshis`, `t`, `k`, `retention_seconds`, `deadline_blocks`, `check_c` |
 | `hold_ahead` | 16,384 | mined hold outputs of a bounty kept ready: the puts one block interval absorbs (27 a second on a ten-minute chain); each locks its bounty until its race ends, and a wallet too small fills what it can |
