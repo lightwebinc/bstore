@@ -507,9 +507,14 @@ func (s *Service) clear() {
 func (s *Service) servedIndexes() {
 	s.servedIdx = map[string]*servedIdx{}
 	for _, sv := range s.servedList {
-		p := strings.Split(sv, "|")
-		s.servedIdx[sv] = &servedIdx{chain: sv, b: p[0], owner: p[1], id: p[2], pendingByKey: map[string]map[string]*sortedStrings{}, unanchored: map[string]*sortedStrings{}}
+		s.servedIdx[sv] = newServedIdx(sv)
 	}
+}
+
+// newServedIdx is an empty index of a served chain's unnamed entries.
+func newServedIdx(sv string) *servedIdx {
+	p := strings.Split(sv, "|")
+	return &servedIdx{chain: sv, b: p[0], owner: p[1], id: p[2], pendingByKey: map[string]map[string]*sortedStrings{}, unanchored: map[string]*sortedStrings{}}
 }
 
 func (s *Service) nowMs() int64 { return s.now().UnixMilli() }

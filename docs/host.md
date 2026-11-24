@@ -409,6 +409,29 @@ the applied transaction (`DeleteOutput`, `DeleteAppliedTransaction` on the
 storage a restore is handed), so the same object offered again is decided
 afresh; a storage that cannot forget leaves it a duplicate.
 
+### Buckets added and dropped on a running host
+
+A Go host that reloads its settings can add or drop buckets without building
+the module again (`Mounted.Change`). The change covers `BSTORE_BUCKETS`,
+`BSTORE_SERVED` for the buckets added or dropped, and the topics carried.
+Every other bucket keeps its index as it is, so the change takes time in
+proportion to the bucket that changed, not to the host. Rebuilding the
+module restores every bucket's index, which is the cost that grows with
+the host.
+
+| Step | What happens |
+| --- | --- |
+| `Change(getenv)` | Reads the settings as a new module would and refuses the same mistakes. It returns nil when anything else changed, or when a bucket that stays gains or loses a served chain: the host then builds the module afresh |
+| `Module()` | The module under the new buckets. A bucket that stays keeps its running manager; an added bucket gets new managers |
+| `Apply(rows)` | Under the host's admission hold. It forgets the dropped buckets' part of the index and indexes the added ones from `rows` (the unspent rows of `Topics()`, the added records topics) and from what the journal names for them |
+
+The result is the index that a restart with the new buckets builds. Every
+part of the index is keyed by its bucket. The journal is not keyed that
+way, but it is loaded for every bucket, configured or not. Positions listed
+in a dropped bucket go, as they do at a restart. Its journal lines stay, so
+adding the bucket again later picks them up. The log says `bstore buckets
+changed in place`.
+
 ### Ordered replay on a Go host
 
 The Go module repairs its own host from a sibling host by replay (spec
