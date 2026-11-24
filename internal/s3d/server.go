@@ -146,7 +146,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Server, error) {
 	}
 	s.fetch = fetchHTTP
 	s.reader.Spender = v.Chain.Spender
-	s.reader.Mined = reader.MinedBy(v.Chain.Proof)
+	s.reader.Unmined = reader.UnminedBy(v.Known.Known, v.Chain.Proof)
 	s.reader.OnToken = s.st.named
 	var status acceptance.StatusSource
 	if v.Arcade != nil {

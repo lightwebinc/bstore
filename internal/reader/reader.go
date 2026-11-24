@@ -115,13 +115,16 @@ type Reader struct {
 	// token's output is checked unspent with it (spec section 15.1); an
 	// answer it cannot give is no evidence either way.
 	Spender func(ctx context.Context, txid string, vout uint32) (string, error)
-	// Mined, when set, reports whether a transaction is mined. The spend
-	// check asks it of the transaction the spend source names: a token
-	// spent by a transaction not yet mined is still the chain's latest,
-	// because hosts hold mined tokens only and its successor is not one
-	// yet (frozen.md section 14, row C32). Without it any spend the
-	// source shows refuses the token.
-	Mined func(ctx context.Context, txid string) (bool, error)
+	// Unmined, when set, reports positive evidence that the chain view
+	// knows a transaction and that it has not mined. The spend check asks
+	// it of the transaction the spend source names: a token spent by a
+	// transaction known and not yet mined is still the chain's latest,
+	// because hosts admit a token only with its proof and its successor
+	// has none yet (frozen.md section 14, row C32). Anything short of that
+	// evidence (a transaction the view does not know, one it shows mined,
+	// a view that cannot answer, no Unmined at all) refuses the token, as
+	// any spend did before.
+	Unmined func(ctx context.Context, txid string) (bool, error)
 	// OnToken, when set, is handed every token a walk verifies past the one
 	// held, oldest first: what it names is the map's from then on.
 	OnToken func(b *storerec.Bucket)
@@ -424,12 +427,13 @@ func (r *Reader) walk(ctx context.Context, host string, c Chain, t *Token) error
 const unspentTTL = 15 * time.Second
 
 // checkUnspent is step 1's spend check of the latest token's output: a
-// token the spend source shows spent by a mined transaction is not the
-// chain's latest (a later token spent it, or the bucket is closed), so the
-// host that answered it is behind. One spent by a transaction that has not
-// mined is the latest still: without that, every read of a bucket would be
-// refused from the moment its owner broadcast the next token until that
-// token mined and reached the hosts, a block's time on every anchor.
+// token the spend source shows spent is not the chain's latest (a later
+// token spent it, or the bucket is closed), so the host that answered it
+// is behind. One exception, on positive evidence only: a token spent by a
+// transaction the chain view knows and shows not yet mined is the latest
+// still. Without it every read of a bucket was refused from the moment
+// its owner broadcast the next token until that token mined and reached
+// the hosts, a block's time on every anchor.
 func (r *Reader) checkUnspent(ctx context.Context, t *Token) error {
 	if r.Spender == nil {
 		return nil
@@ -443,16 +447,16 @@ func (r *Reader) checkUnspent(ctx context.Context, t *Token) error {
 		return nil
 	}
 	if by != "" {
-		if r.Mined == nil {
+		unmined := false
+		if r.Unmined != nil {
+			var uerr error
+			if unmined, uerr = r.Unmined(ctx, by); uerr != nil {
+				r.logf("spend source: token %s is spent by %s, and whether that is known and unmined: %v", short(t.TxidHex()), short(by), uerr)
+				unmined = false
+			}
+		}
+		if !unmined {
 			return fmt.Errorf("%w: the token at seq %d is spent by %s: a later token exists, or the bucket is closed", storerec.ErrBucket, t.Bucket.Seq, short(by))
-		}
-		mined, err := r.Mined(ctx, by)
-		if err != nil {
-			r.logf("spend source: token %s is spent by %s, and whether that has mined: %v (no evidence; the bucket may be stale)", short(t.TxidHex()), short(by), err)
-			return nil
-		}
-		if mined {
-			return fmt.Errorf("%w: the token at seq %d is spent by %s, which has mined: a later token exists, or the bucket is closed", storerec.ErrBucket, t.Bucket.Seq, short(by))
 		}
 		// Its successor (or the spend that closes the bucket) waits for
 		// its block. Until then this token is the latest a host can hold.
@@ -902,18 +906,27 @@ func (c *tokenCache) put(t *Token) {
 	c.m[t.Txid] = t
 }
 
-// MinedBy is a Reader's Mined over a chain view's proof question: mined
-// when it has a proof, not mined when the view says so (nodeapi.ErrNotMined),
-// and an error when the view could not answer.
-func MinedBy(proof func(ctx context.Context, txid string) (*transaction.MerklePath, uint32, error)) func(context.Context, string) (bool, error) {
+// UnminedBy is a Reader's Unmined over a chain view: true only when the
+// view knows the transaction and answers that it is not mined
+// (nodeapi.ErrNotMined). A view that does not know the transaction, that
+// has a proof of it, or whose proof this reader's headers refuse, is not
+// that evidence; a view that cannot answer is an error.
+func UnminedBy(known func(ctx context.Context, txid string) (bool, error),
+	proof func(ctx context.Context, txid string) (*transaction.MerklePath, uint32, error)) func(context.Context, string) (bool, error) {
 	return func(ctx context.Context, txid string) (bool, error) {
-		mp, _, err := proof(ctx, txid)
-		switch {
-		case errors.Is(err, nodeapi.ErrNotMined):
-			return false, nil
-		case err != nil:
+		ok, err := known(ctx, txid)
+		if err != nil || !ok {
 			return false, err
 		}
-		return mp != nil, nil
+		_, _, err = proof(ctx, txid)
+		switch {
+		case errors.Is(err, nodeapi.ErrNotMined):
+			return true, nil
+		case err == nil, errors.Is(err, nodeapi.ErrProofRefused):
+			// Mined, or a proof was offered that these headers do not
+			// hold yet: not unmined.
+			return false, nil
+		}
+		return false, err
 	}
 }

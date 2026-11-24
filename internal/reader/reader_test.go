@@ -3,6 +3,8 @@ package reader
 import (
 	"context"
 	"errors"
+	"fmt"
+	"github.com/bsv-blockchain/go-sdk/transaction"
 	"testing"
 	"time"
 
@@ -39,23 +41,23 @@ func TestCheckUnspentNeedsEvidence(t *testing.T) {
 	}
 }
 
-// A token spent by a transaction that has not mined is still the latest:
-// the read goes on. Once the spender has mined, the host that answered the
-// token is behind. A source that cannot say whether it mined is no
-// evidence. Without Mined, any spend refuses, as before.
+// A token spent by a transaction the chain view knows and shows unmined is
+// still the latest: the read goes on. Anything short of that evidence
+// refuses, as any spend did before: a spender that mined, one the view does
+// not vouch for, a view that cannot answer, and no Unmined at all.
 func TestCheckUnspentUnminedSpender(t *testing.T) {
 	now := time.Unix(1000, 0)
 	tok := &Token{Txid: [32]byte{2}, Bucket: &storerec.Bucket{Seq: 7}}
-	mined, merr := false, error(nil)
+	unmined, uerr := true, error(nil)
 	asked := 0
 	r := &Reader{Logf: t.Logf, Now: func() time.Time { return now },
 		Spender: func(context.Context, string, uint32) (string, error) { return "ab", nil },
-		Mined: func(_ context.Context, txid string) (bool, error) {
+		Unmined: func(_ context.Context, txid string) (bool, error) {
 			asked++
 			if txid != "ab" {
-				t.Fatalf("asked whether %q mined", txid)
+				t.Fatalf("asked about %q", txid)
 			}
-			return mined, merr
+			return unmined, uerr
 		}}
 	ctx := context.Background()
 	if err := r.checkUnspent(ctx, tok); err != nil {
@@ -66,26 +68,54 @@ func TestCheckUnspentUnminedSpender(t *testing.T) {
 		t.Fatalf("asked %d time(s) inside the time: %v", asked, err)
 	}
 	now = now.Add(unspentTTL)
-	mined = true
-	if err := r.checkUnspent(ctx, tok); !errors.Is(err, storerec.ErrBucket) {
-		t.Fatalf("a token spent by a mined transaction: %v", err)
+	if err := r.checkUnspent(ctx, tok); err != nil || asked != 2 {
+		t.Fatalf("after the time: asked %d time(s): %v", asked, err)
 	}
-	// Not cached as unspent: the next read is refused too.
-	if err := r.checkUnspent(ctx, tok); !errors.Is(err, storerec.ErrBucket) {
-		t.Fatalf("the refusal did not hold: %v", err)
-	}
-	mined, merr = false, errors.New("node down")
-	before := asked
+	// The spender mined (or the view no longer vouches for it): refused,
+	// and the refusal is not remembered as unspent.
+	now = now.Add(unspentTTL)
+	unmined = false
 	for i := 0; i < 2; i++ {
-		if err := r.checkUnspent(ctx, tok); err != nil {
-			t.Fatalf("no evidence refused the token: %v", err)
+		if err := r.checkUnspent(ctx, tok); !errors.Is(err, storerec.ErrBucket) {
+			t.Fatalf("a token whose spender is not shown unmined: %v", err)
 		}
 	}
-	if asked != before+2 {
-		t.Fatal("no evidence was cached")
-	}
-	r.Mined = nil
+	// A view that cannot answer is not evidence: refused.
+	unmined, uerr = true, errors.New("node down")
 	if err := r.checkUnspent(ctx, tok); !errors.Is(err, storerec.ErrBucket) {
-		t.Fatalf("without Mined a spend must refuse: %v", err)
+		t.Fatalf("a view that could not answer let the token through: %v", err)
+	}
+	r.Unmined = nil
+	if err := r.checkUnspent(ctx, tok); !errors.Is(err, storerec.ErrBucket) {
+		t.Fatalf("without Unmined a spend must refuse: %v", err)
+	}
+}
+
+// UnminedBy answers true only for a transaction the view knows and has no
+// proof of.
+func TestUnminedBy(t *testing.T) {
+	down := errors.New("down")
+	for _, c := range []struct {
+		name     string
+		known    bool
+		kerr     error
+		perr     error
+		want     bool
+		wantsErr bool
+	}{
+		{"known, not mined", true, nil, nodeapi.ErrNotMined, true, false},
+		{"known, not mined (wrapped)", true, nil, fmt.Errorf("x: %w", nodeapi.ErrNotMined), true, false},
+		{"known, mined", true, nil, nil, false, false},
+		{"known, a proof these headers refuse", true, nil, nodeapi.ErrProofRefused, false, false},
+		{"not known", false, nil, nodeapi.ErrNotMined, false, false},
+		{"whether it is known: down", false, down, nil, false, true},
+		{"known, the proof question down", true, nil, down, false, true},
+	} {
+		f := UnminedBy(func(context.Context, string) (bool, error) { return c.known, c.kerr },
+			func(context.Context, string) (*transaction.MerklePath, uint32, error) { return nil, 0, c.perr })
+		got, err := f(context.Background(), "ab")
+		if got != c.want || (err != nil) != c.wantsErr {
+			t.Errorf("%s: got %t, %v", c.name, got, err)
+		}
 	}
 }
