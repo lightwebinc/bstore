@@ -474,7 +474,7 @@ func TestFilePositions(t *testing.T) {
 	if err != nil || s.reachedAt(bucket+"|peer") != pos {
 		t.Fatalf("the service read %q, %v", s.reachedAt(bucket+"|peer"), err)
 	}
-	s.reach(bucket+"|peer", sinceKey(8, strings.Repeat("a", 64), 3))
+	s.reach(bucket+"|peer", sinceKey(8, strings.Repeat("a", 64), 3), 0)
 	s.savePositions()
 	if m, _ := f.Load(); m[bucket+"|peer"] != sinceKey(8, strings.Repeat("a", 64), 3) {
 		t.Fatalf("saved %v", m)

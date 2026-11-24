@@ -62,12 +62,14 @@ func (s *Service) AddBuckets(ctx context.Context, buckets, served []string, rows
 		s.servedIdx[sv] = newServedIdx(sv)
 	}
 	s.publish()
+	prev := s.storage
 	if storage != nil {
 		s.storage = storage
 	}
 	n, err := s.restore(ctx, rows, s.storage, only)
 	if err != nil {
 		s.forgetLocked(only)
+		s.storage = prev
 		return 0, err
 	}
 	return n, nil
@@ -111,6 +113,9 @@ func (s *Service) forgetLocked(drop map[string]bool) {
 		delete(s.servedBuckets, b)
 	}
 	s.publish()
+	for b := range drop {
+		s.bucketGen[b]++
+	}
 	s.forgetIndex(drop)
 	// As a restart does: the walks' tries are not kept (the positions
 	// reached are, and a walk still running is fenced off by reach and

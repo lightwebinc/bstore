@@ -96,11 +96,20 @@ func (f *FilePositions) Save(m map[string]string) error {
 	return os.Rename(tmp, f.Path)
 }
 
-// configuredKey is whether a <bucket>|<peer> key's bucket is configured.
-// The caller holds mu.
-func (s *Service) configuredKey(key string) bool {
+// configuredKey is whether a <bucket>|<peer> key's bucket is configured,
+// and in generation gen: a walk that began before the bucket was dropped
+// (and perhaps added again) moves nothing. The caller holds mu.
+func (s *Service) configuredKey(key string, gen uint64) bool {
 	b, _, _ := strings.Cut(key, "|")
-	return s.buckets[b]
+	return s.buckets[b] && s.bucketGen[b] == gen
+}
+
+// genOf is a bucket's generation: how often it has been dropped. A walk
+// takes it when it begins.
+func (s *Service) genOf(b string) uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.bucketGen[b]
 }
 
 // reachedAt is the position reached with a peer for a bucket, "" for none.
@@ -120,10 +129,10 @@ type sinceTry struct {
 // reach moves the position reached and forgets the tries at or behind it:
 // those ahead keep their counts, so an object the host never admits is
 // passed over once, not offered again each time an earlier page clears.
-func (s *Service) reach(key, pos string) {
+func (s *Service) reach(key, pos string, gen uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.configuredKey(key) { // a walk still running for a dropped bucket
+	if !s.configuredKey(key, gen) { // a walk still running for a dropped bucket
 		return
 	}
 	s.reached[key] = pos
@@ -141,10 +150,10 @@ func (s *Service) reach(key, pos string) {
 
 // tried counts one more walk that answered txid from a since page at pos,
 // and reports whether it had been answered SinceTries times already.
-func (s *Service) tried(key string, txid chainhash.Hash, pos string) bool {
+func (s *Service) tried(key string, txid chainhash.Hash, pos string, gen uint64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.configuredKey(key) { // a walk still running for a dropped bucket
+	if !s.configuredKey(key, gen) { // a walk still running for a dropped bucket
 		return false
 	}
 	m := s.sinceTries[key]
@@ -272,6 +281,7 @@ func sinceKind(o *replay.Output) string {
 // refuses a question.
 func (s *Service) replaySince(ctx context.Context, b, peer string, refused *bool) replay.Phase {
 	key := b + "|" + peer
+	gen := s.genOf(b)
 	fresh := s.freshMined(ctx)
 	return replay.Phase{Name: "since",
 		Items: func(context.Context, *replay.Walk) ([]string, error) { return []string{"since"}, nil },
@@ -334,7 +344,7 @@ func (s *Service) replaySince(ctx context.Context, b, peer string, refused *bool
 						dirty = true
 						continue
 					}
-					if s.tried(key, o.Txid, pos) {
+					if s.tried(key, o.Txid, pos, gen) {
 						continue
 					}
 					if err := w.Emit(bmodule.ReplayObject{Txid: o.Txid, BEEF: o.BEEF, Kind: kind}); err != nil {
@@ -349,7 +359,7 @@ func (s *Service) replaySince(ctx context.Context, b, peer string, refused *bool
 				cur = last
 				*page = cur
 				if !dirty {
-					s.reach(key, cur)
+					s.reach(key, cur, gen)
 					moved = true
 				}
 				if len(outs) < PageLimit {

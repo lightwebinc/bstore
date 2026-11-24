@@ -328,9 +328,12 @@ type Service struct {
 	// published in sets for the calls that read them without mu (Classify,
 	// Replay, the admission paths' first check): AddBuckets and
 	// ForgetBuckets change them on a running host.
-	buckets       map[string]bool
-	served        map[string]bool
-	sets          atomic.Pointer[bucketSets]
+	buckets map[string]bool
+	served  map[string]bool
+	sets    atomic.Pointer[bucketSets]
+	// bucketGen counts each bucket's drops (ForgetBuckets): a replay walk
+	// that began in an earlier generation moves no position.
+	bucketGen     map[string]uint64
 	servedList    []string
 	servedBuckets map[string]bool
 	host          bmodule.Host
@@ -442,7 +445,7 @@ func NewService(o Options) (*Service, error) {
 	if o.Journal == nil {
 		o.Journal = &MemoryJournal{}
 	}
-	s := &Service{buckets: map[string]bool{}, served: map[string]bool{}, servedBuckets: map[string]bool{}, host: o.Host, journal: o.Journal,
+	s := &Service{buckets: map[string]bool{}, served: map[string]bool{}, servedBuckets: map[string]bool{}, bucketGen: map[string]uint64{}, host: o.Host, journal: o.Journal,
 		priced: o.Priced, keep: keep * day, pending: pend * day, other: other * hour, headers: o.Headers, now: o.Now, warned: map[string]bool{},
 		trees: o.Trees, maxBEEF: o.MaxBEEF, maxSweep: o.MaxSweepInputs,
 		positions: o.Positions, reached: map[string]string{}, sinceTries: map[string]map[chainhash.Hash]sinceTry{}, relisted: map[string]int64{}}

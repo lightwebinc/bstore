@@ -359,8 +359,12 @@ func (failingStorage) FindOutput(context.Context, *transaction.Outpoint, string)
 func TestAddBucketsFailedLeavesNothing(t *testing.T) {
 	tb := newTwoBuckets(t)
 	one := tb.restartWith(t, bucket)
+	seam := one.ls.storage
 	if _, err := one.ls.AddBuckets(context.Background(), []string{otherBucket}, []string{tb.served[otherBucket]}, tb.rows(otherBucket), failingStorage{one.storage}); err == nil {
 		t.Fatal("a storage failure was not reported")
+	}
+	if one.ls.storage != seam {
+		t.Fatal("a failed add left its storage as the restore seam")
 	}
 	sameIndex(t, one.ls, tb.restartWith(t, bucket).ls, "after a failed add")
 	if one.ls.BucketCount() != 1 || one.ls.sets.Load().buckets[otherBucket] {
@@ -374,6 +378,7 @@ func TestBucketsChangeUnderLookups(t *testing.T) {
 	tb := newTwoBuckets(t)
 	r := tb.restartWith(t, bucket, otherBucket)
 	q := question(tb.probes[otherBucket][0])
+	admitted := tb.rows(otherBucket)[0] // admitted again: an admission's first check, then the index's
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
 	for range 4 {
@@ -389,6 +394,8 @@ func TestBucketsChangeUnderLookups(t *testing.T) {
 				_, _ = r.ls.Lookup(context.Background(), q)
 				_, _ = r.ls.Classify(storerec.LookupService, q.Query)
 				_ = r.ls.OutputNoLongerRetainedInHistory(context.Background(), &transaction.Outpoint{}, storerec.RecordsPrefix+otherBucket)
+				_ = r.ls.OutputAdmittedByTopic(context.Background(), &bmodule.OutputAdmittedByTopic{Mode: bmodule.AdmitWholeTx, Topic: storerec.RecordsPrefix + otherBucket,
+					Outpoint: admitted.Outpoint, AtomicBEEF: admitted.Beef})
 				_, _ = r.ls.Replay(context.Background(), &bmodule.ReplayRequest{Topic: storerec.RecordsPrefix + otherBucket, Peer: "peer", Ask: replayPeer(r),
 					MaxQuestions: 4, MaxObjects: 4, Applied: func(context.Context, chainhash.Hash) (bool, error) { return true, nil }})
 			}
@@ -423,17 +430,20 @@ func TestBucketsChangeUnderLookups(t *testing.T) {
 	sameIndex(t, quiet.ls, tb.restartWith(t, bucket, otherBucket).ls, "after a quiet churn")
 }
 
-// A dropped bucket's walk tries go, as at a restart, and a walk still
-// running for it moves no position and counts no try.
+// A dropped bucket's walk tries go, as at a restart, and a walk that began
+// before the drop moves no position and counts no try: neither while the
+// bucket is dropped nor once it is added again (the rebuilt index never saw
+// what that walk saw). A walk begun after the re-add counts afresh.
 func TestForgetBucketsFencesWalks(t *testing.T) {
 	tb := newTwoBuckets(t)
 	r := tb.restartWith(t, bucket, otherBucket)
 	key := otherBucket + "|peer"
 	var txid chainhash.Hash
+	stale := r.ls.genOf(otherBucket) // a walk begins
 	for range SinceTries {
-		r.ls.tried(key, txid, "p1")
+		r.ls.tried(key, txid, "p1", stale)
 	}
-	if !r.ls.tried(key, txid, "p1") {
+	if !r.ls.tried(key, txid, "p1", stale) {
 		t.Fatal("not counted")
 	}
 	if err := r.ls.ForgetBuckets([]string{otherBucket}); err != nil {
@@ -443,14 +453,27 @@ func TestForgetBucketsFencesWalks(t *testing.T) {
 		t.Fatal("the dropped bucket's tries stay")
 	}
 	before := r.ls.reachedAt(key)
-	r.ls.reach(key, "p9")
-	if r.ls.tried(key, txid, "p1") || r.ls.reachedAt(key) != before || len(r.ls.sinceTries[key]) != 0 {
+	r.ls.reach(key, "p9", stale)
+	if r.ls.tried(key, txid, "p1", stale) || r.ls.reachedAt(key) != before || len(r.ls.sinceTries[key]) != 0 {
 		t.Fatal("a walk for a dropped bucket changed its state")
 	}
 	if _, err := r.ls.AddBuckets(context.Background(), []string{otherBucket}, []string{tb.served[otherBucket]}, tb.rows(otherBucket), nil); err != nil {
 		t.Fatal(err)
 	}
-	if r.ls.tried(key, txid, "p1") {
-		t.Fatal("an object tried before the drop is passed over after the add")
+	// The walk that spanned the drop and the re-add still moves nothing.
+	r.ls.reach(key, "p9", stale)
+	if r.ls.tried(key, txid, "p1", stale) || r.ls.reachedAt(key) != before || len(r.ls.sinceTries[key]) != 0 {
+		t.Fatal("a walk begun before the drop changed the re-added bucket's state")
+	}
+	fresh := r.ls.genOf(otherBucket)
+	if fresh == stale {
+		t.Fatal("the re-added bucket is in the same generation")
+	}
+	if r.ls.tried(key, txid, "p1", fresh) || len(r.ls.sinceTries[key]) != 1 {
+		t.Fatal("a walk begun after the re-add does not count afresh")
+	}
+	r.ls.reach(key, "p9", fresh)
+	if r.ls.reachedAt(key) != "p9" {
+		t.Fatal("a walk begun after the re-add moves no position")
 	}
 }
