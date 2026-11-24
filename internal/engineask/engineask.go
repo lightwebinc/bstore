@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -68,6 +69,9 @@ func (a *Asker) Check() error {
 	if len(a.Settings) == 0 {
 		return fmt.Errorf("ask %s names no settings", a.ID)
 	}
+	if a.TTL != 0 && a.TTL < time.Second {
+		return fmt.Errorf("ask %s: a lifetime under a second is not one the engine takes", a.ID)
+	}
 	return nil
 }
 
@@ -78,9 +82,27 @@ func (a *Asker) ttl() time.Duration {
 	return a.TTL
 }
 
+// Refused is an engine's refusal of the ask (an answer of 4xx): the engine
+// does not allow a setting, an item, the lifetime, or one more ask. Asking
+// again changes nothing until the engine's or the application's settings
+// do.
+type Refused struct {
+	Status int
+	Reason string
+}
+
+func (e *Refused) Error() string {
+	if e.Reason == "" {
+		return fmt.Sprintf("the engine refused the ask (%d)", e.Status)
+	}
+	return fmt.Sprintf("the engine refused the ask (%d): %s", e.Status, e.Reason)
+}
+
 // Run asks at once and again at half the lifetime, until ctx is done. A
 // failed ask is tried again sooner, from 1 s doubling to the refresh
 // interval, so an engine that was restarting is asked as soon as it answers.
+// A refused ask is tried again at the refresh interval, and reported each
+// time: nothing it asks for is carried until it is fixed.
 func (a *Asker) Run(ctx context.Context) {
 	every := a.ttl() / 2
 	retry := time.Second
@@ -90,7 +112,10 @@ func (a *Asker) Run(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			wait, retry = min(retry, every), min(retry*2, every)
+			var ref *Refused
+			if !errors.As(err, &ref) {
+				wait, retry = min(retry, every), min(retry*2, every)
+			}
 		} else {
 			retry = time.Second
 		}
@@ -114,11 +139,17 @@ func (a *Asker) Ask(ctx context.Context) error {
 	if err != nil {
 		outcome = err.Error()
 	}
-	if outcome != a.last && a.Logf != nil && ctx.Err() == nil {
+	var ref *Refused
+	loud := errors.As(err, &ref)
+	if (outcome != a.last || loud) && a.Logf != nil && ctx.Err() == nil {
 		if err == nil {
 			a.Logf("the engine carries ask %s (%s, lifetime %s)", a.ID, a.summary(), a.ttl())
 		} else {
-			a.Logf("asking the engine for %s: %v; asking again", a.ID, err)
+			if loud {
+				a.Logf("ENGINE REFUSED ask %s: %v; none of its items are carried; asking again in %s", a.ID, err, a.ttl()/2)
+			} else {
+				a.Logf("asking the engine for %s: %v; asking again", a.ID, err)
+			}
 		}
 	}
 	a.last = outcome
@@ -163,7 +194,11 @@ func (a *Asker) ask(ctx context.Context) error {
 	var e struct {
 		Error string `json:"error"`
 	}
-	if json.Unmarshal(msg, &e) == nil && e.Error != "" {
+	_ = json.Unmarshal(msg, &e)
+	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+		return &Refused{Status: resp.StatusCode, Reason: e.Error}
+	}
+	if e.Error != "" {
 		return fmt.Errorf("the engine answered %d: %s", resp.StatusCode, e.Error)
 	}
 	return fmt.Errorf("the engine answered %d", resp.StatusCode)

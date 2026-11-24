@@ -3,6 +3,7 @@ package engineask
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +16,7 @@ type engine struct {
 	mu     sync.Mutex
 	asks   []map[string]any
 	refuse int // answer 400 to this many asks first
+	fail   int // then answer 503 to this many
 }
 
 func (e *engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -32,6 +34,11 @@ func (e *engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.asks = append(e.asks, body)
+	if e.fail > 0 {
+		e.fail--
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
 	if e.refuse > 0 {
 		e.refuse--
 		w.WriteHeader(http.StatusBadRequest)
@@ -69,33 +76,61 @@ func TestAskShape(t *testing.T) {
 	}
 }
 
-func TestRefusalIsReportedAndRetried(t *testing.T) {
-	e := &engine{refuse: 2}
-	srv := httptest.NewServer(e)
-	defer srv.Close()
-	var logs []string
-	var oks []bool
+// run runs a against e until e has seen n asks, and returns the outcomes
+// and the log lines.
+func run(t *testing.T, a *Asker, e *engine, n int) (oks []bool, logs []string) {
+	t.Helper()
 	var mu sync.Mutex
-	a := &Asker{URL: srv.URL, ID: "x", TTL: time.Hour, Settings: map[string][]string{"OVERLAY_TOPICS": {"tm_x"}},
-		Logf:     func(f string, args ...any) { mu.Lock(); logs = append(logs, f); mu.Unlock() },
-		OnResult: func(ok bool) { mu.Lock(); oks = append(oks, ok); mu.Unlock() }}
+	a.Logf = func(f string, args ...any) { mu.Lock(); logs = append(logs, fmt.Sprintf(f, args...)); mu.Unlock() }
+	a.OnResult = func(ok bool) { mu.Lock(); oks = append(oks, ok); mu.Unlock() }
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() { a.Run(ctx); close(done) }()
-	// Refused twice (retried after 1 s, then 2 s), then carried.
 	deadline := time.Now().Add(10 * time.Second)
-	for e.count() < 3 && time.Now().Before(deadline) {
-		time.Sleep(50 * time.Millisecond)
+	for e.count() < n && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
 	}
+	time.Sleep(50 * time.Millisecond) // the last answer's outcome
 	cancel()
 	<-done
 	mu.Lock()
 	defer mu.Unlock()
+	return oks, logs
+}
+
+// A refusal is reported every time, and asked again at the refresh
+// interval, not sooner.
+func TestRefusalIsReportedEachTime(t *testing.T) {
+	e := &engine{refuse: 2}
+	srv := httptest.NewServer(e)
+	defer srv.Close()
+	a := &Asker{URL: srv.URL, ID: "x", TTL: 2 * time.Second, Settings: map[string][]string{"OVERLAY_TOPICS": {"tm_x"}}}
+	start := time.Now()
+	oks, logs := run(t, a, e, 3)
+	if took := time.Since(start); took < 1900*time.Millisecond {
+		t.Fatalf("three asks in %s: a refusal was asked again before the refresh interval (1 s)", took)
+	}
 	if len(oks) != 3 || oks[0] || oks[1] || !oks[2] {
 		t.Fatalf("outcomes %v", oks)
 	}
-	// One line for the refusal (the same twice), one for the success.
-	if len(logs) != 2 || !strings.Contains(logs[0], "asking again") || !strings.Contains(logs[1], "carries") {
+	if len(logs) != 3 || !strings.Contains(logs[0], "ENGINE REFUSED") || !strings.Contains(logs[1], "ENGINE REFUSED") ||
+		!strings.Contains(logs[0], "BSTORE_BUCKETS is not a setting") || !strings.Contains(logs[2], "carries") {
+		t.Fatalf("logs %q", logs)
+	}
+}
+
+// An engine that cannot be reached is asked again sooner (1 s, 2 s), and
+// reported once.
+func TestFailureIsRetriedSooner(t *testing.T) {
+	e := &engine{fail: 2}
+	srv := httptest.NewServer(e)
+	defer srv.Close()
+	a := &Asker{URL: srv.URL, ID: "x", TTL: time.Hour, Settings: map[string][]string{"OVERLAY_TOPICS": {"tm_x"}}}
+	oks, logs := run(t, a, e, 3)
+	if len(oks) != 3 || oks[0] || oks[1] || !oks[2] {
+		t.Fatalf("outcomes %v", oks)
+	}
+	if len(logs) != 2 || !strings.Contains(logs[0], "asking again") || strings.Contains(logs[0], "REFUSED") || !strings.Contains(logs[1], "carries") {
 		t.Fatalf("logs %q", logs)
 	}
 }
@@ -119,6 +154,7 @@ func TestCheck(t *testing.T) {
 		{URL: "127.0.0.1:8280", ID: "x", Settings: map[string][]string{"OVERLAY_TOPICS": {"t"}}},
 		{URL: "http://127.0.0.1:8280", ID: "a/b", Settings: map[string][]string{"OVERLAY_TOPICS": {"t"}}},
 		{URL: "http://127.0.0.1:8280", ID: "x"},
+		{URL: "http://127.0.0.1:8280", ID: "x", TTL: 500 * time.Millisecond, Settings: map[string][]string{"OVERLAY_TOPICS": {"t"}}},
 	} {
 		if a.Check() == nil {
 			t.Fatalf("accepted %+v", a)

@@ -577,6 +577,7 @@ func (p *Provider) Start(ctx context.Context) error {
 	}
 	go func() { defer p.wg.Done(); p.background(ctx) }()
 	if p.cfg.EngineTopics != "" {
+		p.metrics.set("bstore_provider_engine_ask_ok", 0)
 		a := p.cfg.engineAsk()
 		a.Logf = p.logf
 		a.OnResult = func(ok bool) {

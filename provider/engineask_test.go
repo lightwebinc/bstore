@@ -72,3 +72,13 @@ func TestEngineTopicsChecked(t *testing.T) {
 		t.Fatal("an engine address that is not a URL was accepted")
 	}
 }
+
+func TestEngineTopicsTTLBounded(t *testing.T) {
+	r := newRig(t)
+	cfg := r.config(t.TempDir())
+	cfg.EngineTopics = "http://127.0.0.1:8280"
+	cfg.EngineTopicsTTLSeconds = 1 << 40
+	if cfg.Check() == nil {
+		t.Fatal("a lifetime past a week was accepted")
+	}
+}

@@ -517,6 +517,9 @@ func (c *Config) Check() error {
 			return fmt.Errorf("feed_listen: %q is not a loopback address: submissions there skip the per-address budgets (name a remote bridge in feeders instead)", c.FeedListen)
 		}
 	}
+	if c.EngineTopicsTTLSeconds > 604800 {
+		return errors.New("engine_topics_ttl_seconds is at most 604800 (a week)")
+	}
 	if c.EngineTopics != "" {
 		if err := c.engineAsk().Check(); err != nil {
 			return fmt.Errorf("engine_topics: %w", err)
@@ -575,6 +578,8 @@ func checkPublicURL(s string) error {
 
 // FrontURL is the front a provider's advertisement derives: the public URL
 // followed by /bstore/v1.
+func (c *Config) FrontURL() string { return c.PublicURL + storerec.FrontSuffix }
+
 // engineAsk is the ask for the buckets' topics: one ask for every bucket,
 // so a provider uses one of the engine's asks however many buckets it takes.
 func (c *Config) engineAsk() *engineask.Asker {
@@ -590,8 +595,6 @@ func (c *Config) engineAsk() *engineask.Asker {
 		Settings: map[string][]string{"OVERLAY_TOPICS": topics, "BSTORE_BUCKETS": buckets},
 	}
 }
-
-func (c *Config) FrontURL() string { return c.PublicURL + storerec.FrontSuffix }
 
 // answerInline reports whether challenges are answered with the segments.
 func (c *Config) answerInline() bool {
