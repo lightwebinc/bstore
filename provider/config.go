@@ -2,6 +2,7 @@ package provider
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,12 +11,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/lightwebinc/bcommon/feepolicy"
 	"github.com/lightwebinc/bcommon/guard"
 
 	"github.com/lightwebinc/bstore/chaincfg"
 	"github.com/lightwebinc/bstore/internal/acceptcfg"
+	"github.com/lightwebinc/bstore/internal/engineask"
 	"github.com/lightwebinc/bstore/storerec"
 )
 
@@ -120,6 +123,14 @@ type Config struct {
 	// /healthz only, plain HTTP, no BRC-104, and no per-address budgets, the
 	// way a bridge reaches its engine. Every other route stays on Listen.
 	FeedListen string `json:"feed_listen,omitempty"`
+	// EngineTopics, when set, is the base URL of the overlay engine on the
+	// same host (http://127.0.0.1:8280): the provider asks it to carry its
+	// buckets' records and blob topics (POST /admin/topics), so the engine's
+	// bridge asks the delivery edge for them and no operator lists them.
+	EngineTopics string `json:"engine_topics,omitempty"`
+	// EngineTopicsTTLSeconds is that ask's lifetime; it is asked again at
+	// half of it. Zero is 600; the engine bounds it.
+	EngineTopicsTTLSeconds uint64 `json:"engine_topics_ttl_seconds,omitempty"`
 	// Accept is the payment acceptance rule (accept_threshold_sats and the
 	// other accept_ keys, docs/provider.md).
 	acceptcfg.Config
@@ -506,6 +517,11 @@ func (c *Config) Check() error {
 			return fmt.Errorf("feed_listen: %q is not a loopback address: submissions there skip the per-address budgets (name a remote bridge in feeders instead)", c.FeedListen)
 		}
 	}
+	if c.EngineTopics != "" {
+		if err := c.engineAsk().Check(); err != nil {
+			return fmt.Errorf("engine_topics: %w", err)
+		}
+	}
 	if c.Limits.InFlightPerAddr < 1 {
 		return errors.New("limits.in_flight_per_addr is at least 1")
 	}
@@ -559,6 +575,22 @@ func checkPublicURL(s string) error {
 
 // FrontURL is the front a provider's advertisement derives: the public URL
 // followed by /bstore/v1.
+// engineAsk is the ask for the buckets' topics: one ask for every bucket,
+// so a provider uses one of the engine's asks however many buckets it takes.
+func (c *Config) engineAsk() *engineask.Asker {
+	var topics, buckets []string
+	for _, b := range c.Buckets {
+		topics = append(topics, storerec.RecordsPrefix+b.Bucket, storerec.BlobPrefix+b.Bucket)
+		buckets = append(buckets, b.Bucket)
+	}
+	return &engineask.Asker{
+		URL:      c.EngineTopics,
+		ID:       "bstore-provider",
+		TTL:      time.Duration(cmp.Or(c.EngineTopicsTTLSeconds, 600)) * time.Second,
+		Settings: map[string][]string{"OVERLAY_TOPICS": topics, "BSTORE_BUCKETS": buckets},
+	}
+}
+
 func (c *Config) FrontURL() string { return c.PublicURL + storerec.FrontSuffix }
 
 // answerInline reports whether challenges are answered with the segments.

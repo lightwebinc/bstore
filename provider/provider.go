@@ -576,6 +576,18 @@ func (p *Provider) Start(ctx context.Context) error {
 		go func() { defer p.wg.Done(); p.adMinter(ctx) }()
 	}
 	go func() { defer p.wg.Done(); p.background(ctx) }()
+	if p.cfg.EngineTopics != "" {
+		a := p.cfg.engineAsk()
+		a.Logf = p.logf
+		a.OnResult = func(ok bool) {
+			v := 0.0
+			if ok {
+				v = 1
+			}
+			p.metrics.set("bstore_provider_engine_ask_ok", v)
+		}
+		p.spawn(a.Run)
+	}
 	// Everything already held or waiting is looked at again.
 	p.mu.Lock()
 	var roots []string
