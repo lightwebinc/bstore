@@ -674,6 +674,8 @@ GorillaPool's public arcade.
 | `trusted_proxies` | none | CIDRs of proxies whose `X-Forwarded-For` names the client, for every per-address budget |
 | `feeders` | none | CIDRs of the plane's local feeders: the overlay bridge that hands this provider what the plane delivers. A submission whose connection comes from one skips the per-address submission budgets; the bounds on bodies held and processed still apply |
 | `feed_listen` | none | a loopback address where the local bridge submits: `POST /submit` and `/healthz` only, plain HTTP, no per-address budgets, the way a bridge reaches its engine. Every other route stays on `listen`. A non-loopback address is refused |
+| `engine_topics` | none | the base URL of the overlay engine on the same host (`http://127.0.0.1:8280`). The provider asks it to carry every bucket's records and blob topics (`POST /admin/topics`, one ask for all buckets, id `bstore-provider`), so the engine's bridge asks the delivery edge for them and no operator lists them. It asks again at half the lifetime, and sooner after a failure to reach the engine. A refusal (the engine does not allow a key, an item, the lifetime, or one more ask) refuses every bucket, since they share the ask: it is logged as `ENGINE REFUSED` on every try, at the refresh interval, and `bstore_provider_engine_ask_ok` stays 0. It does not withdraw on stop: a restart asks again within the lifetime, and an ask from a provider that stays stopped lapses. The engine must allow `BSTORE_BUCKETS` in `OVERLAY_TOPICS_DYNAMIC_KEYS` |
+| `engine_topics_ttl_seconds` | 600 | that ask's lifetime; the engine bounds it (`OVERLAY_TOPICS_DYNAMIC_MAX_TTL_SECONDS`) |
 | `metrics_listen` | none | where `/metrics` is served; it is served nowhere else |
 | `pprof_listen` | none | where Go's `net/http/pprof` is served; a loopback address, since the profiles are the process's internals |
 | `accept_threshold_sats` | 25000000 | the largest payment taken on the network's acceptance; above it, held until mined; 0 holds every payment |
@@ -761,7 +763,11 @@ overlay-bridge ... \
 ```
 
 with `feed_listen: 127.0.0.1:8096` in the provider's configuration (or the
-bridge's address in `feeders`, when it reaches `listen`). A bridge whose facade a writer
+bridge's address in `feeders`, when it reaches `listen`). With
+`engine_topics: http://127.0.0.1:8280` the provider asks the engine to carry
+its buckets' topics, and a bridge that follows the engine
+(`-topics-from engine`) needs no `-topics` list: the edge delivers a bucket
+because a provider on the host takes it. A bridge whose facade a writer
 publishes through routes the blob topic to this provider too, so the
 provider's check is what the facade publishes on: the writer's one publish
 reaches every provider subscribed to the blob topic, and the provider beside
@@ -785,6 +791,7 @@ the proxy's address to every per-address budget. `/healthz` answers `ok`.
 the row's sync, `slot` the wait for a send slot, `ancestors` unmined inputs put on the
 leg, `submit` the leg's answer), `bstore_provider_publish_seconds{host}` (each engine
 publish),
+`bstore_provider_engine_ask_ok` (1 while the engine carries the buckets' topics, with `engine_topics`),
 `bstore_provider_renewals_total`, `bstore_provider_payouts_total`,
 `bstore_provider_objects_served_total`, `bstore_provider_damaged_total`,
 `bstore_provider_evicted_total`, `bstore_provider_refused_total`,
