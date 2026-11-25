@@ -221,6 +221,7 @@ bstore challenge albums/photo.jpg -provider 02... -c 30
 | `backend` | the hold-backend interface (frozen) and the native content-addressed store |
 | `chaincfg` | the chain view, header source, settlement leg and fee policy every configuration names (a provider's from `provider.Config.Spec`), and importing a payment (BEEF or txid) to a fund address into a pool; exported for a module that embeds a provider |
 | `auth104` | the server side of BRC-103/104 mutual authentication, with its hardening |
+| `gateway` | the S3 gateway run inside another program and read by a call ([s3.md](s3.md), "Inside another program") |
 | `internal/publish` | the publisher: staging, carriers, delivery, the outbox, the race, settlement, reclaim, paid calls |
 | `internal/anchor` | the owner's tooling: chain creation and anchoring |
 | `internal/reader` | the verified reader |
