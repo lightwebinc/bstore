@@ -1,6 +1,7 @@
 package reader
 
 import (
+	"crypto/sha256"
 	"testing"
 	"time"
 )
@@ -35,6 +36,18 @@ func TestOrderSpreadsObjectsAcrossAdvertisers(t *testing.T) {
 	for _, a := range []string{"a", "b", "c"} {
 		if first[a] != 100 {
 			t.Errorf("advertiser %s was first for %d of 300 objects, want 100", a, first[a])
+		}
+	}
+	// Real object hashes spread too: none of three advertisers is left out
+	// or takes most of 3,000 objects.
+	real := map[string]int{}
+	for i := 0; i < 3000; i++ {
+		h := sha256.Sum256([]byte{byte(i), byte(i >> 8), 'x'})
+		real[b.order(src, h, now)[0].Advertiser]++
+	}
+	for _, a := range []string{"a", "b", "c"} {
+		if real[a] < 850 || real[a] > 1150 {
+			t.Errorf("advertiser %s was first for %d of 3,000 hashed objects, want about 1,000", a, real[a])
 		}
 	}
 	b.mark("b", now)

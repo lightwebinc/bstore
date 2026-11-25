@@ -40,7 +40,8 @@ const maxAdPages = 4
 
 // Sources are root's advertisers as the hosts answer them, one per
 // advertiser (its latest expiry), latest expiry first. A host's answer is
-// kept for a short while.
+// kept for a short while. This is the order of the list, not the order a
+// fetch asks in (badSources.order).
 func (r *Reader) Sources(ctx context.Context, bucket string, root [32]byte) []Source {
 	s, _ := r.sources(ctx, bucket, root)
 	return s
@@ -632,6 +633,8 @@ func (b *badSources) mark(adv string, now time.Time) {
 // large object is read from every advertiser at once, over as many
 // connections, where asking the first of the list for everything read it
 // all from one.
+// Expiry does not order the asking: every source is unexpired, and one
+// that expires or fails mid-read costs one ask before it goes last.
 func (b *badSources) order(src []Source, h [32]byte, now time.Time) []Source {
 	b.mu.Lock()
 	defer b.mu.Unlock()
