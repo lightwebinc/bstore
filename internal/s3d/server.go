@@ -45,6 +45,10 @@ type Options struct {
 	// LockWait is how long an identity another process has open (a
 	// command run against it) is waited for at start.
 	LockWait time.Duration
+	// NoListen starts the gateway without its S3 listener: its only
+	// reader is the program it runs in (ReadObject). The metrics and
+	// profile listeners are served as configured.
+	NoListen bool
 }
 
 // Server is one running gateway.
@@ -297,34 +301,10 @@ func (s *Server) Addr() string {
 func (s *Server) Start(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	s.cancel = cancel
-	ln, err := net.Listen("tcp", s.cfg.Listen)
-	if err != nil {
+	if err := s.listen(ctx); err != nil {
 		cancel()
 		return err
 	}
-	s.ln = ln
-	// No ReadTimeout or WriteTimeout: a body or an object may be large.
-	// Each read and write is held to the idle bound instead (idleConn).
-	s.srv = &http.Server{Handler: s, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute,
-		MaxHeaderBytes: 64 << 10, BaseContext: func(net.Listener) context.Context { return ctx },
-		ErrorLog: log.New(logWriter{s.opts.Logf}, "", 0)}
-	if s.cfg.TLSCert != "" {
-		cert, err := tls.LoadX509KeyPair(s.cfg.TLSCert, s.cfg.TLSKey)
-		if err != nil {
-			cancel()
-			ln.Close()
-			return err
-		}
-		s.srv.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
-		ln = tls.NewListener(ln, s.srv.TLSConfig)
-	}
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		if err := s.srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			s.opts.Logf("s3d: %v", err)
-		}
-	}()
 	if s.cfg.MetricsListen != "" {
 		mux := http.NewServeMux()
 		mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
@@ -366,6 +346,40 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	s.wg.Add(1)
 	go s.background(ctx)
+	return nil
+}
+
+// listen serves S3, unless the gateway was opened without its listener.
+func (s *Server) listen(ctx context.Context) error {
+	if s.opts.NoListen {
+		return nil
+	}
+	ln, err := net.Listen("tcp", s.cfg.Listen)
+	if err != nil {
+		return err
+	}
+	s.ln = ln
+	// No ReadTimeout or WriteTimeout: a body or an object may be large.
+	// Each read and write is held to the idle bound instead (idleConn).
+	s.srv = &http.Server{Handler: s, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute,
+		MaxHeaderBytes: 64 << 10, BaseContext: func(net.Listener) context.Context { return ctx },
+		ErrorLog: log.New(logWriter{s.opts.Logf}, "", 0)}
+	if s.cfg.TLSCert != "" {
+		cert, err := tls.LoadX509KeyPair(s.cfg.TLSCert, s.cfg.TLSKey)
+		if err != nil {
+			ln.Close()
+			return err
+		}
+		s.srv.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
+		ln = tls.NewListener(ln, s.srv.TLSConfig)
+	}
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		if err := s.srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			s.opts.Logf("s3d: %v", err)
+		}
+	}()
 	return nil
 }
 
