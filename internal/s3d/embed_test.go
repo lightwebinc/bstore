@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/lightwebinc/bstore/internal/reader"
 	"github.com/lightwebinc/bstore/storerec"
 )
 
@@ -87,5 +88,32 @@ func TestReadObjectUnknownBucketAndBadKey(t *testing.T) {
 	}
 	if a.Close() != nil {
 		t.Fatal("close")
+	}
+}
+
+// A reader that goes away is its own failure, not the gateway shedding
+// load; a second Close, or two at once, gives the slot back once.
+func TestAnswerCloseOnceAndErrorMapping(t *testing.T) {
+	s := &Server{reads: make(chan struct{}, 2), metrics: newMetrics()}
+	s.reads <- struct{}{}
+	a := &ObjectAnswer{s: s, release: func() { <-s.reads }}
+	done := make(chan struct{})
+	for range 2 {
+		go func() { a.Close(); done <- struct{}{} }()
+	}
+	<-done
+	<-done
+	a.Close()
+	if len(s.reads) != 0 {
+		t.Fatal("the slot did not come back")
+	}
+	if err := callError(readError(errors.New("no host")), nil); !errors.Is(err, ErrShed) {
+		t.Errorf("nothing proves the key: %v, want ErrShed", err)
+	}
+	if err := callError(readError(reader.ErrContentHash), reader.ErrContentHash); !errors.Is(err, ErrRefused) || errors.Is(err, ErrShed) {
+		t.Errorf("a content hash that fails: %v, want ErrRefused", err)
+	}
+	if err := callError(errNoSuchBucket, nil); errors.Is(err, ErrShed) || errors.Is(err, ErrRefused) {
+		t.Errorf("another error took a sentinel: %v", err)
 	}
 }

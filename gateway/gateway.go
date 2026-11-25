@@ -26,6 +26,10 @@ var ErrShed = s3d.ErrShed
 // ErrNoBucket is a read of a bucket the configuration does not name.
 var ErrNoBucket = s3d.ErrNoBucket
 
+// ErrRefused is an object that fails its checks (S3 answers 500): the
+// owner's or the writer's fault, and trying again does not help.
+var ErrRefused = s3d.ErrRefused
+
 // Answer is a read's answer; see Gateway.Read.
 type Answer = s3d.ObjectAnswer
 
@@ -50,7 +54,9 @@ type Gateway struct {
 
 // Open loads the gateway configuration at path, opens the gateway and
 // starts its background work. The identities it names must exist
-// (`bstore s3d init`).
+// (`bstore s3d init`). ctx is the gateway's life, not the opening's: when
+// it ends the background work stops, as it does at Close. Pass the
+// program's own context, never one with a start-up timeout.
 func Open(ctx context.Context, path string, o Options) (*Gateway, error) {
 	cfg, err := s3d.LoadConfig(path)
 	if err != nil {
@@ -72,19 +78,27 @@ func (g *Gateway) Buckets() []string { return append([]string(nil), g.buckets...
 
 // Read is GetObject, or HeadObject when head, of key in the bucket with
 // the S3 name bucket. cond carries Range and the conditional headers
-// (If-Match, If-None-Match, If-Modified-Since, If-Unmodified-Since), or is
-// nil.
+// (If-Match, If-None-Match, If-Modified-Since, If-Unmodified-Since) under
+// their canonical names, as a request's own Header has them, or is nil.
+// ctx is the read's, and bounds WriteTo too.
 //
-// The answer's Status is 200, 206, 304, 404 (the key is proven absent),
-// 412 or 416, and its Header carries what an S3 answer of that status
-// would: Content-Type, Content-Length, ETag, Last-Modified, Accept-Ranges,
-// Content-Range. A 200 or 206 of a read that was not a head has a body:
-// WriteTo writes it once, fetching and checking as it goes, and an error
-// from it before its first byte means nothing was written. Close must be
-// called on every answer.
+// The answer's Status is 200, 206, 304, 404 (the key is proven absent, or
+// no object can have it), 412 or 416. Its Header carries Content-Type,
+// Content-Length, ETag, Last-Modified, Accept-Ranges and Content-Range as
+// that status has them; user metadata and the S3 checksum headers are not
+// given, and the closure root is the answer's Root. A 200 or 206 of a
+// read that was not a head has a body and holds one of the gateway's read
+// slots (limits.reads) until it is closed: WriteTo writes the body once,
+// fetching and checking as it goes, and an error from it before its first
+// byte means nothing was written. Close every answer, written or not: an
+// answer with a body that is never closed keeps its slot for good.
 //
-// The error is ErrShed for a read refused for now, ErrNoBucket for a
-// bucket the configuration does not name.
+// The error is ErrShed for a read refused for now (a bound, or nothing
+// proves the key or serves its bytes at the moment: never a 404),
+// ErrRefused for an object that fails its checks, ErrNoBucket for a bucket
+// the configuration does not name. Reads past limits.reads or
+// limits.lookups are refused at once, not queued: bound what is in flight
+// on the caller's side to wait instead.
 func (g *Gateway) Read(ctx context.Context, bucket, key string, head bool, cond http.Header) (*Answer, error) {
 	return g.s.ReadObject(ctx, bucket, key, head, cond)
 }

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"sync"
 
 	"github.com/lightwebinc/bstore/internal/reader"
 	"github.com/lightwebinc/bstore/storerec"
@@ -20,14 +21,23 @@ var ErrShed = errors.New("gateway: the read was refused for now")
 // ErrNoBucket is a read of a bucket the configuration does not name.
 var ErrNoBucket = errors.New("gateway: no such bucket")
 
+// ErrRefused is an object that fails its checks: what verifies names the
+// owner or the writer at fault, and trying again does not help. S3 answers
+// it 500.
+var ErrRefused = errors.New("gateway: the object was refused")
+
 // ObjectAnswer is what a read answers to a caller in this process: what
 // GetObject or HeadObject would have sent, without the HTTP exchange.
 //
 // Status is 200, 206, 304, 404, 412 or 416. Header carries the object's
 // Content-Type, Content-Length, ETag, Last-Modified, Accept-Ranges and
-// Content-Range as the status has them. A 200 or 206 of a read that was
-// not a head has a body: WriteTo writes it, once. Close gives the read's
-// slot back and must be called.
+// Content-Range as the status has them; a 412 carries the validators too.
+// User metadata and the S3 checksum headers are not given. A 200 or 206 of
+// a read that was not a head has a body: WriteTo writes it, once. Such an
+// answer holds one of the gateway's read slots (limits.reads) until Close,
+// which must be called, written or not; closing any other answer is
+// harmless. WriteTo is called by one goroutine; Close may be called again
+// and from another.
 type ObjectAnswer struct {
 	Status int
 	Header http.Header
@@ -38,6 +48,7 @@ type ObjectAnswer struct {
 	obj     *reader.Object
 	off, n  uint64
 	release func()
+	once    sync.Once
 	wrote   bool
 }
 
@@ -45,7 +56,8 @@ type ObjectAnswer struct {
 // fetched whole and held to its hash before a byte of it is written, and a
 // whole object is held to its content hash before its last blob is (spec
 // section 15.2). An error before the first byte reached w means nothing
-// was sent.
+// was sent. An error of w itself, or of the read's context, comes back as
+// it is; one of the object's is ErrShed or ErrRefused.
 func (a *ObjectAnswer) WriteTo(w io.Writer) (int64, error) {
 	if a.obj == nil || a.n == 0 || a.wrote {
 		return 0, nil
@@ -53,10 +65,14 @@ func (a *ObjectAnswer) WriteTo(w io.Writer) (int64, error) {
 	a.wrote = true
 	cw := &countWriter{w: w}
 	if err := a.obj.WriteRange(a.ctx, cw, a.off, a.n); err != nil {
-		if e := readError(err); e.Status == http.StatusServiceUnavailable {
-			return cw.n, fmt.Errorf("%w: %s (%w)", ErrShed, e.Message, err)
+		switch {
+		case cw.err != nil:
+			// The reader's side failed, not the gateway's.
+			return cw.n, cw.err
+		case a.ctx.Err() != nil:
+			return cw.n, a.ctx.Err()
 		}
-		return cw.n, err
+		return cw.n, callError(readError(err), err)
 	}
 	a.s.metrics.add("bstore_s3d_bytes_out_total", int64(a.n))
 	return cw.n, nil
@@ -64,21 +80,42 @@ func (a *ObjectAnswer) WriteTo(w io.Writer) (int64, error) {
 
 // Close ends the read.
 func (a *ObjectAnswer) Close() error {
-	if a.release != nil {
-		a.release()
-		a.release = nil
-	}
+	a.once.Do(func() {
+		if a.release != nil {
+			a.release()
+		}
+	})
 	return nil
 }
 
+// callError is an S3 error as a caller in this process is given it.
+func callError(e *s3Error, cause error) error {
+	sentinel := ErrShed
+	switch {
+	case e.Status == http.StatusInternalServerError:
+		sentinel = ErrRefused
+	case e.Status != http.StatusServiceUnavailable:
+		return errors.New("gateway: " + e.Error())
+	}
+	if cause != nil {
+		return fmt.Errorf("%w: %s (%w)", sentinel, e.Message, cause)
+	}
+	return fmt.Errorf("%w: %s", sentinel, e.Message)
+}
+
+// countWriter counts what reached w and keeps w's own failure.
 type countWriter struct {
-	w io.Writer
-	n int64
+	w   io.Writer
+	n   int64
+	err error
 }
 
 func (c *countWriter) Write(p []byte) (int, error) {
 	n, err := c.w.Write(p)
 	c.n += int64(n)
+	if err != nil {
+		c.err = err
+	}
 	return n, err
 }
 
@@ -86,9 +123,14 @@ func (c *countWriter) Write(p []byte) (int, error) {
 // process: the key is proven and the object opened exactly as for an S3
 // request, with no signature, no access key and no request rate bound,
 // which are the S3 face's. bucket is the bucket's S3 name. cond carries
-// Range and the conditional headers, or is nil.
+// Range and the conditional headers under their canonical names (a
+// request's own Header does), or is nil. ctx is the read's: it bounds the
+// proof, the opening and WriteTo.
 //
-// A key proven absent answers 404. A read refused for now is ErrShed.
+// A key proven absent answers 404, and so does a key no object can have
+// (S3 answers that one 400). No failure to prove or fetch is ever a 404:
+// a read refused for now is ErrShed, an object that fails its checks
+// ErrRefused.
 func (s *Server) ReadObject(ctx context.Context, bucket, key string, head bool, cond http.Header) (*ObjectAnswer, error) {
 	op := "GetObject"
 	if head {
@@ -102,13 +144,10 @@ func (s *Server) ReadObject(ctx context.Context, bucket, key string, head bool, 
 			return nil, fmt.Errorf("%w: %s", ErrNoBucket, bucket)
 		case e.Status == http.StatusNotFound:
 			return &ObjectAnswer{Status: http.StatusNotFound, Header: http.Header{}}, nil
-		case e.Status == http.StatusServiceUnavailable:
-			if e.Code == "SlowDown" {
-				s.metrics.add(fmt.Sprintf("bstore_s3d_slowdown_total{reason=%q}", slowReason(e)), 1)
-			}
-			return nil, fmt.Errorf("%w: %s", ErrShed, e.Message)
+		case e.Code == "SlowDown":
+			s.metrics.add(fmt.Sprintf("bstore_s3d_slowdown_total{reason=%q}", slowReason(e)), 1)
 		}
-		return nil, errors.New("gateway: " + e.Error())
+		return nil, callError(e, nil)
 	}
 	s.metrics.request(op, a.Status)
 	return a, nil
