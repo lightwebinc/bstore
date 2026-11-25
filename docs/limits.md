@@ -342,7 +342,8 @@ not do, stated so that nobody finds it by accident.
 17. **The chain view's "unspent" is trusted.** With no node, transactions
     and proofs from WhatsOnChain are checked, but its word that an output
     is unspent, or that a transaction is not known or not mined, is
-    taken as given. A node of your own (`chain asset:<url>`) removes
+    taken as given. A read goes on while the next token waits for its
+    block on that word too (known, not mined: row C32). A node of your own (`chain asset:<url>`) removes
     that trust. Its free tier allows 3 requests a second: a busy provider
     or gateway needs an API key (`woc_key`) or a node.
 
