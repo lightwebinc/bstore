@@ -3,6 +3,7 @@ package reader
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -300,7 +301,8 @@ func (o *Object) Object(ctx context.Context, h [32]byte) ([]byte, error) {
 }
 
 // fetch returns the object named h, at most max bytes, from the local copy
-// or the first advertiser that serves it as its hash names it. An
+// or the first advertiser, in the order h asks them, that serves it as its
+// hash names it. An
 // advertiser serving other bytes is named in the log and skipped.
 func (o *Object) fetch(ctx context.Context, h [32]byte, max uint64) ([]byte, error) {
 	if o.local != nil {
@@ -310,7 +312,7 @@ func (o *Object) fetch(ctx context.Context, h [32]byte, max uint64) ([]byte, err
 		}
 	}
 	var tried int
-	for _, s := range o.r.bad.order(o.sources, o.r.now()) {
+	for _, s := range o.r.bad.order(o.sources, h, o.r.now()) {
 		if tried == maxTries {
 			break
 		}
@@ -623,7 +625,14 @@ func (b *badSources) mark(adv string, now time.Time) {
 	b.m[adv] = now
 }
 
-func (b *badSources) order(src []Source, now time.Time) []Source {
+// order is the advertisers in the order object h asks them: the good ones
+// first, beginning at the one h's own bytes pick and going round, then
+// those that failed lately. An object always begins at the same
+// advertiser, and the objects of a closure begin at different ones, so a
+// large object is read from every advertiser at once, over as many
+// connections, where asking the first of the list for everything read it
+// all from one.
+func (b *badSources) order(src []Source, h [32]byte, now time.Time) []Source {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	var good, bad []Source
@@ -634,5 +643,10 @@ func (b *badSources) order(src []Source, now time.Time) []Source {
 			good = append(good, s)
 		}
 	}
-	return append(good, bad...)
+	out := make([]Source, 0, len(src))
+	if n := uint64(len(good)); n > 0 {
+		at := binary.BigEndian.Uint64(h[:8]) % n
+		out = append(append(out, good[at:]...), good[:at]...)
+	}
+	return append(out, bad...)
 }
