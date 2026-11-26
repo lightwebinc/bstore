@@ -566,24 +566,6 @@ func TestAnchorMinedUndelivered(t *testing.T) {
 	}
 }
 
-// Two runs on one identity's chains: the second is refused.
-func TestStoreLock(t *testing.T) {
-	s := OpenStore(t.TempDir())
-	unlock, err := s.Lock()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Lock(); err == nil {
-		t.Fatal("a second lock was given")
-	}
-	unlock()
-	again, err := s.Lock()
-	if err != nil {
-		t.Fatal(err)
-	}
-	again()
-}
-
 // A hostile unanchored answer: another writer's entry, an entry for
 // another chain, bytes that are no transaction and a page out of order.
 // The host is named, nothing of it is applied, and the honest entries

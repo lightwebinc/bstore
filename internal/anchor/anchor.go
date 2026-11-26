@@ -13,7 +13,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/bsv-blockchain/go-sdk/script"
@@ -87,26 +86,6 @@ type Store struct {
 
 // OpenStore opens dir's chains file.
 func OpenStore(dir string) *Store { return &Store{path: filepath.Join(dir, "chains.json")} }
-
-// Lock takes the identity's chain records for one run: a run loads a
-// chain, signs on what it loaded and saves, so two runs at once could sign
-// two tokens on one output or lose a pending token's record. It does not
-// wait: a second run is told, and the first is left alone. The returned
-// function releases the lock.
-func (s *Store) Lock() (func(), error) {
-	f, err := os.OpenFile(filepath.Join(filepath.Dir(s.path), "chains.lock"), os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		f.Close()
-		return nil, fmt.Errorf("anchor: another bstore run is working on this identity's chains; run one at a time")
-	}
-	return func() {
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		f.Close()
-	}, nil
-}
 
 // Load reads every chain.
 func (s *Store) Load() ([]*Chain, error) {
