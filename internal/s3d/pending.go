@@ -67,9 +67,11 @@ type logLine struct {
 
 // state is the gateway's state: the tokens held and the pending index.
 type state struct {
-	dir  string
-	now  func() time.Time
-	mu   sync.Mutex
+	dir string
+	now func() time.Time
+	// mu is taken shared by the two lookups every read makes (Held, newest)
+	// and exclusively by everything that changes the state.
+	mu   sync.RWMutex
 	held map[string]storerec.Held
 	// byKey indexes pending entries: bucket -> key -> entries; byC by
 	// commitment.
@@ -274,8 +276,8 @@ func (s *state) compactLocked() error {
 
 // Held and SetHeld are the reader's HeldStore.
 func (s *state) Held(chain string) *storerec.Held {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	h, ok := s.held[chain]
 	if !ok {
 		return nil
@@ -371,8 +373,8 @@ func (s *state) named(t *storerec.Bucket) {
 
 // newest is the newest pending entry for key, or nil.
 func (s *state) newest(bucket, key string) *pendingEntry {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	var best *pendingEntry
 	for _, p := range s.byKey[bucket][key] {
 		if best == nil || newer(p.Created, p.C, best.Created, best.C) {
