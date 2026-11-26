@@ -67,8 +67,8 @@ type logLine struct {
 
 // state is the gateway's state: the tokens held and the pending index.
 type state struct {
-	dir  string
-	now  func() time.Time
+	dir string
+	now func() time.Time
 	// mu is taken shared by the two lookups every read makes (Held, newest)
 	// and exclusively by everything that changes the state.
 	mu   sync.RWMutex
