@@ -152,8 +152,8 @@ taken the token: it stays recorded, and the next anchor (with or without
 -no-wait) publishes it once it is mined, then goes on with whatever is
 unanchored. Readers see the change when the token is published, not
 before. While a token is unmined a run stops at it: -add-writer and
--remove-writer are refused until it is mined (exit 3). Run one anchor at a
-time for an identity.`
+-remove-writer are refused until it is mined (exit 3). One process at a
+time uses an identity's home: a second anchor is refused while one runs.`
 
 func cmdAnchor(ctx context.Context, g *global, args []string) error {
 	fs := g.flagSet("anchor", anchorHelp)
