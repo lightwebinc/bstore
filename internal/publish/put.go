@@ -425,14 +425,16 @@ func (p *Publisher) mintLater(ctx context.Context, it *outItem, c Closure) ([]by
 		return nil, err
 	}
 	d, t0 := p.cfg.Delivery, time.Now()
-	data, err := p.readPiece(ctx, c, h)
+	data, pooled, err := p.readPiece(ctx, c, h)
 	if err != nil {
 		return nil, fmt.Errorf("object %x: %w", h[:6], err)
 	}
 	d.observe(pieceStage("read"), t0)
 	t0 = time.Now()
 	tx, beef, at, err := p.mintPiece(ctx, it.Bucket, root, data, tree, it.Vout)
-	putObject(data)
+	if pooled {
+		putObject(data)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -452,17 +454,24 @@ func (p *Publisher) mintLater(ctx context.Context, it *outItem, c Closure) ([]by
 }
 
 // readPiece is one object of a closure, in a buffer from the pool when
-// the closure is the local store (putObject gives it back).
-func (p *Publisher) readPiece(ctx context.Context, c Closure, h [32]byte) ([]byte, error) {
+// the closure is the local store; pooled says so, and only then does
+// putObject give it back. Any other closure's bytes may be shared (a
+// reader's, from the store's cache) and never go to the pool.
+func (p *Publisher) readPiece(ctx context.Context, c Closure, h [32]byte) ([]byte, bool, error) {
+	var b []byte
+	var err error
 	switch sc := c.(type) {
 	case nil:
 		// The outbox's later mint of a put's piece: held to its hash unless
 		// the put's stage, or the outbox's fresh pin, still marks it.
-		return p.cfg.Store.readInto(h, true, getBuf(&objectBufs))
+		b, err = p.cfg.Store.readInto(h, true, getBuf(&objectBufs))
 	case StoreClosure:
-		return sc.Store.readInto(h, sc.Staged, getBuf(&objectBufs))
+		b, err = sc.Store.readInto(h, sc.Staged, getBuf(&objectBufs))
+	default:
+		b, err = c.Object(ctx, h)
+		return b, false, err
 	}
-	return c.Object(ctx, h)
+	return b, err == nil, err
 }
 
 // The buffers a piece passes through are pooled: a 4 MiB object and its

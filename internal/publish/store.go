@@ -52,6 +52,12 @@ type Store struct {
 	// grown is the bytes written into the store since the last Trim began
 	// (Grown): what a caller watches to trim before its usual time.
 	grown atomic.Int64
+	// cache keeps small objects Get held to their hash (blobCache).
+	// forgets counts the objects whose file went (forgetLocked): a Get
+	// whose read began before one adds nothing, so an object removed
+	// while it was being read is not cached after its removal.
+	cache   *blobCache
+	forgets atomic.Uint64
 }
 
 // maxLeavesBytes bounds the segment leaves a store keeps (keepLeaves): 128
@@ -87,7 +93,7 @@ func OpenStore(dir string) (*Store, error) {
 		}
 	}
 	return &Store{dir: dir, busy: map[[32]byte]int{}, pins: map[[32]byte]int{}, staged: map[[32]byte]int{}, fresh: map[[32]byte]int{},
-		leaves: map[[32]byte][]byte{}}, nil
+		leaves: map[[32]byte][]byte{}, cache: newBlobCache(cacheBytes)}, nil
 }
 
 func (s *Store) objectPath(h [32]byte) string {
@@ -236,6 +242,8 @@ func (s *Store) remove(h [32]byte) int64 {
 // marks them again; a part linked in does not) are held to their hash. The
 // caller holds mu.
 func (s *Store) forgetLocked(h [32]byte) {
+	s.forgets.Add(1)
+	s.cache.forget(h)
 	delete(s.fresh, h)
 	delete(s.staged, h)
 	s.deleteLeavesLocked(h)
@@ -251,8 +259,14 @@ func (s *Store) drop(h [32]byte) {
 }
 
 // Get reads an object and holds it to its hash: bytes that went bad on disk
-// are never returned.
+// are never returned. A small object comes from the cache once read (bytes
+// held to their hash then); the bytes returned are shared, and a caller
+// never changes them.
 func (s *Store) Get(h [32]byte) ([]byte, error) {
+	if b := s.cache.get(h); b != nil {
+		return b, nil
+	}
+	gen := s.forgets.Load()
 	b, err := os.ReadFile(s.objectPath(h))
 	if err != nil {
 		return nil, err
@@ -261,6 +275,11 @@ func (s *Store) Get(h [32]byte) ([]byte, error) {
 		s.drop(h)
 		return nil, fmt.Errorf("publish: stored object %x does not hash to its name", h[:6])
 	}
+	s.mu.Lock()
+	if s.forgets.Load() == gen {
+		s.cache.add(h, b)
+	}
+	s.mu.Unlock()
 	return b, nil
 }
 
