@@ -51,7 +51,9 @@ type fakeHost struct {
 	// unanchored, when set, answers the question in place of the honest
 	// answer.
 	unanchored func(writer, after string, honest []fakeEntry) []lookup.Output
-	srv        *httptest.Server
+	// down makes submit fail: the host takes nothing.
+	down atomic.Bool
+	srv  *httptest.Server
 }
 
 type fakeEntry struct {
@@ -72,6 +74,10 @@ func newFakeHost(t *testing.T, chain *testchain.Chain) *fakeHost {
 }
 
 func (h *fakeHost) submit(w http.ResponseWriter, r *http.Request) {
+	if h.down.Load() {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+		return
+	}
 	beef, _ := io.ReadAll(r.Body)
 	topic := r.Header.Get("x-topics")
 	a, err := storerec.Admit(r.Context(), beef, nil, storerec.Host{Bucket: tBucket, Headers: h.headers})
@@ -526,6 +532,56 @@ func TestAnchorNoWait(t *testing.T) {
 	if len(recs) != len(before)+2 || f.Map["k1"] != cOf(t, ids[0]) || f.Map["k2"] != cOf(t, ids[1]) || f.Map["k3"] != cOf(t, more[0]) {
 		t.Fatalf("the chain has %d token(s) and map %v", len(recs), f.Map)
 	}
+}
+
+// A token that is mined while no host takes it: the next runs do not
+// build on the older token the hosts still show (the reader finds that
+// token spent and the run is incomplete).
+func TestAnchorMinedUndelivered(t *testing.T) {
+	r := newRig(t)
+	r.mint([]spec{{"k1", storerec.KindPut, 1, nil}}, true)
+	_, before := r.fold()
+	_, _, late := r.mintBEEF([]spec{{"k2", storerec.KindPut, 2, nil}}, false)
+	r.chain.SetHold(true)
+	rep, err := r.tool.Anchor(r.ctx, r.c, Options{NoWait: true})
+	if err != nil || rep.Sent == "" {
+		t.Fatalf("%+v, %v", rep, err)
+	}
+	if _, err := r.writer.Submit(r.ctx, r.host.srv.URL, storerec.RecordsTopic(tBucket), late[0]); err != nil {
+		t.Fatal(err)
+	}
+	r.chain.SetHold(false)
+	r.chain.Mine()
+	r.host.down.Store(true)
+	for i := 0; i < 2; i++ {
+		got, err := r.tool.Anchor(r.ctx, r.c, Options{})
+		if !errors.Is(err, ErrIncomplete) || (i > 0 && !strings.Contains(err.Error(), "a later token exists")) || r.c.Pending != nil {
+			t.Fatalf("run %d: %+v, %v, pending %+v", i, got, err, r.c.Pending)
+		}
+	}
+	r.host.mu.Lock()
+	defer r.host.mu.Unlock()
+	if len(r.host.tokens) != len(before) {
+		t.Fatalf("the host has %d token(s), want %d", len(r.host.tokens), len(before))
+	}
+}
+
+// Two runs on one identity's chains: the second is refused.
+func TestStoreLock(t *testing.T) {
+	s := OpenStore(t.TempDir())
+	unlock, err := s.Lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Lock(); err == nil {
+		t.Fatal("a second lock was given")
+	}
+	unlock()
+	again, err := s.Lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	again()
 }
 
 // A hostile unanchored answer: another writer's entry, an entry for

@@ -92,6 +92,11 @@ func cmdBucket(ctx context.Context, g *global, args []string) error {
 			return usage("bucket name %q: 1 to 25 lowercase letters and single underscores, starting and ending with a letter", name)
 		}
 	}
+	unlock, err := h.tool.Store.Lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	c, err := h.tool.New(ctx, bucket, writers)
 	if c != nil && c.ID != "" {
 		if aerr := h.addBucket(BucketRef{Bucket: c.Bucket, Owner: h.pub.IdentityHex(), ID: c.ID}); aerr != nil && err == nil {
@@ -152,8 +157,8 @@ taken the token: it stays recorded, and the next anchor (with or without
 -no-wait) publishes it once it is mined, then goes on with whatever is
 unanchored. Readers see the change when the token is published, not
 before. While a token is unmined a run stops at it: -add-writer and
--remove-writer are refused until it is mined (exit 3). Run one anchor at a
-time for an identity.`
+-remove-writer are refused until it is mined (exit 3). One anchor runs at
+a time for an identity; a second is refused while the first works.`
 
 func cmdAnchor(ctx context.Context, g *global, args []string) error {
 	fs := g.flagSet("anchor", anchorHelp)
@@ -179,6 +184,11 @@ func cmdAnchor(ctx context.Context, g *global, args []string) error {
 	if hex.EncodeToString(ch.Owner) != h.pub.IdentityHex() {
 		return usage("bucket %s is owned by %s, not this identity: only its owner anchors it", ch.Bucket, short(hex.EncodeToString(ch.Owner)))
 	}
+	unlock, err := h.tool.Store.Lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	c, err := h.tool.Store.Find(ch.Bucket, hex.EncodeToString(ch.ID[:]))
 	if err != nil {
 		return usage("%v", err)

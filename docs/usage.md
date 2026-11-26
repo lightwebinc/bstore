@@ -170,7 +170,8 @@ identity; the next `anchor`, with or without the flag, publishes it once it
 is mined and then anchors whatever is new. Readers see the change when the
 token is published. An owner of several buckets can hand a token for each
 to the same block this way and finish them all after it. Run them one
-after another, not in parallel: an identity's chain records are one file.
+after another: an identity's chain records are one file, and a second
+`anchor` or `bucket new` started while one works is refused.
 While a token is unmined, a run sends the same bytes again and stops there,
 so `-add-writer` and `-remove-writer` are refused until it is mined, and a
 batch that needs several tokens takes one run and one block for each:
