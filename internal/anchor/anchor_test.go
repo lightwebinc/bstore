@@ -460,6 +460,52 @@ func TestAnchorFoldsOnceAndNeverTwice(t *testing.T) {
 	}
 }
 
+// A run asked not to wait returns once the settlement leg has the token,
+// with no block: the token stays recorded, the hosts have nothing new, and
+// a second such run sends nothing more. Once the token is mined the next
+// run publishes it and finds nothing left to anchor.
+func TestAnchorNoWait(t *testing.T) {
+	r := newRig(t)
+	_, ids := r.mint([]spec{{"k1", storerec.KindPut, 1, nil}, {"k2", storerec.KindPut, 2, nil}}, true)
+	_, before := r.fold()
+	r.chain.SetHold(true)
+	rep, err := r.tool.Anchor(r.ctx, r.c, Options{NoWait: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Sent == "" || len(rep.Tokens) != 0 || rep.Applied != 2 || r.c.Pending == nil || r.c.Pending.Txid != rep.Sent {
+		t.Fatalf("report %+v, pending %+v", rep, r.c.Pending)
+	}
+	if r.chain.Mined(rep.Sent) || r.chain.Tx(rep.Sent) == nil {
+		t.Fatalf("the token should be with the node and unmined")
+	}
+	held := func() int {
+		r.host.mu.Lock()
+		defer r.host.mu.Unlock()
+		return len(r.host.tokens)
+	}
+	if held() != len(before) {
+		t.Fatalf("the host has %d token(s), want %d: an unmined token was published", held(), len(before))
+	}
+	again, err := r.tool.Anchor(r.ctx, r.c, Options{NoWait: true})
+	if err != nil || again.Sent != rep.Sent || len(again.Tokens) != 0 {
+		t.Fatalf("second run: %+v, %v", again, err)
+	}
+	r.chain.SetHold(false)
+	r.chain.Mine()
+	last, err := r.tool.Anchor(r.ctx, r.c, Options{NoWait: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last.Sent != "" || len(last.Tokens) != 0 || r.c.Pending != nil {
+		t.Fatalf("after the block: %+v, pending %+v", last, r.c.Pending)
+	}
+	f, recs := r.fold()
+	if len(recs) != len(before)+1 || f.Map["k1"] != cOf(t, ids[0]) || f.Map["k2"] != cOf(t, ids[1]) {
+		t.Fatalf("the chain has %d token(s) and map %v", len(recs), f.Map)
+	}
+}
+
 // A hostile unanchored answer: another writer's entry, an entry for
 // another chain, bytes that are no transaction and a page out of order.
 // The host is named, nothing of it is applied, and the honest entries

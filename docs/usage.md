@@ -161,6 +161,20 @@ frozen (spec sections 3.4 and 4.4):
 names; a writer is removed only when the map names none of its entries.
 `-dry-run` plans and mints nothing.
 
+A token reaches the hosts with its proof, so `anchor` waits for the block
+that mines it. `-no-wait` returns as soon as the settlement leg has taken
+the token and prints `sent TXID`. The token stays recorded with the
+identity; the next `anchor`, with or without the flag, publishes it once it
+is mined and then anchors whatever is new. Readers see the change when the
+token is published. An owner of several buckets can hand a token for each
+to the same block this way and finish them all after it:
+
+```sh
+for b in site_a site_b site_c; do bstore -bucket $b anchor -no-wait; done
+# after the next block
+for b in site_a site_b site_c; do bstore -bucket $b anchor; done
+```
+
 ## Writing
 
 *Put with a bounty, delete, copy within the bucket, copy to another bucket.*
