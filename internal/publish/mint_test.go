@@ -178,7 +178,7 @@ func BenchmarkMintPiece(b *testing.B) {
 		b.ReportAllocs()
 		b.SetBytes(storerec.BlobSize)
 		for b.Loop() {
-			data, err := r.p.readPiece(r.ctx, r.c, r.blob)
+			data, _, err := r.p.readPiece(r.ctx, r.c, r.blob)
 			if err != nil {
 				b.Fatal(err)
 			}

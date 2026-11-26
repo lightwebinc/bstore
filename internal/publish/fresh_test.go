@@ -51,7 +51,7 @@ func TestOutboxPinKeepsAStagedPieceFresh(t *testing.T) {
 	st.unpin([][32]byte{h})
 	corrupt(t, st, h)
 	p := &Publisher{cfg: Config{Store: st}}
-	got, err := p.readPiece(context.Background(), nil, h)
+	got, _, err := p.readPiece(context.Background(), nil, h)
 	if err != nil || bytes.Equal(got, body) {
 		t.Fatalf("the outbox's read of a fresh piece hashed it: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestOutboxPinKeepsAStagedPieceFresh(t *testing.T) {
 	}
 	st.unpinFresh(h, fresh)
 	corrupt(t, st, h)
-	if _, err := p.readPiece(context.Background(), nil, h); err == nil {
+	if _, _, err := p.readPiece(context.Background(), nil, h); err == nil {
 		t.Fatal("a piece no fresh pin holds was read without its hash")
 	}
 	// A new process: the outbox reloads the item and pins the object, which
@@ -80,7 +80,7 @@ func TestOutboxPinKeepsAStagedPieceFresh(t *testing.T) {
 		t.Fatal("a pin on bytes an earlier run left is fresh")
 	}
 	corrupt(t, again, h)
-	if _, err := (&Publisher{cfg: Config{Store: again}}).readPiece(context.Background(), nil, h); err == nil {
+	if _, _, err := (&Publisher{cfg: Config{Store: again}}).readPiece(context.Background(), nil, h); err == nil {
 		t.Fatal("bytes an earlier run left were read without their hash")
 	}
 }
