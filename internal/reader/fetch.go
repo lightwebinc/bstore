@@ -571,7 +571,7 @@ var ReadAhead = 2
 
 // adCache keeps a root's sources for a short while.
 type adCache struct {
-	mu sync.Mutex
+	mu sync.RWMutex
 	m  map[[32]byte]adEntry
 }
 
@@ -583,8 +583,8 @@ type adEntry struct {
 const adTTL = 30 * time.Second
 
 func (c *adCache) get(root [32]byte, now time.Time) ([]Source, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	e, ok := c.m[root]
 	if !ok || now.Sub(e.at) > adTTL || len(e.src) == 0 {
 		return nil, false

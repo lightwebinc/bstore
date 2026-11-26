@@ -200,7 +200,9 @@ func (k *keyLimits) allow(id string) bool {
 // metrics are the gateway's counters and histograms, served as Prometheus
 // text.
 type metrics struct {
-	mu sync.Mutex
+	// mu is taken shared to find a series that exists (every request does)
+	// and exclusively to make one.
+	mu sync.RWMutex
 	c  map[string]*atomic.Int64
 	h  map[string]*hist
 	// extra, when set, writes lines read at serving time.
@@ -222,13 +224,17 @@ type hist struct {
 // observe adds one observation of seconds to the histogram name, which may
 // carry labels (`name{k="v"}`).
 func (m *metrics) observe(name string, seconds float64) {
-	m.mu.Lock()
+	m.mu.RLock()
 	h := m.h[name]
+	m.mu.RUnlock()
 	if h == nil {
-		h = &hist{}
-		m.h[name] = h
+		m.mu.Lock()
+		if h = m.h[name]; h == nil {
+			h = &hist{}
+			m.h[name] = h
+		}
+		m.mu.Unlock()
 	}
-	m.mu.Unlock()
 	h.counts[sort.SearchFloat64s(histBuckets[:], seconds)].Add(1)
 	h.sum.Add(int64(seconds * 1e9))
 }
@@ -253,13 +259,17 @@ func (h *hist) render(b *strings.Builder, name string) {
 }
 
 func (m *metrics) add(name string, v int64) {
-	m.mu.Lock()
+	m.mu.RLock()
 	c := m.c[name]
+	m.mu.RUnlock()
 	if c == nil {
-		c = &atomic.Int64{}
-		m.c[name] = c
+		m.mu.Lock()
+		if c = m.c[name]; c == nil {
+			c = &atomic.Int64{}
+			m.c[name] = c
+		}
+		m.mu.Unlock()
 	}
-	m.mu.Unlock()
 	c.Add(v)
 }
 

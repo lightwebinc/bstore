@@ -40,15 +40,15 @@ type chainMemory struct {
 }
 
 type memory struct {
-	mu     sync.Mutex
+	mu     sync.RWMutex
 	chains map[string]*chainMemory
 }
 
 // get is what key was proven to name, when the chain's token was proven the
 // latest less than d before now.
 func (m *memory) get(chain, key string, now time.Time, d time.Duration) *Found {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	cm := m.chains[chain]
 	if cm == nil || now.Sub(cm.at) >= d || now.Before(cm.at) {
 		return nil
