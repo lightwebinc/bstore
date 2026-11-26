@@ -43,6 +43,9 @@ var (
 	// ErrRefused is a mined token a host refused: a refusal is final for
 	// those bytes, so it is not sent to that host again (exit 1).
 	ErrRefused = errors.New("anchor: refused")
+	// errSent is a token the settlement leg took and no block holds yet,
+	// in a run asked not to wait for one (Options.NoWait).
+	errSent = errors.New("anchor: the token is sent and not yet mined")
 )
 
 // Chain is a bucket chain this identity owns, as its tooling records it:
@@ -176,6 +179,8 @@ type Tool struct {
 	Store  *Store
 	Logf   func(format string, args ...any)
 
+	// noWait is Options.NoWait for the run under way.
+	noWait bool
 	// minted is the last token finishPending saw mined, with its proof.
 	minted *transaction.Transaction
 }
@@ -479,8 +484,22 @@ func (t *Tool) finishPending(ctx context.Context, c *Chain) error {
 			}
 			return fmt.Errorf("%w: a token could never mine; run anchor again", ErrIncomplete)
 		default:
-			if err := t.Pub.Settler().Submit(ctx, tx); err != nil && !strings.Contains(strings.ToLower(err.Error()), "already") {
-				t.logf("token %s: sent: %v", short(pt.Txid), err)
+			serr := t.Pub.Settler().Submit(ctx, tx)
+			if serr != nil && strings.Contains(strings.ToLower(serr.Error()), "already") {
+				serr = nil
+			}
+			if serr != nil {
+				t.logf("token %s: sent: %v", short(pt.Txid), serr)
+			}
+			if t.noWait {
+				// The token is recorded and the leg has it: the next run
+				// finds it mined and publishes it. Nothing here waits for
+				// the block.
+				if serr != nil {
+					return fmt.Errorf("%w: token %s: the settlement leg did not take it: %v", ErrIncomplete, short(pt.Txid), serr)
+				}
+				t.logf("token %d of %s: %s taken by the settlement leg; not waiting for it to mine", pt.Seq, c.Bucket, short(pt.Txid))
+				return errSent
 			}
 		}
 		pay := t.Pub.NewPayer(ctx)
@@ -540,12 +559,21 @@ type Options struct {
 	RemoveWriters []string
 	// DryRun plans and reports, and mints nothing.
 	DryRun bool
+	// NoWait returns once the settlement leg has taken a token, without
+	// waiting for it to mine: the token stays recorded as pending, and the
+	// next run publishes it to the hosts once it is mined (hosts admit a
+	// token only with its proof). A batch that needs more than one token
+	// gets its first; the next run mints the rest. A run that meets a
+	// token still unmined sends the same bytes again and stops there:
+	// AddWriters and RemoveWriters are then refused, not applied.
+	NoWait bool
 }
 
 // Report is what an anchoring run did.
 type Report struct {
 	FromSeq   uint64
 	Tokens    []string // txids minted
+	Sent      string   // with NoWait: the token sent and not yet mined
 	Applied   int      // changes written
 	Consumed  int
 	Entries   int // entries considered (each once)
@@ -568,8 +596,18 @@ type candidate struct {
 // chain from the hosts, walks every writer's unanchored entries, checks
 // each, folds the batch and mints the tokens that carry it.
 func (t *Tool) Anchor(ctx context.Context, c *Chain, o Options) (*Report, error) {
+	t.noWait = o.NoWait
+	defer func() { t.noWait = false }()
 	if c.Pending != nil {
-		if err := t.finishPending(ctx, c); err != nil && !errors.Is(err, ErrIncomplete) {
+		if err := t.finishPending(ctx, c); errors.Is(err, errSent) {
+			rep := &Report{FromSeq: c.Seq, Sent: c.Pending.Txid}
+			if len(o.AddWriters)+len(o.RemoveWriters) > 0 {
+				// The run stops at the unmined token, before the writers
+				// of the next one are looked at: say so, not exit 0.
+				return rep, fmt.Errorf("%w: token %s is sent and not yet mined; the writer change was not applied, run anchor again after the block", ErrIncomplete, short(rep.Sent))
+			}
+			return rep, nil
+		} else if err != nil && !errors.Is(err, ErrIncomplete) {
 			return nil, err
 		} else if c.Pending != nil {
 			return nil, err
@@ -698,6 +736,10 @@ func (t *Tool) Anchor(ctx context.Context, c *Chain, o Options) (*Report, error)
 		}
 		t.minted = nil
 		err := t.mint(ctx, c, b, prev, prevVout, storerec.BucketDerivation)
+		if errors.Is(err, errSent) {
+			rep.Sent = c.Pending.Txid
+			return rep, t.incomplete(rep)
+		}
 		if err != nil && !(errors.Is(err, ErrIncomplete) && c.Pending == nil && t.minted != nil) {
 			return rep, err
 		}

@@ -133,7 +133,7 @@ serves all three).
 | `bucket new NAME` | `-writers K1,K2` |
 | `bucket add BUCKET` | `-owner KEY`, `-id HEX` |
 | `bucket list` | none |
-| `anchor` | `-add-writer KEY` (repeatable), `-remove-writer KEY` (repeatable), `-dry-run` |
+| `anchor` | `-add-writer KEY` (repeatable), `-remove-writer KEY` (repeatable), `-dry-run`, `-no-wait` |
 | `put KEY [FILE\|-]` | `-type MIME`, `-meta k=v` (repeatable), `-max BYTES` (default 2^43), `-bounty SATS`, `-t N`, `-k N`, `-retention SECONDS`, `-deadline BLOCKS`, `-check-c N`, `-no-bounty` |
 | `cp SRC DST` | `-to BUCKET`, and the bounty flags of `put` |
 | `rm KEY` | none |

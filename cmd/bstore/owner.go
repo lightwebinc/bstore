@@ -126,7 +126,7 @@ func (h *home) addBucket(ref BucketRef) error {
 	return saveConfig(h.g.configPath(), h.cfg)
 }
 
-const anchorHelp = `usage: bstore anchor [-add-writer KEY] [-remove-writer KEY] [-dry-run]
+const anchorHelp = `usage: bstore anchor [-add-writer KEY] [-remove-writer KEY] [-dry-run] [-no-wait]
 
 The owner's anchoring tooling (spec sections 3.4 and 4.4), exactly as
 frozen. It rebuilds the chain from the hosts (the rooted tokens it
@@ -144,7 +144,16 @@ and the run is incomplete (exit 3); a chain whose fold is broken is
 refused (exit 1).
 
 -add-writer and -remove-writer change the writers the next token names; a
-writer is removed only when the map names none of its entries.`
+writer is removed only when the map names none of its entries.
+
+A token reaches the hosts with its proof, so a run normally waits for the
+block that mines it. -no-wait returns as soon as the settlement leg has
+taken the token: it stays recorded, and the next anchor (with or without
+-no-wait) publishes it once it is mined, then goes on with whatever is
+unanchored. Readers see the change when the token is published, not
+before. While a token is unmined a run stops at it: -add-writer and
+-remove-writer are refused until it is mined (exit 3). Run one anchor at a
+time for an identity.`
 
 func cmdAnchor(ctx context.Context, g *global, args []string) error {
 	fs := g.flagSet("anchor", anchorHelp)
@@ -152,6 +161,7 @@ func cmdAnchor(ctx context.Context, g *global, args []string) error {
 	fs.Var(&add, "add-writer", "a writer key to add (repeatable)")
 	fs.Var(&remove, "remove-writer", "a writer key to remove (repeatable)")
 	dry := fs.Bool("dry-run", false, "plan and report; mint nothing")
+	noWait := fs.Bool("no-wait", false, "return once the settlement leg has the token; the next anchor publishes it when mined")
 	if pos, err := parse(fs, args); err != nil {
 		return err
 	} else if len(pos) > 0 {
@@ -173,18 +183,27 @@ func cmdAnchor(ctx context.Context, g *global, args []string) error {
 	if err != nil {
 		return usage("%v", err)
 	}
-	rep, err := h.tool.Anchor(ctx, c, anchor.Options{AddWriters: add, RemoveWriters: remove, DryRun: *dry})
+	rep, err := h.tool.Anchor(ctx, c, anchor.Options{AddWriters: add, RemoveWriters: remove, DryRun: *dry, NoWait: *noWait})
 	if rep != nil {
-		g.out("chain %s at seq %d: %d entr(ies) found, %d already named", ch.Bucket, rep.FromSeq, rep.Entries, rep.Named)
-		if rep.Plan != nil {
+		if rep.Plan != nil || rep.Sent == "" {
+			g.out("chain %s at seq %d: %d entr(ies) found, %d already named", ch.Bucket, rep.FromSeq, rep.Entries, rep.Named)
+		}
+		if rep.Plan != nil && rep.Sent != "" && len(rep.Plan.Steps) > 1 {
+			g.out("signed token 1 of %d; the next anchor mints the rest", len(rep.Plan.Steps))
+		} else if rep.Plan != nil {
 			verb := "minted"
 			if *dry {
 				verb = "would mint"
+			} else if rep.Sent != "" {
+				verb = "signed"
 			}
 			g.out("%s %d token(s): %d change(s), %d consumed", verb, len(rep.Plan.Steps), rep.Applied, rep.Consumed)
 		}
 		for _, t := range rep.Tokens {
 			g.out("token %s", t)
+		}
+		if rep.Sent != "" {
+			g.out("sent %s: not yet mined; anchor again publishes it", rep.Sent)
 		}
 		for _, s := range rep.Swept {
 			g.say("skipped, swept: %s", s)
