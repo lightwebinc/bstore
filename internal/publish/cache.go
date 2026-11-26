@@ -24,9 +24,15 @@ type blobCache struct {
 }
 
 type cached struct {
-	b   []byte
-	ref atomic.Bool
+	b    []byte
+	cost int
+	ref  atomic.Bool
 }
+
+// entryCost is what an entry takes beyond its bytes' capacity: the map
+// slot, the entry, its ring slot. A store of many tiny objects is held to
+// the bound by what they cost, not by their lengths.
+const entryCost = 160
 
 // cacheBytes bounds the bytes a store's cache holds, and cacheObject the
 // largest object it keeps: a large object's read is its copy, not its calls.
@@ -53,7 +59,8 @@ func (c *blobCache) get(h [32]byte) []byte {
 }
 
 func (c *blobCache) add(h [32]byte, b []byte) {
-	if len(b) > cacheObject || len(b) > c.max {
+	cost := cap(b) + entryCost
+	if len(b) > cacheObject || cost > c.max {
 		return
 	}
 	c.mu.Lock()
@@ -61,11 +68,11 @@ func (c *blobCache) add(h [32]byte, b []byte) {
 	if c.m[h] != nil {
 		return
 	}
-	for c.held+len(b) > c.max && c.evictLocked() {
+	for c.held+cost > c.max && c.evictLocked() {
 	}
-	c.m[h] = &cached{b: b}
+	c.m[h] = &cached{b: b, cost: cost}
 	c.ring = append(c.ring, h)
-	c.held += len(b)
+	c.held += cost
 }
 
 // evictLocked removes one entry; false when none is left. Ring slots whose
@@ -86,7 +93,7 @@ func (c *blobCache) evictLocked() bool {
 		c.ring = c.ring[:last]
 		if e != nil {
 			delete(c.m, h)
-			c.held -= len(e.b)
+			c.held -= e.cost
 			return true
 		}
 	}
@@ -99,7 +106,7 @@ func (c *blobCache) forget(h [32]byte) {
 	defer c.mu.Unlock()
 	if e := c.m[h]; e != nil {
 		delete(c.m, h)
-		c.held -= len(e.b)
+		c.held -= e.cost
 		// Its ring slot goes when the hand meets it; a ring of mostly
 		// gone slots is compacted here so it stays near the entries' count.
 		if len(c.ring) > 2*len(c.m)+64 {

@@ -72,7 +72,7 @@ func TestCacheNeverHoldsBadBytes(t *testing.T) {
 // The cache stays within its bound, keeps no object past cacheObject, and
 // keeps an object read since the hand last passed over one that was not.
 func TestCacheBound(t *testing.T) {
-	c := newBlobCache(4 << 10)
+	c := newBlobCache(4 * (1<<10 + entryCost))
 	key := func(i int) [32]byte { return sha256.Sum256([]byte{byte(i), byte(i >> 8)}) }
 	for i := 0; i < 100; i++ {
 		c.add(key(i), make([]byte, 1<<10))
