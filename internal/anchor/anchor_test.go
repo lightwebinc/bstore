@@ -468,6 +468,8 @@ func TestAnchorNoWait(t *testing.T) {
 	r := newRig(t)
 	_, ids := r.mint([]spec{{"k1", storerec.KindPut, 1, nil}, {"k2", storerec.KindPut, 2, nil}}, true)
 	_, before := r.fold()
+	// A third entry, funded now and submitted only once the token is sent.
+	_, more, late := r.mintBEEF([]spec{{"k3", storerec.KindPut, 3, nil}}, false)
 	r.chain.SetHold(true)
 	rep, err := r.tool.Anchor(r.ctx, r.c, Options{NoWait: true})
 	if err != nil {
@@ -491,17 +493,37 @@ func TestAnchorNoWait(t *testing.T) {
 	if err != nil || again.Sent != rep.Sent || len(again.Tokens) != 0 {
 		t.Fatalf("second run: %+v, %v", again, err)
 	}
-	r.chain.SetHold(false)
-	r.chain.Mine()
-	last, err := r.tool.Anchor(r.ctx, r.c, Options{NoWait: true})
-	if err != nil {
+	// A writer change while the token is unmined is refused, not dropped.
+	wr, err := r.tool.Anchor(r.ctx, r.c, Options{NoWait: true, AddWriters: []string{strings.Repeat("02", 33)}})
+	if !errors.Is(err, ErrIncomplete) || wr == nil || wr.Sent != rep.Sent {
+		t.Fatalf("writer change with a token unmined: %+v, %v", wr, err)
+	}
+	// An entry that arrives meanwhile does not get a second token at the
+	// same seq: the run still stops at the one that is sent.
+	if _, err := r.writer.Submit(r.ctx, r.host.srv.URL, storerec.RecordsTopic(tBucket), late[0]); err != nil {
 		t.Fatal(err)
 	}
-	if last.Sent != "" || len(last.Tokens) != 0 || r.c.Pending != nil {
-		t.Fatalf("after the block: %+v, pending %+v", last, r.c.Pending)
+	again, err = r.tool.Anchor(r.ctx, r.c, Options{NoWait: true})
+	if err != nil || again.Sent != rep.Sent || len(again.Tokens) != 0 || r.c.Pending.Txid != rep.Sent {
+		t.Fatalf("run with a new entry: %+v, %v", again, err)
+	}
+	r.chain.SetHold(false)
+	r.chain.Mine()
+	for i := 0; ; i++ {
+		last, err := r.tool.Anchor(r.ctx, r.c, Options{NoWait: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if last.Sent == "" && r.c.Pending == nil {
+			break
+		}
+		if i == 3 {
+			t.Fatalf("after the blocks: %+v, pending %+v", last, r.c.Pending)
+		}
+		r.chain.Mine()
 	}
 	f, recs := r.fold()
-	if len(recs) != len(before)+1 || f.Map["k1"] != cOf(t, ids[0]) || f.Map["k2"] != cOf(t, ids[1]) {
+	if len(recs) != len(before)+2 || f.Map["k1"] != cOf(t, ids[0]) || f.Map["k2"] != cOf(t, ids[1]) || f.Map["k3"] != cOf(t, more[0]) {
 		t.Fatalf("the chain has %d token(s) and map %v", len(recs), f.Map)
 	}
 }

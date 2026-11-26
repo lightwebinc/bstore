@@ -563,7 +563,9 @@ type Options struct {
 	// waiting for it to mine: the token stays recorded as pending, and the
 	// next run publishes it to the hosts once it is mined (hosts admit a
 	// token only with its proof). A batch that needs more than one token
-	// gets its first; the next run mints the rest.
+	// gets its first; the next run mints the rest. A run that meets a
+	// token still unmined sends the same bytes again and stops there:
+	// AddWriters and RemoveWriters are then refused, not applied.
 	NoWait bool
 }
 
@@ -598,7 +600,13 @@ func (t *Tool) Anchor(ctx context.Context, c *Chain, o Options) (*Report, error)
 	defer func() { t.noWait = false }()
 	if c.Pending != nil {
 		if err := t.finishPending(ctx, c); errors.Is(err, errSent) {
-			return &Report{FromSeq: c.Seq, Sent: c.Pending.Txid}, nil
+			rep := &Report{FromSeq: c.Seq, Sent: c.Pending.Txid}
+			if len(o.AddWriters)+len(o.RemoveWriters) > 0 {
+				// The run stops at the unmined token, before the writers
+				// of the next one are looked at: say so, not exit 0.
+				return rep, fmt.Errorf("%w: token %s is sent and not yet mined; the writer change was not applied, run anchor again after the block", ErrIncomplete, short(rep.Sent))
+			}
+			return rep, nil
 		} else if err != nil && !errors.Is(err, ErrIncomplete) {
 			return nil, err
 		} else if c.Pending != nil {

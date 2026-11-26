@@ -151,7 +151,9 @@ block that mines it. -no-wait returns as soon as the settlement leg has
 taken the token: it stays recorded, and the next anchor (with or without
 -no-wait) publishes it once it is mined, then goes on with whatever is
 unanchored. Readers see the change when the token is published, not
-before.`
+before. While a token is unmined a run stops at it: -add-writer and
+-remove-writer are refused until it is mined (exit 3). Run one anchor at a
+time for an identity.`
 
 func cmdAnchor(ctx context.Context, g *global, args []string) error {
 	fs := g.flagSet("anchor", anchorHelp)
@@ -183,8 +185,12 @@ func cmdAnchor(ctx context.Context, g *global, args []string) error {
 	}
 	rep, err := h.tool.Anchor(ctx, c, anchor.Options{AddWriters: add, RemoveWriters: remove, DryRun: *dry, NoWait: *noWait})
 	if rep != nil {
-		g.out("chain %s at seq %d: %d entr(ies) found, %d already named", ch.Bucket, rep.FromSeq, rep.Entries, rep.Named)
-		if rep.Plan != nil {
+		if rep.Plan != nil || rep.Sent == "" {
+			g.out("chain %s at seq %d: %d entr(ies) found, %d already named", ch.Bucket, rep.FromSeq, rep.Entries, rep.Named)
+		}
+		if rep.Plan != nil && rep.Sent != "" && len(rep.Plan.Steps) > 1 {
+			g.out("signed token 1 of %d; the next anchor mints the rest", len(rep.Plan.Steps))
+		} else if rep.Plan != nil {
 			verb := "minted"
 			if *dry {
 				verb = "would mint"

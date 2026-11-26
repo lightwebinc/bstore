@@ -163,11 +163,17 @@ names; a writer is removed only when the map names none of its entries.
 
 A token reaches the hosts with its proof, so `anchor` waits for the block
 that mines it. `-no-wait` returns as soon as the settlement leg has taken
-the token and prints `sent TXID`. The token stays recorded with the
+the token and prints `sent TXID: not yet mined; anchor again publishes it`.
+"Taken" is the leg's answer, not a block: a token that can never mine is
+found and dropped by the next run. The token stays recorded with the
 identity; the next `anchor`, with or without the flag, publishes it once it
 is mined and then anchors whatever is new. Readers see the change when the
 token is published. An owner of several buckets can hand a token for each
-to the same block this way and finish them all after it:
+to the same block this way and finish them all after it. Run them one
+after another, not in parallel: an identity's chain records are one file.
+While a token is unmined, a run sends the same bytes again and stops there,
+so `-add-writer` and `-remove-writer` are refused until it is mined, and a
+batch that needs several tokens takes one run and one block for each:
 
 ```sh
 for b in site_a site_b site_c; do bstore -bucket $b anchor -no-wait; done
