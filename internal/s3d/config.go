@@ -75,6 +75,11 @@ type Config struct {
 	// node. Every piece is handed to it as a function call, beside the
 	// facade and the providers named, with no socket and no copy.
 	LocalProvider *LocalProvider `json:"local_provider,omitempty"`
+	// ReadOnlyGateway, read_only, is a gateway that serves reads only and
+	// names no facade, provider or local provider (ReadOnly). It is asked
+	// for, never inferred: a writer whose delivery settings are missing or
+	// mistyped is refused at start, not demoted.
+	ReadOnlyGateway bool `json:"read_only,omitempty"`
 	// CA, when set, is a PEM file of certificates trusted, besides the
 	// system's, for TLS to hosts, providers and advertisers.
 	CA string `json:"ca,omitempty"`
@@ -348,6 +353,13 @@ func (c *Config) Check() error {
 	if len(c.Hosts) == 0 {
 		return errors.New("at least one host is required")
 	}
+	target := c.Facade != "" || len(c.Providers) > 0 || c.LocalProvider != nil
+	if !target && !c.ReadOnlyGateway {
+		return errors.New("a facade, a provider or a local provider is required to deliver pieces (or read_only: true for a gateway that serves reads only)")
+	}
+	if target && c.ReadOnlyGateway {
+		return errors.New("read_only: true names no facade, provider or local provider")
+	}
 	if c.LocalProvider != nil && c.LocalProvider.Config == "" {
 		return errors.New("local_provider.config names the provider's configuration file")
 	}
@@ -491,13 +503,11 @@ func validName(n string) bool {
 	return true
 }
 
-// ReadOnly reports a gateway with nowhere to deliver pieces (no facade,
-// provider or local provider): it serves reads only, refuses every write
-// with AccessDenied, and opens no identity's publisher, so it mints no hold
+// ReadOnly reports a gateway that serves reads only (read_only, with no
+// facade, provider or local provider): it refuses every write with
+// AccessDenied and opens no identity's publisher, so it mints no hold
 // outputs or funding trees and never spends.
-func (c *Config) ReadOnly() bool {
-	return c.Facade == "" && len(c.Providers) == 0 && c.LocalProvider == nil
-}
+func (c *Config) ReadOnly() bool { return c.ReadOnlyGateway }
 
 // LocalProvider is a provider run in the gateway's process (Config).
 type LocalProvider struct {

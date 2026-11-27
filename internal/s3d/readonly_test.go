@@ -11,7 +11,7 @@ import (
 // AccessDenied before anything is read, staged or signed.
 func TestReadOnlyRefusesWrites(t *testing.T) {
 	c := minimalConfig()
-	c.Providers = nil
+	c.Providers, c.ReadOnlyGateway = nil, true
 	if err := c.Check(); err != nil {
 		t.Fatal(err)
 	}
