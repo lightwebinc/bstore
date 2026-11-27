@@ -790,3 +790,28 @@ func TestAnchorHoldWriter(t *testing.T) {
 		t.Fatal("the entry after the hold")
 	}
 }
+
+// An allow-list holds every writer the token names that it does not list,
+// so a writer no service checked is held too; an empty one holds all.
+func TestAnchorOnlyWriters(t *testing.T) {
+	r := newRig(t)
+	r.mint([]spec{{"w", storerec.KindPut, 1, nil}}, true)
+	other := strings.Repeat("02", 1) + strings.Repeat("44", 32)
+	rep, err := r.tool.Anchor(r.ctx, r.c, Options{OnlySet: true, Only: []string{other}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := hex.EncodeToString(r.writer.Identity())
+	if rep.Applied != 0 || len(rep.Held) != 1 || rep.Held[0] != w {
+		t.Fatalf("a writer the allow-list does not name was applied: %+v", rep)
+	}
+	if rep, err = r.tool.Anchor(r.ctx, r.c, Options{OnlySet: true}); err != nil || rep.Applied != 0 || len(rep.Held) != 1 {
+		t.Fatalf("an empty allow-list: %v %+v", err, rep)
+	}
+	if _, err := r.tool.Anchor(r.ctx, r.c, Options{OnlySet: true, Only: []string{"zz"}}); err == nil {
+		t.Fatal("an allow-list entry that is not a key was accepted")
+	}
+	if rep, err = r.tool.Anchor(r.ctx, r.c, Options{OnlySet: true, Only: []string{strings.ToUpper(w)}}); err != nil || rep.Applied != 1 {
+		t.Fatalf("an allowed writer was not applied: %v %+v", err, rep)
+	}
+}

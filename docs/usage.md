@@ -161,7 +161,10 @@ frozen (spec sections 3.4 and 4.4):
 this run: they stay unanchored and the writer stays named. An owner's
 service that lets delegates write only under a permission it checks (bweb's
 delegation through borg) holds every writer it was not allowed for. The
-owner is never held.
+owner is never held. `-only-writer KEY` (repeatable) turns that around:
+only the writers named are applied and every other writer the token names is
+held, so a writer added outside that service is held too; `-only-writer -`
+holds every writer.
 
 `-add-writer` and `-remove-writer` change the writers the next token
 names; a writer is removed only when the map names none of its entries.
