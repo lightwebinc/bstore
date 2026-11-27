@@ -955,3 +955,46 @@ func TestDamagedRootRecoversOnANewEntry(t *testing.T) {
 		t.Fatalf("the recovered root served: %d", res.StatusCode)
 	}
 }
+
+// A damaged root whose bytes are bad in place is not cleared by a new
+// entry: the piece the store holds is not taken again, the check reads it
+// back wrong, and the entry is declined at once rather than left waiting.
+func TestDamagedRootBadInPlaceStaysDamaged(t *testing.T) {
+	r, p, _, put := held(t, nil, 3*storerec.BlobSize, bounty)
+	ctx := context.Background()
+	root := put.Object.Built.RootHash
+	rootHex := hex.EncodeToString(root[:])
+	c, _ := storerec.VerifyCHIRP(root, objectsOf(put.Object))
+	bad := c.Blobs[1].Hash
+	var blob []byte
+	for _, o := range put.Object.Built.Objects() {
+		if sha256.Sum256(o) == bad {
+			blob = bytes.Clone(o)
+		}
+	}
+	blob[len(blob)/2] ^= 1
+	// PutHashed keeps a file of the same size as it is: remove it first.
+	if err := p.store.Delete(bad); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.store.PutHashed(bad, blob); err != nil {
+		t.Fatal(err)
+	}
+	p.damaged(rootHex, "test: a blob read back wrong")
+	again := r.put(ctx, []*Provider{p}, content(3*storerec.BlobSize, 7), "k2", bounty)
+	r.eventually("the new entry declined", 20*time.Second, func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		e := p.st.Entries[again.C]
+		return e != nil && e.Decision != ""
+	})
+	p.mu.Lock()
+	h, e := p.st.Holdings[rootHex], p.st.Entries[again.C]
+	p.mu.Unlock()
+	if h == nil || !h.Damaged {
+		t.Fatal("a root with bytes bad in place was cleared")
+	}
+	if e.Decision != "the closure is damaged here" {
+		t.Fatalf("decision %q", e.Decision)
+	}
+}

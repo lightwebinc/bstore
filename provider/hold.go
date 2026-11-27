@@ -189,14 +189,26 @@ func (p *Provider) verify(ctx context.Context, rootHex string) verified {
 		return undecided[i].C < undecided[j].C
 	})
 	v := verified{undecided: undecided, ok: true}
-	// A damaged root is checked again too: a new entry may come with the
-	// pieces the store lost, and only a whole closure, read back and
-	// hashed, clears the mark (evaluate's hold); one still missing a piece
-	// waits as an unverified root does.
-	if h == nil || !h.Verified || h.Damaged {
+	// A damaged root is checked once more when an entry names it: the
+	// entry's put may send again the pieces the store lost, and a closure
+	// read back and hashed whole clears the mark (verifyRoot's hold). While
+	// pieces are missing its entries wait, as an unverified root's do, for
+	// as long as verifyRoot's expiry allows. A closure already complete
+	// before the check that still fails it has bytes bad in place (a piece
+	// the store holds is never taken again): it stays damaged and its
+	// entries are declined at once, as before, so such a root costs one
+	// read for each entry and never an entry left waiting. A front's
+	// handed root holds no bytes here: its own recheck asks the advertiser
+	// (recheckDamaged).
+	recheck := h != nil && h.Verified && h.Damaged && !h.Handed
+	if h == nil || !h.Verified || recheck {
+		whole := recheck && p.store.Has(mustHash(rootHex)) && p.complete(mustHash(rootHex))
 		v.ok, v.err = p.verifyRoot(ctx, rootHex, undecided, func(c, why string) {
 			v.declined = append(v.declined, verdict{c, why})
 		})
+		if whole && !v.ok && v.err == nil {
+			v.ok = true // still damaged: evaluate declines what is left
+		}
 	}
 	return v
 }
@@ -643,7 +655,7 @@ func (p *Provider) readAt32(rootHex, name string, i, n uint64) ([][32]byte, erro
 
 // damaged marks a root whose bytes went bad: it is no longer served,
 // answered for or renewed, and its advertisement lapses, until an entry
-// names it again and verify finds its closure whole (evaluate clears it).
+// names it again and verify finds its closure whole (see verify).
 func (p *Provider) damaged(rootHex, why string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
