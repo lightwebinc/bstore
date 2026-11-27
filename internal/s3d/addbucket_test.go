@@ -15,8 +15,16 @@ func TestAddBucket(t *testing.T) {
 	if err := c.Check(); err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{cfg: c, buckets: map[string]*bucket{}}
 	first := c.Buckets[0]
+	writer := &Server{cfg: c, buckets: map[string]*bucket{}}
+	if _, err := writer.AddBucket(first); err == nil || !strings.Contains(err.Error(), "read_only") {
+		t.Fatalf("a writing gateway took a bucket: %v", err)
+	}
+	c.Providers, c.ReadOnlyGateway = nil, true
+	if err := c.Check(); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{cfg: c, buckets: map[string]*bucket{}}
 	n, err := s.AddBucket(first)
 	if err != nil || n != "photos-qzvmkwerty" || s.bucket(n) == nil {
 		t.Fatalf("%q %v", n, err)

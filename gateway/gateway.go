@@ -81,11 +81,14 @@ func (g *Gateway) Buckets() []string { return g.s.BucketNames() }
 type Bucket = s3d.BucketConfig
 
 // AddBucket serves one more bucket from now on and returns its S3 name:
-// a site a node is asked to serve, with no restart. The bucket is held to
-// the configuration's rules; one served already under the same chain is
-// no change, another chain under its S3 name is an error. It is not
+// a site a node is asked to serve, with no restart. Only a gateway
+// configured read_only takes one (a writer serves the buckets its
+// configuration names). The bucket is held to the configuration's rules;
+// one served already under the same chain is no change, another chain
+// under its S3 name is an error; at most 4,096 buckets in all. It is not
 // written to the configuration file, so the program adds it again at its
-// next start.
+// next start. An access key not limited to named buckets reaches it on
+// the S3 face; one limited to named buckets does not.
 func (g *Gateway) AddBucket(b Bucket) (string, error) { return g.s.AddBucket(b) }
 
 // Read is GetObject, or HeadObject when head, of key in the bucket with

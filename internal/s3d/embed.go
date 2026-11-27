@@ -232,14 +232,24 @@ func (s *Server) bucket(n string) *bucket {
 	return s.buckets[n]
 }
 
+// maxBuckets bounds the buckets a gateway serves, added ones included.
+const maxBuckets = 4096
+
 // AddBucket serves one more bucket from now on, held to the rules of the
-// configuration's buckets, and returns its S3 name. A bucket served
-// already under the same chain is no change; another chain under its S3
-// name is refused. The bucket is not written to the configuration file:
-// the program that adds it adds it again at its next start. An access key
-// limited to named buckets does not reach it; reads in this process
-// (ReadObject) do.
+// configuration's buckets, and returns its S3 name: a site a web node is
+// asked to serve. Only a gateway that serves reads only takes one: on a
+// writing gateway every access key not limited to named buckets could
+// publish to it, so a writer serves the buckets its configuration names.
+// A bucket served already under the same chain is no change; another
+// chain under its S3 name is refused. The bucket is not written to the
+// configuration file: the program that adds it adds it again at its next
+// start. Reads in this process (ReadObject) reach it, and so does every
+// access key not limited to named buckets; a key limited to named buckets
+// does not.
 func (s *Server) AddBucket(b BucketConfig) (string, error) {
+	if !s.cfg.ReadOnly() {
+		return "", errors.New("buckets are added only to a gateway that serves reads only (read_only)")
+	}
 	n, err := b.Check()
 	if err != nil {
 		return "", err
@@ -254,6 +264,9 @@ func (s *Server) AddBucket(b BucketConfig) (string, error) {
 			return n, nil
 		}
 		return "", fmt.Errorf("bucket %q: its S3 name %s is served already for another chain", b.Bucket, n)
+	}
+	if len(s.buckets) >= maxBuckets {
+		return "", fmt.Errorf("bucket %q: the gateway serves %d buckets, its bound", b.Bucket, maxBuckets)
 	}
 	s.buckets[n] = &bucket{name: n, chain: chain}
 	i, _ := slices.BinarySearch(s.order, n)
