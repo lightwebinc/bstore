@@ -742,6 +742,14 @@ func TestQuotaAndEviction(t *testing.T) {
 		defer p.mu.Unlock()
 		return len(p.st.Unclaimed) == 0
 	})
+	// And their bytes leave the pieces kept for walks: a piece no entry
+	// ever claimed holds no memory once the store let it go.
+	p.inc.mu.Lock()
+	kept, keptLen := len(p.inc.recent), p.inc.recentLen
+	p.inc.mu.Unlock()
+	if kept != 0 || keptLen != 0 {
+		t.Fatalf("%d evicted piece(s), %d bytes, still kept for walks", kept, keptLen)
+	}
 	offset.Store(0)
 	// A holding is kept while advertised, and goes once the
 	// advertisement and lease run out.

@@ -198,6 +198,22 @@ func (in *incremental) dropRecent(h [32]byte) {
 	in.rfifo = slices.DeleteFunc(in.rfifo, func(x [32]byte) bool { return x == h })
 }
 
+// discard forgets a piece the store let go of (unclaimed past its time, or
+// released when its root was decided without it): its kept bytes, its
+// leaves and its spill mark, so a piece no entry claimed holds no memory
+// once it leaves the store. Callers hold p.mu; it takes in.mu, the order
+// forget's callers keep.
+func (in *incremental) discard(h [32]byte) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	in.dropRecent(h)
+	delete(in.pre, h)
+	if in.spilled[h] {
+		delete(in.spilled, h)
+		in.sfifo = slices.DeleteFunc(in.sfifo, func(x [32]byte) bool { return x == h })
+	}
+}
+
 // takeRecent hands a kept piece to the walk that reads it, and drops it;
 // with feeding set it is marked as on its way to the walk until fed.
 func (in *incremental) takeRecent(h [32]byte, feeding bool) []byte {

@@ -112,6 +112,7 @@ func (p *Provider) releasePiecesLocked(rootHex string) {
 			continue
 		}
 		_ = p.store.Delete(mustHash(h))
+		p.inc.discard(mustHash(h))
 		delete(p.st.Unclaimed, h)
 		gone = append(gone, h)
 	}
