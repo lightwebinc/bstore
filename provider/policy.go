@@ -375,6 +375,7 @@ func (p *Provider) evictLocked(all bool) {
 	for h, u := range p.st.Unclaimed {
 		if uint64(now-u.At) > p.cfg.UnclaimedSeconds && !p.heldObjectLocked(h) {
 			_ = p.store.Delete(mustHash(h))
+			p.inc.discard(mustHash(h))
 			delete(p.st.Unclaimed, h)
 			gone = append(gone, h)
 		}

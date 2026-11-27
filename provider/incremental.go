@@ -46,16 +46,22 @@ import (
 // is handed each one with its hash (AddHashed) the moment it waits for it,
 // so a kept piece is never hashed again. One not kept is read back from the
 // store when the walk reaches it and hashed once, by the check of the
-// walk's fetch (feed). About the pieces in flight at once: a feeder's takes
-// (maxTakes) and the submissions processed (16), with room for the plane's
-// reordering; a piece lost on the way holds every later piece of its root
-// until it is sent again, which a larger cache rides out.
+// walk's fetch (feed). The walk takes blobs in order (the content hash runs
+// over them in order), so the budget is the reordering between a writer and
+// this provider: measured in the lab on a 2 GiB put, 16 pieces in flight
+// over a bridge's route or the multicast plane arrived up to a few hundred
+// pieces out of order, and at 128 MiB the walk read back up to 594 of 515
+// blobs and finished 1 to 1.7 s after the entry; at 1 GiB it read back none
+// and finished in 0.03 s. Pieces are kept only until their root is decided,
+// so the budget is memory in use while closures are open, not a reservation;
+// a piece lost on the way holds every later piece of its root until it is
+// sent again, which the budget rides out.
 const (
 	maxPre             = 4096
 	maxRoots           = 64
 	maxCarried         = 4096
 	rootBuffer         = chirp.ChunkSize
-	defaultRecentBytes = 32 * chirp.ChunkSize
+	defaultRecentBytes = 256 * chirp.ChunkSize
 )
 
 type preBlob struct {
@@ -190,6 +196,22 @@ func (in *incremental) dropRecent(h [32]byte) {
 	delete(in.recent, h)
 	in.recentLen -= len(r.b)
 	in.rfifo = slices.DeleteFunc(in.rfifo, func(x [32]byte) bool { return x == h })
+}
+
+// discard forgets a piece the store let go of (unclaimed past its time, or
+// released when its root was decided without it): its kept bytes, its
+// leaves and its spill mark, so a piece no entry claimed holds no memory
+// once it leaves the store. Callers hold p.mu; it takes in.mu, the order
+// forget's callers keep.
+func (in *incremental) discard(h [32]byte) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	in.dropRecent(h)
+	delete(in.pre, h)
+	if in.spilled[h] {
+		delete(in.spilled, h)
+		in.sfifo = slices.DeleteFunc(in.sfifo, func(x [32]byte) bool { return x == h })
+	}
 }
 
 // takeRecent hands a kept piece to the walk that reads it, and drops it;
