@@ -916,3 +916,42 @@ func TestPieceRefusals(t *testing.T) {
 		t.Errorf("a writer not taken: %v %q", ok, why)
 	}
 }
+
+// A root marked damaged is checked again when an entry names it once more,
+// and held, answered for and served again once its closure is whole: the
+// pieces a writer sends again after a provider lost them bring the root
+// back (before, a damaged root stayed damaged whatever arrived).
+func TestDamagedRootRecoversOnANewEntry(t *testing.T) {
+	r, p, _, put := held(t, nil, 3*storerec.BlobSize, bounty)
+	ctx := context.Background()
+	root := put.Object.Built.RootHash
+	rootHex := hex.EncodeToString(root[:])
+	c, _ := storerec.VerifyCHIRP(root, objectsOf(put.Object))
+	lost := c.Blobs[1].Hash
+	if err := p.store.Delete(lost); err != nil {
+		t.Fatal(err)
+	}
+	p.damaged(rootHex, "test: a blob lost")
+	// The same content put again under another key: its pieces, the lost
+	// blob among them, are sent again.
+	r.put(ctx, []*Provider{p}, content(3*storerec.BlobSize, 7), "k2", bounty)
+	r.eventually("the damaged root held again", 20*time.Second, func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		h := p.st.Holdings[rootHex]
+		return h != nil && !h.Damaged && h.Verified
+	})
+	if !p.store.Has(lost) {
+		t.Fatal("cleared without the lost blob back in the store")
+	}
+	// Served again at its advertisement.
+	ad, _ := advOf(p.liveAd(root))
+	res, err := r.client.Get(ad.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("the recovered root served: %d", res.StatusCode)
+	}
+}

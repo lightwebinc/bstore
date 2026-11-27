@@ -350,7 +350,9 @@ not at all if the payment is double-spent first).
    among the blob roots) held to reproduce the proof root. A segment
    missing or read back wrong marks the root **damaged** and the answer is
    `422 unknown-root`, with no payment taken: from then on the root is not
-   served, answered for or renewed, and its advertisement lapses. A read
+   served, answered for or renewed, and its advertisement lapses, until an
+   entry names the root again and its closure, read back and hashed, is
+   whole (a writer that puts the content again sends its pieces again). A read
    the system could not make now (a file it could not open) is `503` and
    marks nothing;
 5. the payment is taken into the ledger, or the free answer counted;

@@ -189,7 +189,11 @@ func (p *Provider) verify(ctx context.Context, rootHex string) verified {
 		return undecided[i].C < undecided[j].C
 	})
 	v := verified{undecided: undecided, ok: true}
-	if h == nil || !h.Verified {
+	// A damaged root is checked again too: a new entry may come with the
+	// pieces the store lost, and only a whole closure, read back and
+	// hashed, clears the mark (evaluate's hold); one still missing a piece
+	// waits as an unverified root does.
+	if h == nil || !h.Verified || h.Damaged {
 		v.ok, v.err = p.verifyRoot(ctx, rootHex, undecided, func(c, why string) {
 			v.declined = append(v.declined, verdict{c, why})
 		})
@@ -638,7 +642,8 @@ func (p *Provider) readAt32(rootHex, name string, i, n uint64) ([][32]byte, erro
 }
 
 // damaged marks a root whose bytes went bad: it is no longer served,
-// answered for or renewed, and its advertisement lapses.
+// answered for or renewed, and its advertisement lapses, until an entry
+// names it again and verify finds its closure whole (evaluate clears it).
 func (p *Provider) damaged(rootHex, why string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
