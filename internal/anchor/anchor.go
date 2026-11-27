@@ -563,6 +563,13 @@ type Options struct {
 	// checked (bweb's delegation through borg) holds every writer it was
 	// not allowed for. The owner is never held.
 	Hold []string
+	// Only, when OnlySet, names the writers whose entries this run may
+	// apply: every writer the token names that Only does not is held, so a
+	// service that checks a permission holds a writer it never checked
+	// (one added outside it) as well as one it was refused. An empty Only
+	// with OnlySet holds every writer. The owner is never held.
+	Only    []string
+	OnlySet bool
 	// DryRun plans and reports, and mints nothing.
 	DryRun bool
 	// NoWait returns once the settlement leg has taken a token, without
@@ -687,6 +694,21 @@ func (t *Tool) Anchor(ctx context.Context, c *Chain, o Options) (*Report, error)
 		}
 		if hl != hex.EncodeToString(owner) {
 			held[hl] = true
+		}
+	}
+	if o.OnlySet {
+		only := map[string]bool{}
+		for _, k := range o.Only {
+			kl := strings.ToLower(strings.TrimSpace(k))
+			if b, err := hex.DecodeString(kl); err != nil || len(b) != 33 {
+				return nil, fmt.Errorf("anchor: -only-writer %q is not a key in 66 hex digits", k)
+			}
+			only[kl] = true
+		}
+		for _, w := range writerHex {
+			if !only[w] {
+				held[w] = true
+			}
 		}
 	}
 	wctx, cancel := context.WithTimeout(ctx, walkBudget)

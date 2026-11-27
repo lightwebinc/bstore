@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"flag"
 	"strings"
 
 	"github.com/lightwebinc/bstore/internal/anchor"
@@ -126,7 +127,7 @@ func (h *home) addBucket(ref BucketRef) error {
 	return saveConfig(h.g.configPath(), h.cfg)
 }
 
-const anchorHelp = `usage: bstore anchor [-add-writer KEY] [-remove-writer KEY] [-hold-writer KEY] [-dry-run] [-no-wait]
+const anchorHelp = `usage: bstore anchor [-add-writer KEY] [-remove-writer KEY] [-hold-writer KEY] [-only-writer KEY|-] [-dry-run] [-no-wait]
 
 The owner's anchoring tooling (spec sections 3.4 and 4.4), exactly as
 frozen. It rebuilds the chain from the hosts (the rooted tokens it
@@ -147,7 +148,10 @@ refused (exit 1).
 writer is removed only when the map names none of its entries. -hold-writer
 applies none of a writer's entries this run: they stay unanchored and the
 writer stays named (an owner's service applies a delegate's entries only
-under a permission it checked). The owner is never held.
+under a permission it checked). The owner is never held. -only-writer
+applies only the writers named and holds every other writer the token
+names, so a writer added outside the service that checks permissions is
+held too; -only-writer - holds them all.
 
 A token reaches the hosts with its proof, so a run normally waits for the
 block that mines it. -no-wait returns as soon as the settlement leg has
@@ -165,6 +169,8 @@ func cmdAnchor(ctx context.Context, g *global, args []string) error {
 	fs.Var(&remove, "remove-writer", "a writer key to remove (repeatable)")
 	var hold listFlag
 	fs.Var(&hold, "hold-writer", "a writer whose entries this run does not apply (repeatable)")
+	var only listFlag
+	fs.Var(&only, "only-writer", "apply only these writers' entries and hold every other writer the token names (repeatable; - for none)")
 	dry := fs.Bool("dry-run", false, "plan and report; mint nothing")
 	noWait := fs.Bool("no-wait", false, "return once the settlement leg has the token; the next anchor publishes it when mined")
 	if pos, err := parse(fs, args); err != nil {
@@ -188,7 +194,18 @@ func cmdAnchor(ctx context.Context, g *global, args []string) error {
 	if err != nil {
 		return usage("%v", err)
 	}
-	rep, err := h.tool.Anchor(ctx, c, anchor.Options{AddWriters: add, RemoveWriters: remove, Hold: hold, DryRun: *dry, NoWait: *noWait})
+	o := anchor.Options{AddWriters: add, RemoveWriters: remove, Hold: hold, DryRun: *dry, NoWait: *noWait}
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "only-writer" {
+			o.OnlySet = true
+		}
+	})
+	for _, k := range only {
+		if k != "-" {
+			o.Only = append(o.Only, k)
+		}
+	}
+	rep, err := h.tool.Anchor(ctx, c, o)
 	if rep != nil {
 		if rep.Plan != nil || rep.Sent == "" {
 			g.out("chain %s at seq %d: %d entr(ies) found, %d already named", ch.Bucket, rep.FromSeq, rep.Entries, rep.Named)
