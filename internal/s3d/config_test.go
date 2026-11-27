@@ -60,15 +60,26 @@ func TestConfigLocalProvider(t *testing.T) {
 	c := minimalConfig()
 	c.Providers = nil
 	if err := c.Check(); err == nil {
-		t.Fatal("no facade, provider or local provider was accepted")
+		t.Fatal("no facade, provider or local provider was accepted without read_only")
+	}
+	c.ReadOnlyGateway = true
+	if err := c.Check(); err != nil || !c.ReadOnly() {
+		t.Fatalf("read_only with no delivery target: %v %v", err, c.ReadOnly())
 	}
 	c.LocalProvider = &LocalProvider{}
+	if err := c.Check(); err == nil || !strings.Contains(err.Error(), "read_only") {
+		t.Fatalf("read_only with a local provider: %v", err)
+	}
+	c.ReadOnlyGateway = false
 	if err := c.Check(); err == nil || !strings.Contains(err.Error(), "local_provider.config") {
 		t.Fatalf("a local provider with no configuration: %v", err)
 	}
 	c.LocalProvider.Config = "/etc/bstore/provider.json"
 	if err := c.Check(); err != nil {
 		t.Fatal(err)
+	}
+	if c.ReadOnly() {
+		t.Fatal("a gateway with a local provider is read only")
 	}
 	if !c.LocalProvider.Verifies() {
 		t.Fatal("a local provider does not verify by default")

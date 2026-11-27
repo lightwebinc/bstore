@@ -56,6 +56,9 @@ var (
 	errMalformedXML   = &s3Error{"MalformedXML", "The XML you provided was not well-formed or did not validate against our published schema.", http.StatusBadRequest}
 )
 
+// errReadOnly answers a write at a gateway that serves reads only.
+var errReadOnly = &s3Error{"AccessDenied", "This gateway serves reads only: it has no facade, provider or local provider to deliver to.", http.StatusForbidden}
+
 func notImplemented(what string) *s3Error {
 	return &s3Error{"NotImplemented", what + " is not implemented by this gateway.", http.StatusNotImplemented}
 }

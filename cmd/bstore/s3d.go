@@ -180,8 +180,12 @@ func cmdS3D(ctx context.Context, g *global, args []string) error {
 	if err := s.Start(ctx); err != nil {
 		return err
 	}
-	for _, name := range cfg.Identities {
-		fmt.Fprintf(g.stdout, "bstore s3d identity %s %s\n", name, s.Identity(name))
+	if cfg.ReadOnly() {
+		fmt.Fprintln(g.stdout, "bstore s3d reads only")
+	} else {
+		for _, name := range cfg.Identities {
+			fmt.Fprintf(g.stdout, "bstore s3d identity %s %s\n", name, s.Identity(name))
+		}
 	}
 	fmt.Fprintf(g.stdout, "bstore s3d listening on %s\n", s.Addr())
 	<-ctx.Done()
