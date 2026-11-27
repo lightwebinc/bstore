@@ -7,7 +7,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.33.21
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.23.28
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.116.0
-	github.com/aws/smithy-go v1.28.9
+	github.com/aws/smithy-go v1.28.10
 	github.com/bsv-blockchain/go-sdk v1.7.8
 	github.com/lightwebinc/bcommon v0.40.0
 	github.com/lightwebinc/bcommon/devkit v0.2.3
