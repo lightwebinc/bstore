@@ -677,9 +677,15 @@ func (t *Tool) Anchor(ctx context.Context, c *Chain, o Options) (*Report, error)
 	// Every writer's unanchored entries, at every host.
 	found := map[[32]byte]*candidate{}
 	ask := append([]string{hex.EncodeToString(owner)}, writerHex...)
+	// A hold fails closed: a key that is not one is refused rather than
+	// ignored, which would apply the entries of the writer it meant.
 	held := map[string]bool{}
 	for _, h := range o.Hold {
-		if hl := strings.ToLower(h); hl != hex.EncodeToString(owner) {
+		hl := strings.ToLower(strings.TrimSpace(h))
+		if b, err := hex.DecodeString(hl); err != nil || len(b) != 33 {
+			return nil, fmt.Errorf("anchor: -hold-writer %q is not a key in 66 hex digits", h)
+		}
+		if hl != hex.EncodeToString(owner) {
 			held[hl] = true
 		}
 	}

@@ -780,6 +780,9 @@ func TestAnchorHoldWriter(t *testing.T) {
 	if f, _ := r.fold(); len(f.Map) != 0 {
 		t.Fatal("the map changed under a hold")
 	}
+	if _, err := r.tool.Anchor(r.ctx, r.c, Options{Hold: []string{w[:64]}}); err == nil {
+		t.Fatal("a hold that is not a key was ignored, not refused")
+	}
 	if rep, err = r.tool.Anchor(r.ctx, r.c, Options{}); err != nil || len(rep.Tokens) != 1 || rep.Applied != 1 {
 		t.Fatalf("not applied once the hold was lifted: %v %+v", err, rep)
 	}
