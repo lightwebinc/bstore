@@ -1,11 +1,14 @@
 package s3d
 
 import (
+	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"sync"
 
@@ -154,7 +157,7 @@ func (s *Server) ReadObject(ctx context.Context, bucket, key string, head bool, 
 }
 
 func (s *Server) readObject(ctx context.Context, name, key string, head bool, cond http.Header) (*ObjectAnswer, *s3Error) {
-	b := s.buckets[name]
+	b := s.bucket(name)
 	if b == nil {
 		return nil, errNoSuchBucket
 	}
@@ -216,4 +219,57 @@ func (s *Server) readEntry(ctx context.Context, ent *storerec.Entry, head bool, 
 }
 
 // BucketNames are the S3 names of the buckets served, sorted.
-func (s *Server) BucketNames() []string { return append([]string(nil), s.order...) }
+func (s *Server) BucketNames() []string {
+	s.bmu.RLock()
+	defer s.bmu.RUnlock()
+	return append([]string(nil), s.order...)
+}
+
+// bucket is the bucket served under S3 name n, or nil.
+func (s *Server) bucket(n string) *bucket {
+	s.bmu.RLock()
+	defer s.bmu.RUnlock()
+	return s.buckets[n]
+}
+
+// maxBuckets bounds the buckets a gateway serves, added ones included.
+const maxBuckets = 4096
+
+// AddBucket serves one more bucket from now on, held to the rules of the
+// configuration's buckets, and returns its S3 name: a site a web node is
+// asked to serve. Only a gateway that serves reads only takes one: on a
+// writing gateway every access key not limited to named buckets could
+// publish to it, so a writer serves the buckets its configuration names.
+// A bucket served already under the same chain is no change; another
+// chain under its S3 name is refused. The bucket is not written to the
+// configuration file: the program that adds it adds it again at its next
+// start. Reads in this process (ReadObject) reach it, and so does every
+// access key not limited to named buckets; a key limited to named buckets
+// does not.
+func (s *Server) AddBucket(b BucketConfig) (string, error) {
+	if !s.cfg.ReadOnly() {
+		return "", errors.New("buckets are added only to a gateway that serves reads only (read_only)")
+	}
+	n, err := b.Check()
+	if err != nil {
+		return "", err
+	}
+	owner, _ := hex.DecodeString(b.Owner)
+	id, _ := hex.DecodeString(b.ID)
+	chain := reader.Chain{Bucket: b.Bucket, Owner: owner, ID: [32]byte(id)}
+	s.bmu.Lock()
+	defer s.bmu.Unlock()
+	if have := s.buckets[n]; have != nil {
+		if have.chain.Bucket == chain.Bucket && bytes.Equal(have.chain.Owner, chain.Owner) && have.chain.ID == chain.ID {
+			return n, nil
+		}
+		return "", fmt.Errorf("bucket %q: its S3 name %s is served already for another chain", b.Bucket, n)
+	}
+	if len(s.buckets) >= maxBuckets {
+		return "", fmt.Errorf("bucket %q: the gateway serves %d buckets, its bound", b.Bucket, maxBuckets)
+	}
+	s.buckets[n] = &bucket{name: n, chain: chain}
+	i, _ := slices.BinarySearch(s.order, n)
+	s.order = slices.Insert(s.order, i, n)
+	return n, nil
+}

@@ -697,7 +697,7 @@ func (s *Server) copySource(v string) (*bucket, string, *s3Error) {
 	if !ok || key == "" {
 		return nil, "", invalidArgument("x-amz-copy-source is <bucket>/<key>")
 	}
-	b := s.buckets[bn]
+	b := s.bucket(bn)
 	if b == nil {
 		return nil, "", errNoSuchBucket
 	}
