@@ -48,8 +48,7 @@ type Options struct {
 
 // Gateway is a gateway running in this process.
 type Gateway struct {
-	s       *s3d.Server
-	buckets []string
+	s *s3d.Server
 }
 
 // Open loads the gateway configuration at path, opens the gateway and
@@ -70,11 +69,24 @@ func Open(ctx context.Context, path string, o Options) (*Gateway, error) {
 		_ = s.Close()
 		return nil, err
 	}
-	return &Gateway{s: s, buckets: s.BucketNames()}, nil
+	return &Gateway{s: s}, nil
 }
 
-// Buckets are the S3 names of the buckets the gateway serves, sorted.
-func (g *Gateway) Buckets() []string { return append([]string(nil), g.buckets...) }
+// Buckets are the S3 names of the buckets the gateway serves, sorted,
+// those added since it opened included.
+func (g *Gateway) Buckets() []string { return g.s.BucketNames() }
+
+// Bucket is one bucket for AddBucket: its identifier, its owner's key (66
+// lowercase hex digits) and its id (64), as a configuration names it.
+type Bucket = s3d.BucketConfig
+
+// AddBucket serves one more bucket from now on and returns its S3 name:
+// a site a node is asked to serve, with no restart. The bucket is held to
+// the configuration's rules; one served already under the same chain is
+// no change, another chain under its S3 name is an error. It is not
+// written to the configuration file, so the program adds it again at its
+// next start.
+func (g *Gateway) AddBucket(b Bucket) (string, error) { return g.s.AddBucket(b) }
 
 // Read is GetObject, or HeadObject when head, of key in the bucket with
 // the S3 name bucket. cond carries Range and the conditional headers

@@ -379,28 +379,14 @@ func (c *Config) Check() error {
 	s3names := map[string]bool{}
 	for i := range c.Buckets {
 		b := &c.Buckets[i]
-		if err := storerec.CheckBucket(b.Bucket); err != nil {
-			return fmt.Errorf("bucket %q: not a bucket identifier", b.Bucket)
-		}
-		n, ok := storerec.S3Name(b.Bucket)
-		if !ok {
-			return fmt.Errorf("bucket %q: its S3 name begins with the reserved prefix sthree-", b.Bucket)
+		n, err := b.Check()
+		if err != nil {
+			return err
 		}
 		if s3names[n] {
 			return fmt.Errorf("bucket %q: served twice", b.Bucket)
 		}
 		s3names[n] = true
-		owner, err := hex.DecodeString(b.Owner)
-		if err != nil || len(b.Owner) != 66 || strings.ToLower(b.Owner) != b.Owner {
-			return fmt.Errorf("bucket %q: owner is a key in 66 lowercase hex digits", b.Bucket)
-		}
-		if _, err := guard.ParsePubKey(owner); err != nil || bytes.Equal(owner, storerec.AnyoneKey) {
-			return fmt.Errorf("bucket %q: owner is not a valid key", b.Bucket)
-		}
-		id, err := hex.DecodeString(b.ID)
-		if err != nil || len(id) != 32 || strings.ToLower(b.ID) != b.ID {
-			return fmt.Errorf("bucket %q: id is 64 lowercase hex digits", b.Bucket)
-		}
 	}
 	if len(c.Buckets) == 0 {
 		return errors.New("at least one bucket is required")
@@ -501,6 +487,30 @@ func validName(n string) bool {
 		}
 	}
 	return true
+}
+
+// Check holds one bucket entry to the rules of the configuration's
+// buckets and returns its S3 name.
+func (b *BucketConfig) Check() (string, error) {
+	if err := storerec.CheckBucket(b.Bucket); err != nil {
+		return "", fmt.Errorf("bucket %q: not a bucket identifier", b.Bucket)
+	}
+	n, ok := storerec.S3Name(b.Bucket)
+	if !ok {
+		return "", fmt.Errorf("bucket %q: its S3 name begins with the reserved prefix sthree-", b.Bucket)
+	}
+	owner, err := hex.DecodeString(b.Owner)
+	if err != nil || len(b.Owner) != 66 || strings.ToLower(b.Owner) != b.Owner {
+		return "", fmt.Errorf("bucket %q: owner is a key in 66 lowercase hex digits", b.Bucket)
+	}
+	if _, err := guard.ParsePubKey(owner); err != nil || bytes.Equal(owner, storerec.AnyoneKey) {
+		return "", fmt.Errorf("bucket %q: owner is not a valid key", b.Bucket)
+	}
+	id, err := hex.DecodeString(b.ID)
+	if err != nil || len(id) != 32 || strings.ToLower(b.ID) != b.ID {
+		return "", fmt.Errorf("bucket %q: id is 64 lowercase hex digits", b.Bucket)
+	}
+	return n, nil
 }
 
 // ReadOnly reports a gateway that serves reads only (read_only, with no

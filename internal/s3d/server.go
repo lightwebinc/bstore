@@ -65,6 +65,7 @@ type Server struct {
 	keep *keepStore
 	// local is the provider in this process (Config.LocalProvider).
 	local   *provider.Provider
+	bmu     sync.RWMutex       // buckets and order: AddBucket adds while requests read
 	buckets map[string]*bucket // by S3 name
 	order   []string
 	st      *state
@@ -591,7 +592,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.listBuckets(rw, a)
 		return
 	}
-	b := s.buckets[bname]
+	b := s.bucket(bname)
 	if b == nil {
 		fail(errNoSuchBucket)
 		return
@@ -666,7 +667,7 @@ func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func (s *Server) listBuckets(w http.ResponseWriter, a *Auth) {
 	res := listAllMyBuckets{NS: s3NS, Owner: owner{ID: a.Key.Identity, DisplayName: a.Key.Identity}}
-	for _, n := range s.order {
+	for _, n := range s.BucketNames() {
 		if a.Key.Buckets != nil && !a.Key.Buckets[n] {
 			continue
 		}
