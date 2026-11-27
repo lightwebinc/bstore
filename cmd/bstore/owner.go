@@ -126,7 +126,7 @@ func (h *home) addBucket(ref BucketRef) error {
 	return saveConfig(h.g.configPath(), h.cfg)
 }
 
-const anchorHelp = `usage: bstore anchor [-add-writer KEY] [-remove-writer KEY] [-dry-run] [-no-wait]
+const anchorHelp = `usage: bstore anchor [-add-writer KEY] [-remove-writer KEY] [-hold-writer KEY] [-dry-run] [-no-wait]
 
 The owner's anchoring tooling (spec sections 3.4 and 4.4), exactly as
 frozen. It rebuilds the chain from the hosts (the rooted tokens it
@@ -144,7 +144,10 @@ and the run is incomplete (exit 3); a chain whose fold is broken is
 refused (exit 1).
 
 -add-writer and -remove-writer change the writers the next token names; a
-writer is removed only when the map names none of its entries.
+writer is removed only when the map names none of its entries. -hold-writer
+applies none of a writer's entries this run: they stay unanchored and the
+writer stays named (an owner's service applies a delegate's entries only
+under a permission it checked). The owner is never held.
 
 A token reaches the hosts with its proof, so a run normally waits for the
 block that mines it. -no-wait returns as soon as the settlement leg has
@@ -160,6 +163,8 @@ func cmdAnchor(ctx context.Context, g *global, args []string) error {
 	var add, remove listFlag
 	fs.Var(&add, "add-writer", "a writer key to add (repeatable)")
 	fs.Var(&remove, "remove-writer", "a writer key to remove (repeatable)")
+	var hold listFlag
+	fs.Var(&hold, "hold-writer", "a writer whose entries this run does not apply (repeatable)")
 	dry := fs.Bool("dry-run", false, "plan and report; mint nothing")
 	noWait := fs.Bool("no-wait", false, "return once the settlement leg has the token; the next anchor publishes it when mined")
 	if pos, err := parse(fs, args); err != nil {
@@ -183,7 +188,7 @@ func cmdAnchor(ctx context.Context, g *global, args []string) error {
 	if err != nil {
 		return usage("%v", err)
 	}
-	rep, err := h.tool.Anchor(ctx, c, anchor.Options{AddWriters: add, RemoveWriters: remove, DryRun: *dry, NoWait: *noWait})
+	rep, err := h.tool.Anchor(ctx, c, anchor.Options{AddWriters: add, RemoveWriters: remove, Hold: hold, DryRun: *dry, NoWait: *noWait})
 	if rep != nil {
 		if rep.Plan != nil || rep.Sent == "" {
 			g.out("chain %s at seq %d: %d entr(ies) found, %d already named", ch.Bucket, rep.FromSeq, rep.Entries, rep.Named)
@@ -216,6 +221,9 @@ func cmdAnchor(ctx context.Context, g *global, args []string) error {
 		}
 		for _, x := range rep.Hosts {
 			g.say("%s", x)
+		}
+		for _, w := range rep.Held {
+			g.say("held, not applied this run: the entries of writer %s", short(w))
 		}
 		for _, k := range rep.Deferred {
 			g.say("deferred, the map is at its bound: %s", k)
