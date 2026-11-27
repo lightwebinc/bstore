@@ -348,9 +348,6 @@ func (c *Config) Check() error {
 	if len(c.Hosts) == 0 {
 		return errors.New("at least one host is required")
 	}
-	if c.Facade == "" && len(c.Providers) == 0 && c.LocalProvider == nil {
-		return errors.New("a facade, a provider or a local provider is required to deliver pieces")
-	}
 	if c.LocalProvider != nil && c.LocalProvider.Config == "" {
 		return errors.New("local_provider.config names the provider's configuration file")
 	}
@@ -492,6 +489,14 @@ func validName(n string) bool {
 		}
 	}
 	return true
+}
+
+// ReadOnly reports a gateway with nowhere to deliver pieces (no facade,
+// provider or local provider): it serves reads only, refuses every write
+// with AccessDenied, and opens no identity's publisher, so it mints no hold
+// outputs or funding trees and never spends.
+func (c *Config) ReadOnly() bool {
+	return c.Facade == "" && len(c.Providers) == 0 && c.LocalProvider == nil
 }
 
 // LocalProvider is a provider run in the gateway's process (Config).

@@ -177,7 +177,13 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Server, error) {
 			map[bool]string{true: "checked", false: "taken on this gateway's account"}[verify])
 	}
 	publish.ObserveCommits(s.metrics.observe)
+	if cfg.ReadOnly() {
+		opts.Logf("reads only: no facade, provider or local provider is configured, so writes are refused and no identity mints or spends")
+	}
 	for _, name := range cfg.Identities {
+		if cfg.ReadOnly() {
+			break
+		}
 		p, err := publish.Open(ctx, publish.Config{Dir: cfg.IdentityDir(name), OutboxMax: cfg.OutboxBytes,
 			Chain: v.Chain, Known: v.Known, Tip: v.Tip, Settler: v.Settler, Accept: cfg.AcceptPolicy(), Status: status,
 			FeeSource: v.FeeSource, Mainnet: cfg.Mainnet,
@@ -726,6 +732,9 @@ func (s *Server) bucketOp(ctx context.Context, w http.ResponseWriter, r *http.Re
 			if e := checkSub(r, map[string]bool{"delete": true}); e != nil {
 				return "DeleteObjects", e
 			}
+			if s.cfg.ReadOnly() {
+				return "DeleteObjects", errReadOnly
+			}
 			return "DeleteObjects", s.replayed(w, r, a, func(w http.ResponseWriter) *s3Error { return s.deleteObjects(ctx, w, r, a, b) })
 		}
 		return "PostBucket", errMethod
@@ -743,6 +752,9 @@ func (s *Server) objectOp(ctx context.Context, w http.ResponseWriter, r *http.Re
 		return "Object", invalidArgument("the key is not 1 to 1024 bytes of UTF-8 on one line (no control character)")
 	}
 	_, hasUpload := q["uploadId"]
+	if s.cfg.ReadOnly() && r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return "Write", errReadOnly
+	}
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
 		if hasUpload {
