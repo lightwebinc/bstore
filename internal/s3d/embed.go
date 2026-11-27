@@ -247,9 +247,6 @@ const maxBuckets = 4096
 // access key not limited to named buckets; a key limited to named buckets
 // does not.
 func (s *Server) AddBucket(b BucketConfig) (string, error) {
-	if !s.cfg.ReadOnly() {
-		return "", errors.New("buckets are added only to a gateway that serves reads only (read_only)")
-	}
 	n, err := b.Check()
 	if err != nil {
 		return "", err
@@ -259,11 +256,18 @@ func (s *Server) AddBucket(b BucketConfig) (string, error) {
 	chain := reader.Chain{Bucket: b.Bucket, Owner: owner, ID: [32]byte(id)}
 	s.bmu.Lock()
 	defer s.bmu.Unlock()
+	// A bucket served already under the same chain is no change, on any
+	// gateway (its configuration may name it); another chain under its S3
+	// name is refused. Only a new bucket needs a gateway that serves reads
+	// only.
 	if have := s.buckets[n]; have != nil {
 		if have.chain.Bucket == chain.Bucket && bytes.Equal(have.chain.Owner, chain.Owner) && have.chain.ID == chain.ID {
 			return n, nil
 		}
 		return "", fmt.Errorf("bucket %q: its S3 name %s is served already for another chain", b.Bucket, n)
+	}
+	if !s.cfg.ReadOnly() {
+		return "", errors.New("buckets are added only to a gateway that serves reads only (read_only)")
 	}
 	if len(s.buckets) >= maxBuckets {
 		return "", fmt.Errorf("bucket %q: the gateway serves %d buckets, its bound", b.Bucket, maxBuckets)

@@ -1,10 +1,13 @@
 package s3d
 
 import (
+	"encoding/hex"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/lightwebinc/bstore/internal/reader"
 )
 
 // A bucket added at run time is served from then on, in order, held to the
@@ -19,6 +22,17 @@ func TestAddBucket(t *testing.T) {
 	writer := &Server{cfg: c, buckets: map[string]*bucket{}}
 	if _, err := writer.AddBucket(first); err == nil || !strings.Contains(err.Error(), "read_only") {
 		t.Fatalf("a writing gateway took a bucket: %v", err)
+	}
+	// One its configuration names is no change on a writer too, and
+	// another chain under that name is refused there as well.
+	writer.buckets["photos-qzvmkwerty"] = &bucket{name: "photos-qzvmkwerty", chain: chainOf(t, first)}
+	if n, err := writer.AddBucket(first); err != nil || n != "photos-qzvmkwerty" {
+		t.Fatalf("a writer's own bucket: %q %v", n, err)
+	}
+	wclash := first
+	wclash.ID = strings.Repeat("ef", 32)
+	if _, err := writer.AddBucket(wclash); err == nil || !strings.Contains(err.Error(), "another chain") {
+		t.Fatalf("another chain under a writer's bucket name: %v", err)
 	}
 	c.Providers, c.ReadOnlyGateway = nil, true
 	if err := c.Check(); err != nil {
@@ -70,4 +84,11 @@ func TestAddBucket(t *testing.T) {
 	if len(s.BucketNames()) != 2 {
 		t.Fatal("a refused bucket was added")
 	}
+}
+
+func chainOf(t *testing.T, b BucketConfig) reader.Chain {
+	t.Helper()
+	owner, _ := hex.DecodeString(b.Owner)
+	id, _ := hex.DecodeString(b.ID)
+	return reader.Chain{Bucket: b.Bucket, Owner: owner, ID: [32]byte(id)}
 }
