@@ -557,6 +557,12 @@ const walkBudget = 10 * time.Minute
 type Options struct {
 	AddWriters    []string
 	RemoveWriters []string
+	// Hold names writers whose entries this run does not apply: they stay
+	// unanchored, and the writer stays named by the token. An owner's
+	// service that applies a delegate's entries only under a permission it
+	// checked (bweb's delegation through borg) holds every writer it was
+	// not allowed for. The owner is never held.
+	Hold []string
 	// DryRun plans and reports, and mints nothing.
 	DryRun bool
 	// NoWait returns once the settlement leg has taken a token, without
@@ -583,6 +589,7 @@ type Report struct {
 	Strangers int      // entries an answer returned for another writer, bucket or id
 	Hosts     []string // hosts named, and why
 	Deferred  []string
+	Held      []string // writers whose entries this run held back (Options.Hold)
 	Plan      *Plan
 }
 
@@ -670,8 +677,24 @@ func (t *Tool) Anchor(ctx context.Context, c *Chain, o Options) (*Report, error)
 	// Every writer's unanchored entries, at every host.
 	found := map[[32]byte]*candidate{}
 	ask := append([]string{hex.EncodeToString(owner)}, writerHex...)
+	// A hold fails closed: a key that is not one is refused rather than
+	// ignored, which would apply the entries of the writer it meant.
+	held := map[string]bool{}
+	for _, h := range o.Hold {
+		hl := strings.ToLower(strings.TrimSpace(h))
+		if b, err := hex.DecodeString(hl); err != nil || len(b) != 33 {
+			return nil, fmt.Errorf("anchor: -hold-writer %q is not a key in 66 hex digits", h)
+		}
+		if hl != hex.EncodeToString(owner) {
+			held[hl] = true
+		}
+	}
 	wctx, cancel := context.WithTimeout(ctx, walkBudget)
 	for _, w := range ask {
+		if held[w] {
+			rep.Held = append(rep.Held, w)
+			continue
+		}
 		t.walkUnanchored(wctx, ch, w, found, rep)
 	}
 	cancel()

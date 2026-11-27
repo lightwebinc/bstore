@@ -761,3 +761,32 @@ func TestTokenDeliveryWording(t *testing.T) {
 		t.Fatalf("refused and left: %v", err)
 	}
 }
+
+// A held writer's entries wait: the run applies nothing of it and says so,
+// the writer stays named, and the next run that does not hold it applies
+// them. The owner is never held.
+func TestAnchorHoldWriter(t *testing.T) {
+	r := newRig(t)
+	_, ids := r.mint([]spec{{"w", storerec.KindPut, 1, nil}}, true)
+	w := hex.EncodeToString(r.writer.Identity())
+	owner := r.tool.Pub.IdentityHex()
+	rep, err := r.tool.Anchor(r.ctx, r.c, Options{Hold: []string{strings.ToUpper(w), owner}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Tokens) != 0 || rep.Applied != 0 || len(rep.Held) != 1 || rep.Held[0] != w {
+		t.Fatalf("a held writer's entry was applied, or the hold not reported: %+v", rep)
+	}
+	if f, _ := r.fold(); len(f.Map) != 0 {
+		t.Fatal("the map changed under a hold")
+	}
+	if _, err := r.tool.Anchor(r.ctx, r.c, Options{Hold: []string{w[:64]}}); err == nil {
+		t.Fatal("a hold that is not a key was ignored, not refused")
+	}
+	if rep, err = r.tool.Anchor(r.ctx, r.c, Options{}); err != nil || len(rep.Tokens) != 1 || rep.Applied != 1 {
+		t.Fatalf("not applied once the hold was lifted: %v %+v", err, rep)
+	}
+	if f, _ := r.fold(); f.Map["w"] != cOf(t, ids[0]) {
+		t.Fatal("the entry after the hold")
+	}
+}

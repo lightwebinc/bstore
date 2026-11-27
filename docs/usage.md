@@ -157,6 +157,12 @@ frozen (spec sections 3.4 and 4.4):
    another instance minted first at the same seq is detected and dropped,
    and the next run builds on the winner.
 
+`-hold-writer KEY` (repeatable) applies none of that writer's entries in
+this run: they stay unanchored and the writer stays named. An owner's
+service that lets delegates write only under a permission it checks (bweb's
+delegation through borg) holds every writer it was not allowed for. The
+owner is never held.
+
 `-add-writer` and `-remove-writer` change the writers the next token
 names; a writer is removed only when the map names none of its entries.
 `-dry-run` plans and mints nothing.
