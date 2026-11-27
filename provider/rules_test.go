@@ -916,3 +916,85 @@ func TestPieceRefusals(t *testing.T) {
 		t.Errorf("a writer not taken: %v %q", ok, why)
 	}
 }
+
+// A root marked damaged is checked again when an entry names it once more,
+// and held, answered for and served again once its closure is whole: the
+// pieces a writer sends again after a provider lost them bring the root
+// back (before, a damaged root stayed damaged whatever arrived).
+func TestDamagedRootRecoversOnANewEntry(t *testing.T) {
+	r, p, _, put := held(t, nil, 3*storerec.BlobSize, bounty)
+	ctx := context.Background()
+	root := put.Object.Built.RootHash
+	rootHex := hex.EncodeToString(root[:])
+	c, _ := storerec.VerifyCHIRP(root, objectsOf(put.Object))
+	lost := c.Blobs[1].Hash
+	if err := p.store.Delete(lost); err != nil {
+		t.Fatal(err)
+	}
+	p.damaged(rootHex, "test: a blob lost")
+	// The same content put again under another key: its pieces, the lost
+	// blob among them, are sent again.
+	r.put(ctx, []*Provider{p}, content(3*storerec.BlobSize, 7), "k2", bounty)
+	r.eventually("the damaged root held again", 20*time.Second, func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		h := p.st.Holdings[rootHex]
+		return h != nil && !h.Damaged && h.Verified
+	})
+	if !p.store.Has(lost) {
+		t.Fatal("cleared without the lost blob back in the store")
+	}
+	// Served again at its advertisement.
+	ad, _ := advOf(p.liveAd(root))
+	res, err := r.client.Get(ad.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("the recovered root served: %d", res.StatusCode)
+	}
+}
+
+// A damaged root whose bytes are bad in place is not cleared by a new
+// entry: the piece the store holds is not taken again, the check reads it
+// back wrong, and the entry is declined at once rather than left waiting.
+func TestDamagedRootBadInPlaceStaysDamaged(t *testing.T) {
+	r, p, _, put := held(t, nil, 3*storerec.BlobSize, bounty)
+	ctx := context.Background()
+	root := put.Object.Built.RootHash
+	rootHex := hex.EncodeToString(root[:])
+	c, _ := storerec.VerifyCHIRP(root, objectsOf(put.Object))
+	bad := c.Blobs[1].Hash
+	var blob []byte
+	for _, o := range put.Object.Built.Objects() {
+		if sha256.Sum256(o) == bad {
+			blob = bytes.Clone(o)
+		}
+	}
+	blob[len(blob)/2] ^= 1
+	// PutHashed keeps a file of the same size as it is: remove it first.
+	if err := p.store.Delete(bad); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.store.PutHashed(bad, blob); err != nil {
+		t.Fatal(err)
+	}
+	p.damaged(rootHex, "test: a blob read back wrong")
+	again := r.put(ctx, []*Provider{p}, content(3*storerec.BlobSize, 7), "k2", bounty)
+	r.eventually("the new entry declined", 20*time.Second, func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		e := p.st.Entries[again.C]
+		return e != nil && e.Decision != ""
+	})
+	p.mu.Lock()
+	h, e := p.st.Holdings[rootHex], p.st.Entries[again.C]
+	p.mu.Unlock()
+	if h == nil || !h.Damaged {
+		t.Fatal("a root with bytes bad in place was cleared")
+	}
+	if e.Decision != "the closure is damaged here" {
+		t.Fatalf("decision %q", e.Decision)
+	}
+}
