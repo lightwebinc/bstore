@@ -176,6 +176,16 @@ func listParam(v string) bool {
 	return len(v) <= storerec.MaxObjectKey && utf8.ValidString(v) && storerec.OneLine(v)
 }
 
+// newLister walks a bucket's keys under prefix after cursor: proven pages
+// from the hosts, merged with the gateway's own pending entries. The S3
+// face and a call in process (ListObjects) both list through it.
+func (s *Server) newLister(ctx context.Context, b *bucket, prefix, cursor string) *lister {
+	l := &lister{prefix: prefix, cursor: cursor, next: cursor,
+		list: func(after string) (*reader.Page, error) { return s.reader.List(ctx, b.chain, prefix, after) }}
+	l.pend = s.st.inRange(b.chain.Bucket, prefix, cursor)
+	return l
+}
+
 // listObjects is ListObjectsV2 (v2) and ListObjects.
 func (s *Server) listObjects(ctx context.Context, w http.ResponseWriter, r *http.Request, b *bucket, v2 bool) *s3Error {
 	q := r.URL.Query()
@@ -223,9 +233,7 @@ func (s *Server) listObjects(ctx context.Context, w http.ResponseWriter, r *http
 		return e
 	}
 	defer done()
-	l := &lister{prefix: prefix, cursor: cursor, next: cursor,
-		list: func(after string) (*reader.Page, error) { return s.reader.List(ctx, b.chain, prefix, after) }}
-	l.pend = s.st.inRange(b.chain.Bucket, prefix, cursor)
+	l := s.newLister(ctx, b, prefix, cursor)
 	encode := func(v string) string {
 		if enc == "url" {
 			return urlEncodeKey(v)

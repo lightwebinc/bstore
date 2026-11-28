@@ -185,6 +185,7 @@ func (s *Server) ListObjects(ctx context.Context, name, after string, max int) (
 		return nil, false, fmt.Errorf("%w: %s", ErrNoBucket, name)
 	}
 	if !listParam(after) {
+		s.metrics.request("ListObjectsV2", http.StatusBadRequest)
 		return nil, false, errors.New("gateway: after is not a valid key")
 	}
 	if max < 1 || max > MaxListed {
@@ -196,9 +197,7 @@ func (s *Server) ListObjects(ctx context.Context, name, after string, max int) (
 		return nil, false, callError(e, nil)
 	}
 	defer done()
-	l := &lister{cursor: after, next: after, list: func(a string) (*reader.Page, error) { return s.reader.List(ctx, b.chain, "", a) }}
-	l.pend = s.st.inRange(b.chain.Bucket, "", after)
-	objs, more, e = listPage(l, max)
+	objs, more, e = listPage(s.newLister(ctx, b, "", after), max)
 	if e != nil {
 		s.metrics.request("ListObjectsV2", e.Status)
 		return nil, false, callError(e, nil)

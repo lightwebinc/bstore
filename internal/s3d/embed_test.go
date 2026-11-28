@@ -144,6 +144,10 @@ func TestListObjectsInProcess(t *testing.T) {
 	if e != nil || more || len(objs) != 2 || objs[0].Key != "c" || objs[0].Size != 2 || objs[1].Key != "e" {
 		t.Fatalf("after b: %+v %t %v", objs, more, e)
 	}
+	// A pending entry's time and ETag, as its own entry gives them.
+	if !objs[0].LastModified.Equal(time.UnixMilli(20)) || objs[0].ETag == "" || objs[0].ETag[0] != '"' {
+		t.Fatalf("a pending object: %+v", objs[0])
+	}
 	// Every lookup slot taken: shed, not queued.
 	s.lookups <- struct{}{}
 	if _, _, err := s.ListObjects(context.Background(), "b", "", 0); !errors.Is(err, ErrShed) {
