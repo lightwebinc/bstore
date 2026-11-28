@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/lightwebinc/bstore/internal/reader"
 	"github.com/lightwebinc/bstore/storerec"
@@ -154,6 +155,71 @@ func (s *Server) ReadObject(ctx context.Context, bucket, key string, head bool, 
 	}
 	s.metrics.request(op, a.Status)
 	return a, nil
+}
+
+// ListedObject is one object of a ListObjects page: its key, its size in
+// bytes, its ETag (quoted, as a read answers it) and when its entry was
+// made.
+type ListedObject struct {
+	Key          string
+	Size         uint64
+	ETag         string
+	LastModified time.Time
+}
+
+// MaxListed is the most objects a ListObjects page holds.
+const MaxListed = 1000
+
+// ListObjects is a page of the objects of the bucket with the S3 name
+// name, in key order after the key given, as ListObjectsV2 with no prefix
+// and no delimiter answers them: proven complete against the bucket's
+// latest token and merged with the gateway's own pending entries, at most
+// max (1 to MaxListed; anything else is MaxListed). more says a page
+// follows, after the last key of this one. The error is ErrNoBucket for a
+// bucket the configuration does not name, ErrShed for a listing refused
+// for now (a bound, or the hosts did not prove a page).
+func (s *Server) ListObjects(ctx context.Context, name, after string, max int) (objs []ListedObject, more bool, err error) {
+	b := s.bucket(name)
+	if b == nil {
+		s.metrics.request("ListObjectsV2", errNoSuchBucket.Status)
+		return nil, false, fmt.Errorf("%w: %s", ErrNoBucket, name)
+	}
+	if !listParam(after) {
+		s.metrics.request("ListObjectsV2", http.StatusBadRequest)
+		return nil, false, errors.New("gateway: after is not a valid key")
+	}
+	if max < 1 || max > MaxListed {
+		max = MaxListed
+	}
+	done, e := acquire(s.lookups)
+	if e != nil {
+		s.metrics.request("ListObjectsV2", e.Status)
+		return nil, false, callError(e, nil)
+	}
+	defer done()
+	objs, more, e = listPage(s.newLister(ctx, b, "", after), max)
+	if e != nil {
+		s.metrics.request("ListObjectsV2", e.Status)
+		return nil, false, callError(e, nil)
+	}
+	s.metrics.request("ListObjectsV2", http.StatusOK)
+	return objs, more, nil
+}
+
+// listPage walks one page of a lister with no delimiter.
+func listPage(l *lister, max int) ([]ListedObject, bool, *s3Error) {
+	got, e := l.walk("", max)
+	if e != nil {
+		return nil, false, e
+	}
+	out := make([]ListedObject, 0, len(got.items))
+	for _, it := range got.items {
+		if it.entry == nil {
+			continue
+		}
+		out = append(out, ListedObject{Key: it.key, Size: it.entry.Size, ETag: etagOf(it.entry), LastModified: time.UnixMilli(int64(it.entry.Created)).UTC()}) //nolint:gosec // milliseconds since 1970
+	}
+	return out, got.truncated, nil
 }
 
 func (s *Server) readObject(ctx context.Context, name, key string, head bool, cond http.Header) (*ObjectAnswer, *s3Error) {

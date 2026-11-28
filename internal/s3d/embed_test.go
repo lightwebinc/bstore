@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/lightwebinc/bstore/internal/reader"
 	"github.com/lightwebinc/bstore/storerec"
@@ -115,5 +116,41 @@ func TestAnswerCloseOnceAndErrorMapping(t *testing.T) {
 	}
 	if err := callError(errNoSuchBucket, nil); errors.Is(err, ErrShed) || errors.Is(err, ErrRefused) {
 		t.Errorf("another error took a sentinel: %v", err)
+	}
+}
+
+// A listing in process: a bucket the configuration does not name, a cursor
+// that is no key, and a page of anchored and pending entries as
+// ListObjectsV2 would give them, sizes, ETags and times included.
+func TestListObjectsInProcess(t *testing.T) {
+	s := &Server{buckets: map[string]*bucket{"b": {name: "b"}}, metrics: newMetrics(), lookups: make(chan struct{}, 1)}
+	if _, _, err := s.ListObjects(context.Background(), "other", "", 0); !errors.Is(err, ErrNoBucket) {
+		t.Fatalf("unknown bucket: %v", err)
+	}
+	if _, _, err := s.ListObjects(context.Background(), "b", "a\nb", 0); err == nil {
+		t.Fatal("a cursor that is no key was taken")
+	}
+	anchored := map[string]uint64{"a": 1_800_000_000_000, "b": 1_800_000_000_000, "d": 1_800_000_000_000, "e": 1_800_000_000_000}
+	l := &lister{list: pages(anchored, ""), pend: []*pendingEntry{pend("c", 20, storerec.KindPut), pend("d", 2_000_000_000_000, storerec.KindDelete)}}
+	objs, more, e := listPage(l, 2)
+	if e != nil || !more || len(objs) != 2 || objs[0].Key != "a" || objs[1].Key != "b" {
+		t.Fatalf("first page: %+v %t %v", objs, more, e)
+	}
+	if objs[0].Size != 1 || objs[0].ETag == "" || objs[0].ETag[0] != '"' || !objs[0].LastModified.Equal(time.UnixMilli(1_800_000_000_000)) {
+		t.Fatalf("an object: %+v", objs[0])
+	}
+	l = &lister{list: pages(anchored, ""), cursor: "b", next: "b", pend: []*pendingEntry{pend("c", 20, storerec.KindPut), pend("d", 2_000_000_000_000, storerec.KindDelete)}}
+	objs, more, e = listPage(l, 1000)
+	if e != nil || more || len(objs) != 2 || objs[0].Key != "c" || objs[0].Size != 2 || objs[1].Key != "e" {
+		t.Fatalf("after b: %+v %t %v", objs, more, e)
+	}
+	// A pending entry's time and ETag, as its own entry gives them.
+	if !objs[0].LastModified.Equal(time.UnixMilli(20)) || objs[0].ETag == "" || objs[0].ETag[0] != '"' {
+		t.Fatalf("a pending object: %+v", objs[0])
+	}
+	// Every lookup slot taken: shed, not queued.
+	s.lookups <- struct{}{}
+	if _, _, err := s.ListObjects(context.Background(), "b", "", 0); !errors.Is(err, ErrShed) {
+		t.Fatalf("no slot: %v", err)
 	}
 }

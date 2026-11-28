@@ -118,5 +118,21 @@ func (g *Gateway) Read(ctx context.Context, bucket, key string, head bool, cond 
 	return g.s.ReadObject(ctx, bucket, key, head, cond)
 }
 
+// Object is one object of a List page: its key, its size in bytes, its
+// ETag (quoted, as Read answers it) and when its entry was made.
+type Object = s3d.ListedObject
+
+// List is a page of the objects of the bucket with the S3 name bucket, in
+// key order after the key given (from the first, when after is empty), as
+// ListObjectsV2 answers them: proven complete against the bucket's latest
+// token and merged with the gateway's own pending entries, at most 1,000.
+// more says a page follows: the next starts after this one's last key. A
+// listing takes one of the gateway's lookup slots (limits.lookups) while
+// it walks. The error is ErrNoBucket for a bucket the configuration does
+// not name, ErrShed for a listing refused for now.
+func (g *Gateway) List(ctx context.Context, bucket, after string) (objs []Object, more bool, err error) {
+	return g.s.ListObjects(ctx, bucket, after, s3d.MaxListed)
+}
+
 // Close stops the gateway and waits for its background work.
 func (g *Gateway) Close() error { return g.s.Close() }
